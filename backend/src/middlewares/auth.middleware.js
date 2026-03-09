@@ -1,33 +1,57 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/user.model.js';
 
-const protect = async (req, res, next) => {
-    let token;
+// Fail fast at startup if JWT_SECRET is missing
+if (!process.env.JWT_SECRET) {
+    throw new Error('FATAL: JWT_SECRET environment variable is not set.');
+}
 
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-        try {
-            token = req.headers.authorization.split(' ')[1];
-
-            if (!process.env.JWT_SECRET) {
-                throw new Error('FATAL ERROR: JWT_SECRET is not defined.');
-            }
-
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-            req.user = await User.findById(decoded.id);
-
-            if (!req.user) {
-                return res.status(401).json({ status: 'error', message: 'User not found' });
-            }
-
-            return next();
-        } catch (error) {
-            return res.status(401).json({ status: 'error', message: 'Not authorized, token failed' });
-        }
+/**
+ * Extracts a Bearer token from an Authorization header string.
+ * Returns null if no valid Bearer token is found.
+ */
+const extractBearerToken = (authHeader) => {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        return authHeader.split(' ')[1];
     }
+    return null;
+};
+
+/**
+ * Authentication middleware.
+ * Validates the JWT from the Authorization header and attaches the user to req.user.
+ */
+const protect = async (req, res, next) => {
+    const token = extractBearerToken(req.headers.authorization);
 
     if (!token) {
-        return res.status(401).json({ status: 'error', message: 'Not authorized, no token' });
+        return res.status(401).json({
+            status: 'error',
+            message: 'Not authorized. No token provided.',
+        });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        const user = await User.findById(decoded.id);
+        if (!user) {
+            return res.status(401).json({
+                status: 'error',
+                message: 'Not authorized. User account not found.',
+            });
+        }
+
+        req.user = user;
+        return next();
+    } catch (error) {
+        // Differentiate between expired tokens and other JWT errors
+        const message =
+            error.name === 'TokenExpiredError'
+                ? 'Not authorized. Token has expired.'
+                : 'Not authorized. Token is invalid.';
+
+        return res.status(401).json({ status: 'error', message });
     }
 };
 
