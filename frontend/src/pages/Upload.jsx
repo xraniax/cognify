@@ -6,12 +6,34 @@ const UploadPage = () => {
     const [title, setTitle] = useState('');
     const [content, setContent] = useState('');
     const [file, setFile] = useState(null);
+    const [fileError, setFileError] = useState('');
     const [type, setType] = useState('summary');
     const [subjectId, setSubjectId] = useState('');
     const [subjects, setSubjects] = useState([]);
     const [sending, setSending] = useState(false);
     const [success, setSuccess] = useState(false);
     const [err, setErr] = useState('');
+
+    // Client-side PDF validation (mirrors backend constraints)
+    const MAX_FILE_SIZE_MB = 10;
+    const validatePdfFile = (selectedFile) => {
+        if (!selectedFile) return null;
+        const ext = selectedFile.name.split('.').pop().toLowerCase();
+        if (ext !== 'pdf' || selectedFile.type !== 'application/pdf') {
+            return 'Only .pdf files are accepted.';
+        }
+        if (selectedFile.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+            return `File is too large. Maximum size is ${MAX_FILE_SIZE_MB} MB.`;
+        }
+        return null; // valid
+    };
+
+    const handleFileChange = (e) => {
+        const selected = e.target.files[0] || null;
+        const error = validatePdfFile(selected);
+        setFileError(error || '');
+        setFile(error ? null : selected);
+    };
 
     const navigate = useNavigate();
 
@@ -29,6 +51,12 @@ const UploadPage = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        // Re-run validation before submit in case state is stale
+        if (file) {
+            const error = validatePdfFile(file);
+            if (error) { setFileError(error); return; }
+        }
 
         if (!content.trim() && !file) {
             setErr('Please provide either text content or upload a PDF file.');
@@ -127,8 +155,11 @@ const UploadPage = () => {
                             type="file"
                             accept=".pdf,application/pdf"
                             className="input-field"
-                            onChange={(e) => setFile(e.target.files[0])}
+                            onChange={handleFileChange}
                         />
+                        {fileError && (
+                            <p className="text-red-600 text-xs mt-1">{fileError}</p>
+                        )}
                     </div>
 
                     <div>
