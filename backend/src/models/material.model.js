@@ -2,7 +2,7 @@ import { query } from '../config/db.js';
 
 class Material {
     /**
-     * Store new material and AI processing intention
+     * Store new material linked to the authenticated user and their chosen subject.
      */
     static async create(userId, subjectId, title, content, type) {
         const result = await query(
@@ -13,7 +13,8 @@ class Material {
     }
 
     /**
-     * Update material with results from AI engine and set status to completed
+     * Update material with AI engine results and mark as completed.
+     * user_id is enforced in the WHERE clause to prevent IDOR (Insecure Direct Object Reference).
      */
     static async updateAIResult(materialId, userId, aiResult) {
         const result = await query(
@@ -24,7 +25,8 @@ class Material {
     }
 
     /**
-     * Update only the status of a material (for failure handling)
+     * Update only the status of a material (for failure handling).
+     * user_id enforced to prevent IDOR.
      */
     static async updateStatus(materialId, userId, status) {
         const result = await query(
@@ -77,7 +79,9 @@ class Material {
     }
 
     /**
-     * Find multiple materials by IDs for context grounding
+     * Find multiple materials by IDs for context grounding.
+     * Uses PostgreSQL's ANY($1) operator for an efficient single-query batch lookup.
+     * user_id scoping prevents accessing other users' materials.
      */
     static async findByIds(ids, userId) {
         if (!ids || ids.length === 0) return [];
@@ -89,7 +93,8 @@ class Material {
     }
 
     /**
-     * Remove a material (Security: enforce user_id)
+     * Remove a material.
+     * user_id enforced for IDOR protection — users can only delete their own materials.
      */
     static async delete(id, userId) {
         const result = await query('DELETE FROM materials WHERE id = $1 AND user_id = $2 RETURNING *', [id, userId]);

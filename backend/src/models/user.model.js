@@ -1,12 +1,16 @@
 import { query } from '../config/db.js';
 import bcrypt from 'bcrypt';
 
+// Cost factor for bcrypt key derivation. Higher = slower brute force.
+// 12 rounds is a good balance of security and performance.
+const BCRYPT_ROUNDS = 12;
+
 class User {
     /**
-     * Create a new user with hashed password
+     * Create a new user with a securely hashed password (bcrypt, salt auto-generated).
      */
     static async create(email, password, name, role = 'user') {
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
         const result = await query(
             'INSERT INTO users (email, password_hash, name, role) VALUES ($1, $2, $3, $4) RETURNING id, email, name, role, created_at',
             [email, hashedPassword, name, role]
