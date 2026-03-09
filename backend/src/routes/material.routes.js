@@ -5,9 +5,9 @@ import { aiLimiter } from '../middlewares/rateLimiter.middleware.js';
 import validate from '../middlewares/validate.middleware.js';
 import { uploadMaterialSchema, chatCombinedSchema, generateCombinedSchema } from '../validators/material.validator.js';
 import multer from 'multer';
-import { storage } from '../config/multer.js';
+import { pdfUpload } from '../config/multer.js';
 
-const upload = multer({ storage });
+const upload = pdfUpload;
 const router = express.Router();
 
 // All material routes are protected

@@ -1,70 +1,70 @@
 import MaterialService from '../services/material.service.js';
 import asyncHandler from '../utils/asyncHandler.js';
-import { createRequire } from 'module';
 import fs from 'fs';
-
-// Use createRequire to load the CommonJS `pdf-parse` package inside an ESM context
-const require = createRequire(import.meta.url);
-const pdfParse = require('pdf-parse');
+import { extractTextFromPdf } from '../services/pdfExtractor.service.js';
 
 /**
- * Helper: safely delete a file if it exists on disk.
+ * Safely delete a temp file without throwing.
+ * Used to ensure uploaded files are cleaned up even if processing fails.
  */
 const safeDelete = (filePath) => {
     try {
         if (filePath && fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
         }
-    } catch (deleteErr) {
-        console.warn(`[Upload] Could not clean up temp file ${filePath}:`, deleteErr.message);
+    } catch (err) {
+        console.warn(`[MaterialController] Could not clean up temp file (${filePath}):`, err.message);
     }
 };
 
 class MaterialController {
     /**
-     * Upload a material via PDF file and/or raw text content.
-     * Both inputs are optional but at least one must be provided.
+     * Upload endpoint: accepts a PDF file and/or raw text content.
+     *
+     * Processing pipeline:
+     *   1. If a PDF is supplied, delegate text extraction to pdfExtractor.service.js
+     *      (auto-detects text vs scanned PDFs, applies OCR where needed).
+     *   2. Combine extracted text with any manually provided text.
+     *   3. Forward the final content to the AI engine via MaterialService.
+     *
+     * The subjectId is passed as a form field; when uploading from a Subject view,
+     * the frontend automatically pre-fills this with the current subject's ID.
      */
     static upload = asyncHandler(async (req, res) => {
         const { title, content, type, subjectId } = req.body;
         const file = req.file;
 
-        // Capture original filename before any deletion occurs
+        // Capture filename before possible deletion
         const originalFilename = file?.originalname;
 
         let finalContent = content || '';
 
-        // If a PDF was uploaded, parse and append its text to any provided raw content
         if (file) {
-            if (file.mimetype !== 'application/pdf') {
-                safeDelete(file.path);
-                res.status(400);
-                throw new Error('Only PDF files are accepted. Please upload a valid .pdf file.');
-            }
-
             try {
-                const dataBuffer = fs.readFileSync(file.path);
-                const parsed = await pdfParse(dataBuffer);
+                // Delegate all PDF intelligence to the extractor service
+                const { text: pdfText, method } = await extractTextFromPdf(file.path);
 
-                if (!parsed.text || parsed.text.trim().length === 0) {
-                    safeDelete(file.path);
-                    res.status(422);
-                    throw new Error('The uploaded PDF appears to be empty or unreadable.');
-                }
+                console.log(
+                    `[MaterialController] Extracted ${pdfText.length} chars from "${originalFilename}" via ${method}.`
+                );
 
-                // Combine PDF text with any additional text the user provided
-                finalContent = [finalContent, parsed.text].filter(Boolean).join('\n\n');
-                safeDelete(file.path);
+                // Merge PDF text with any additional manually provided text
+                finalContent = [finalContent, pdfText].filter(Boolean).join('\n\n');
             } catch (err) {
                 safeDelete(file.path);
 
-                // Re-throw operational errors (400/422) as-is
-                if (res.statusCode !== 200) throw err;
+                // pdfExtractor attaches a `statusCode` to operational errors
+                const status = err.statusCode || 500;
+                if (status < 500) {
+                    console.warn(`[MaterialController] PDF rejected (${status}):`, err.message);
+                } else {
+                    console.error('[MaterialController] Unexpected PDF extraction error:', err.message);
+                }
 
-                // Log unexpected parsing errors for debugging then return a user-friendly message
-                console.error('[Upload] PDF parse error:', err.message);
-                res.status(500);
-                throw new Error('Failed to extract text from the PDF. The file may be corrupted or password-protected.');
+                res.status(status);
+                throw err; // Pass clean error message to errorHandler
+            } finally {
+                safeDelete(file.path);
             }
         }
 
@@ -72,7 +72,9 @@ class MaterialController {
 
         if (!finalContent || !type) {
             res.status(400);
-            throw new Error('Content is required (upload a PDF or provide text), along with a task type.');
+            throw new Error(
+                'Content is required — upload a PDF or paste text — along with a task type.'
+            );
         }
 
         const material = await MaterialService.processMaterial(
