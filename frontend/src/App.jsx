@@ -24,18 +24,20 @@ const App = () => {
     <AuthProvider>
       <Toaster position="top-right" />
       <Router>
-        <Navbar />
-        <main className="p-4 flex-1 h-full">
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/subjects/:id" element={<ProtectedRoute><SubjectDetail /></ProtectedRoute>} />
-            <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
-            <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
-            <Route path="/" element={<Navigate to="/dashboard" />} />
-          </Routes>
-        </main>
+        <div className="h-screen flex flex-col overflow-hidden">
+          <Navbar />
+          <main className="flex-1 min-h-0 flex flex-col">
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/subjects/:id" element={<ProtectedRoute><SubjectDetail /></ProtectedRoute>} />
+              <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
+              <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+              <Route path="/" element={<Navigate to="/dashboard" />} />
+            </Routes>
+          </main>
+        </div>
       </Router>
     </AuthProvider>
   );

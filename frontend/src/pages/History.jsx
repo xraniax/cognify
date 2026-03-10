@@ -36,7 +36,7 @@ const History = () => {
     }
 
     return (
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-6xl mx-auto p-4 md:p-6">
             <div className="mb-6">
                 <h1 className="text-2xl font-bold">Study History</h1>
                 <p className="text-gray-600">Review your learning materials and AI-generated insights</p>
