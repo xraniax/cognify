@@ -171,7 +171,7 @@ const SubjectDetail = () => {
     }
 
     return (
-        <div className="subject-page">
+        <div className="subject-page flex-1 min-h-0">
             {/* Page Header */}
             <div className="subject-header">
                 <Link to="/dashboard" className="back-link">← Dashboard</Link>

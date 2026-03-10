@@ -64,7 +64,7 @@ const Dashboard = () => {
     };
 
     return (
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-6xl mx-auto p-4 md:p-6">
             <div className="mb-8 p-6 bg-blue-50 border border-blue-200 rounded">
                 <h1 className="text-2xl font-bold mb-2">Hello, {user?.name || 'Scholar'}!</h1>
                 <p className="text-gray-700">Manage your subjects and course materials below.</p>
