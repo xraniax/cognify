@@ -32,6 +32,7 @@ const SubjectDetail = () => {
     const [chatMessages, setChatMessages] = useState([]);
     const [currentQuestion, setCurrentQuestion] = useState('');
     const [isThinking, setIsThinking] = useState(false);
+    const [chatCollapsed, setChatCollapsed] = useState(false);
     const chatEndRef = useRef(null);
 
     // Generation state
@@ -165,6 +166,11 @@ const SubjectDetail = () => {
         }
     };
 
+    const handleClearChat = () => {
+        setChatMessages([]);
+        setChatError('');
+    };
+
     const handleGenerate = async (singleId = null) => {
         setGenError('');
         const targets = singleId ? [singleId] : selectedUploads;
@@ -209,11 +215,23 @@ const SubjectDetail = () => {
                         {subject?.description || 'Your learning workspace.'}
                     </span>
                 </div>
-                <span className="subject-meta">{uploads.length} documents</span>
+                <div className="flex items-center gap-4">
+                    <span className="subject-meta">{uploads.length} documents</span>
+                    {chatCollapsed && (
+                        <button
+                            className="text-xs font-semibold bg-blue-50 text-blue-600 px-3 py-1.5 rounded-md hover:bg-blue-100 transition-colors"
+                            onClick={() => setChatCollapsed(false)}
+                            title="Show AI Tutor Chat"
+                        >
+                            ◀ Show AI Tutor
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* Three-Panel Workspace */}
             <WorkspaceLayout
+                rightPanelCollapsed={chatCollapsed}
                 leftPanel={
                     <FilePanel
                         materials={uploads}
@@ -254,6 +272,8 @@ const SubjectDetail = () => {
                         chatEndRef={chatEndRef}
                         contextInfo={selectedUploads.length > 0 ? 'Grounded in selected context' : 'Using all subject data'}
                         chatError={chatError}
+                        onClearChat={handleClearChat}
+                        onCollapse={() => setChatCollapsed(true)}
                     />
                 }
             />

@@ -68,7 +68,7 @@ const FilePanel = ({
                                                 onGenerate(m.id);
                                             }}
                                             className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                            title="Generate Materials"
+                                            title="Generate AI Tool"
                                         >
                                             <Sparkles className="w-4 h-4" />
                                         </button>

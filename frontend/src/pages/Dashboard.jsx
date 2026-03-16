@@ -105,9 +105,9 @@ const Dashboard = () => {
 
     return (
         <div className="max-w-6xl mx-auto p-4 md:p-6">
-            <div className="mb-8 p-6 bg-blue-50 border border-blue-200 rounded">
-                <h1 className="text-2xl font-bold mb-2">Hello, {user?.name || 'Scholar'}!</h1>
-                <p className="text-gray-700">Manage your subjects and course materials below.</p>
+            <div className="mb-8 p-6 bg-white border border-gray-100 rounded-xl shadow-sm">
+                <h1 className="text-3xl font-bold mb-2 tracking-tight text-gray-900">Hello, {user?.name || 'Scholar'}!</h1>
+                <p className="text-gray-500">Manage your learning subjects and source documents below.</p>
             </div>
 
             {/* Header Row: Title & Action Button */}
@@ -133,7 +133,7 @@ const Dashboard = () => {
 
             {/* Inline Creation Form (Conditional) */}
             {isAdding && (
-                <div className="mb-6 p-4 border border-blue-200 bg-blue-50 rounded-lg shadow-sm animate-in fade-in slide-in-from-top-2">
+                <div className="mb-6 p-4 border border-gray-100 bg-white rounded-xl shadow-sm animate-in fade-in slide-in-from-top-2">
                     <form onSubmit={handleCreateSubject} className="flex flex-col sm:flex-row gap-3">
                         <div className="flex-grow">
                             <input
@@ -190,9 +190,9 @@ const Dashboard = () => {
             {loading ? (
                 <div className="p-8 text-center text-gray-500">Loading subjects...</div>
             ) : subjects.length === 0 ? (
-                <div className="p-8 border border-dashed border-gray-300 text-center rounded">
-                    <p className="mb-4 text-gray-600">You haven't created any subjects yet.</p>
-                    <Link to="/upload" className="btn-primary inline-block">Upload First Material</Link>
+                <div className="p-12 border border-solid border-gray-100 bg-white text-center rounded-xl shadow-sm">
+                    <p className="mb-6 text-gray-500 font-medium text-lg">You haven't created any subjects yet.</p>
+                    <Link to="/upload" className="btn-primary inline-block">Upload First Document</Link>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -230,7 +230,7 @@ const Dashboard = () => {
                                     </div>
                                 </div>
                                 <p className="text-sm text-gray-500 mb-4 flex-grow line-clamp-2">
-                                    {subject.description || `${subject.material_count || 0} Materials associated`}
+                                    {subject.description || `${subject.material_count || 0} Documents associated`}
                                 </p>
                                 <Link to={`/subjects/${subject.id}`} className="btn-secondary text-center text-sm py-1.5">
                                     Open Workspace

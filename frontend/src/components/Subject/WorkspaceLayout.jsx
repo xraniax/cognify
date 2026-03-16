@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 
 const MIN_PCT = 12; // minimum panel width as a percentage
 
-const WorkspaceLayout = ({ leftPanel, middlePanel, rightPanel }) => {
+const WorkspaceLayout = ({ leftPanel, middlePanel, rightPanel, rightPanelCollapsed }) => {
     // Panel widths as percentages [left, middle, right] — must sum to 100
     const [widths, setWidths] = useState([22, 50, 28]);
     const containerRef = useRef(null);
@@ -57,21 +57,25 @@ const WorkspaceLayout = ({ leftPanel, middlePanel, rightPanel }) => {
             />
 
             {/* Middle Panel */}
-            <div className="workspace-panel" style={{ width: `${widths[1]}%` }}>
+            <div className="workspace-panel" style={{ width: `${widths[1] + (rightPanelCollapsed ? widths[2] : 0)}%` }}>
                 {middlePanel}
             </div>
 
             {/* Separator 1 */}
-            <div
-                className="workspace-separator"
-                onMouseDown={onMouseDown(1)}
-                title="Drag to resize"
-            />
+            {!rightPanelCollapsed && (
+                <div
+                    className="workspace-separator"
+                    onMouseDown={onMouseDown(1)}
+                    title="Drag to resize"
+                />
+            )}
 
             {/* Right Panel */}
-            <div className="workspace-panel" style={{ width: `${widths[2]}%` }}>
-                {rightPanel}
-            </div>
+            {!rightPanelCollapsed && (
+                <div className="workspace-panel" style={{ width: `${widths[2]}%` }}>
+                    {rightPanel}
+                </div>
+            )}
         </div>
     );
 };
