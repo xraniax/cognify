@@ -42,7 +42,7 @@ class MaterialController {
 
         try {
             // Forward everything directly to Python Engine via the Service layer
-            const material = await MaterialService.processDocument(
+            const uploadedDocument = await MaterialService.processDocument(
                 req.user.id,
                 file,
                 (title && title.trim()) || originalFilename || 'Untitled Resource',
@@ -53,7 +53,7 @@ class MaterialController {
 
             res.status(201).json({
                 status: 'success',
-                data: material,
+                data: uploadedDocument,
             });
         } finally {
             if (file) {
@@ -98,12 +98,12 @@ class MaterialController {
 
         if (!deleted) {
             res.status(404);
-            throw new Error('Material not found or already deleted');
+            throw new Error('Document not found or already deleted');
         }
 
         res.status(200).json({
             status: 'success',
-            message: 'Material deleted successfully'
+            message: 'Document deleted successfully'
         });
     });
 }

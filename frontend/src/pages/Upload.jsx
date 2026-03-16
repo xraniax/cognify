@@ -93,7 +93,7 @@ const UploadPage = () => {
                 setValidationErrors(error.validationErrors || {});
                 setErr('Please review the highlighted fields below.');
             } else {
-                setErr(error.message || 'Failed to upload material');
+                setErr(error.message || 'Failed to upload document');
             }
         } finally {
             setSending(false);
@@ -102,21 +102,21 @@ const UploadPage = () => {
 
     if (success) {
         return (
-            <div className="max-w-2xl mx-auto mt-10 p-8 border border-green-200 bg-green-50 text-center rounded">
-                <h2 className="text-xl font-bold text-green-700 mb-2">Material Uploaded Successfully!</h2>
-                <p className="text-green-600">The AI engine is processing your content. Redirecting you to history...</p>
+            <div className="max-w-2xl mx-auto mt-12 p-8 border border-green-100 bg-green-50 shadow-sm text-center rounded-xl">
+                <h2 className="text-2xl font-bold text-green-800 mb-3">Document Uploaded Successfully!</h2>
+                <p className="text-green-600 font-medium">The AI engine is processing your content. Redirecting to workspace history...</p>
             </div>
         );
     }
 
     return (
-        <div className="max-w-3xl mx-auto p-4 md:p-6">
-            <div className="mb-6">
-                <h1 className="text-2xl font-bold">Upload Source Material</h1>
-                <p className="text-gray-600">Provide a PDF or text to generate study materials later.</p>
+        <div className="max-w-3xl mx-auto p-4 md:p-8">
+            <div className="mb-8">
+                <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Upload Source Document</h1>
+                <p className="text-gray-500 mt-2">Provide a PDF or text context to generate study materials.</p>
             </div>
 
-            <div className="border border-gray-200 p-6 rounded bg-white">
+            <div className="border border-gray-100 p-8 rounded-xl bg-white shadow-sm">
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
                         <label className="input-label">Title</label>
@@ -181,9 +181,12 @@ const UploadPage = () => {
 
                     {err && <div className="text-red-600 bg-red-50 p-3 rounded text-sm mb-4">{err}</div>}
 
-                    <div className="pt-2 border-t border-gray-200">
-                        <button type="submit" className="btn-primary flex ml-auto" disabled={sending}>
-                            {sending ? 'Processing...' : 'Submit Material'}
+                    <div className="pt-6 border-t border-gray-100 mt-4 flex items-center justify-between">
+                        <button type="button" onClick={() => navigate(-1)} className="text-gray-500 hover:text-gray-700 font-medium text-sm transition-colors">
+                            Cancel
+                        </button>
+                        <button type="submit" className="btn-primary" disabled={sending}>
+                            {sending ? 'Processing Document...' : 'Upload Document'}
                         </button>
                     </div>
                 </form>

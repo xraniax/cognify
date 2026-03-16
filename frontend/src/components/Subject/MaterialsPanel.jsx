@@ -74,8 +74,8 @@ const MaterialsPanel = ({
 
                 {!genResult && !isGenerating && (
                     <div className="empty-state mt-6">
-                        <p>No materials generated yet.</p>
-                        <p className="text-xs mt-1">Select documents and choose a material type above.</p>
+                        <p>No AI tools generated yet.</p>
+                        <p className="text-xs mt-1">Select documents and choose a tool type above.</p>
                     </div>
                 )}
 

@@ -18,9 +18,9 @@ class MaterialService {
             finalSubjectId = importedSubject.id;
         }
 
-        // 2. Save original placeholder material
-        const material = await Material.create(userId, finalSubjectId, title, content, type);
-        const fullMaterial = await Material.findById(material.id, userId);
+        // 2. Save original placeholder record
+        const documentRecord = await Material.create(userId, finalSubjectId, title, content, type);
+        const fullDocument = await Material.findById(documentRecord.id, userId);
 
         try {
             // 3. Construct multipart/form-data payload for Python Engine
@@ -44,16 +44,16 @@ class MaterialService {
             const aiData = aiResponse.data.data;
 
             // We update the content column in case Python pulled text from the PDF
-            await Material.updateContent(material.id, userId, aiData.extracted_text);
+            await Material.updateContent(documentRecord.id, userId, aiData.extracted_text);
 
-            const updatedMaterial = await Material.updateAIResult(material.id, userId, {
+            const updatedDocument = await Material.updateAIResult(documentRecord.id, userId, {
                 result: aiData.result,
                 chunks: aiData.chunks,
                 embeddings: aiData.embeddings
             });
 
-            // Return fully populated material record
-            return await Material.findById(updatedMaterial.id, userId);
+            // Return fully populated document record
+            return await Material.findById(updatedDocument.id, userId);
         } catch (error) {
             console.error('[MaterialService] AI Processing Error:', error.message);
             if (error.response) {
@@ -61,9 +61,9 @@ class MaterialService {
             }
 
             // 6. Mark as failed in DB
-            await Material.updateStatus(material.id, userId, 'failed');
+            await Material.updateStatus(documentRecord.id, userId, 'failed');
             // Return placeholder on fail so the frontend still shows the attempt
-            return fullMaterial;
+            return fullDocument;
         }
     }
 
@@ -72,14 +72,14 @@ class MaterialService {
     }
 
     /**
-     * AI Chat grounded in specific material IDs
+     * AI Chat grounded in specific document IDs
      */
     static async chatWithContext(userId, materialIds, question) {
-        const materials = await Material.findByIds(materialIds, userId);
-        if (materials.length === 0) return { result: "No source materials selected for context." };
+        const sourceDocuments = await Material.findByIds(materialIds, userId);
+        if (sourceDocuments.length === 0) return { result: "No source documents selected for context." };
 
-        // Combine content from selected materials
-        const context = materials.map(m => `--- SOURCE: ${m.title} ---\n${m.content}`).join('\n\n');
+        // Combine content from selected documents
+        const context = sourceDocuments.map(m => `--- SOURCE: ${m.title} ---\n${m.content}`).join('\n\n');
 
         try {
             const endpoint = `${process.env.ENGINE_URL}/chat`;
@@ -102,13 +102,13 @@ class MaterialService {
     }
 
     /**
-     * Generate study materials grounded in specific material IDs
+     * Generate study tools grounded in specific document IDs
      */
     static async generateWithContext(userId, materialIds, taskType) {
-        const materials = await Material.findByIds(materialIds, userId);
-        if (materials.length === 0) return { result: "No source materials selected for context." };
+        const sourceDocuments = await Material.findByIds(materialIds, userId);
+        if (sourceDocuments.length === 0) return { result: "No source documents selected for context." };
 
-        const context = materials.map(m => `--- SOURCE: ${m.title} ---\n${m.content}`).join('\n\n');
+        const context = sourceDocuments.map(m => `--- SOURCE: ${m.title} ---\n${m.content}`).join('\n\n');
 
         try {
             const endpoint = `${process.env.ENGINE_URL}/generate`;
