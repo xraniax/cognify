@@ -51,12 +51,15 @@ const protect = async (req, res, next) => {
         return next();
     } catch (error) {
         // Differentiate between expired tokens and other JWT errors
-        const message =
-            error.name === 'TokenExpiredError'
-                ? 'Not authorized. Token has expired.'
-                : 'Not authorized. Token is invalid.';
+        let message = 'Not authorized. Token is invalid.';
+        let code = 'TOKEN_INVALID';
 
-        return res.status(401).json({ status: 'error', message });
+        if (error.name === 'TokenExpiredError') {
+            message = 'Not authorized. Token has expired.';
+            code = 'TOKEN_EXPIRED';
+        }
+
+        return res.status(401).json({ status: 'error', message, code });
     }
 };
 

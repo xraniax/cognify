@@ -1,5 +1,6 @@
 import { query } from '../utils/config/db.js';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 
 // Cost factor for bcrypt key derivation. Higher = slower brute force.
 // 12 rounds is a good balance of security and performance.
@@ -64,10 +65,75 @@ class User {
      */
     static async findById(id) {
         const result = await query(
-            'SELECT id, email, name, role, created_at FROM users WHERE id = $1',
+            'SELECT id, email, name, role, created_at, reset_token_hash, reset_token_expires FROM users WHERE id = $1',
             [id]
         );
         return result.rows[0];
+    }
+
+    /**
+     * Set password reset token for a user.
+     * Returns the unhashed token.
+     */
+    static async createResetToken(id) {
+        // Generate a random token
+        const resetToken = crypto.randomBytes(32).toString('hex');
+
+        // Hash the token
+        const tokenHash = crypto
+            .createHash('sha256')
+            .update(resetToken)
+            .digest('hex');
+
+        // Set expiration (1 hour from now)
+        const THIRTY_MIN = 30 * 60 * 1000;
+        const expires = new Date(Date.now() + THIRTY_MIN);
+
+        await query(
+            'UPDATE users SET reset_token_hash = $1, reset_token_expires = $2 WHERE id = $3',
+            [tokenHash, expires, id]
+        );
+
+        return resetToken;
+    }
+
+    /**
+     * Clear reset token for a user.
+     */
+    static async clearResetToken(id) {
+        await query(
+            'UPDATE users SET reset_token_hash = NULL, reset_token_expires = NULL WHERE id = $1',
+            [id]
+        );
+    }
+
+    /**
+     * Find user by password reset token.
+     * Checks both the hash and expiration.
+     */
+    static async findByResetToken(token) {
+        const tokenHash = crypto
+            .createHash('sha256')
+            .update(token)
+            .digest('hex');
+
+        const result = await query(
+            'SELECT * FROM users WHERE reset_token_hash = $1 AND reset_token_expires > NOW()',
+            [tokenHash]
+        );
+        return result.rows[0];
+    }
+
+    /**
+     * Update user's password and clear reset token.
+     */
+    static async updatePassword(id, password) {
+        const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+        await query(
+            'UPDATE users SET password_hash = $1, reset_token_hash = NULL, reset_token_expires = NULL WHERE id = $2',
+            [hashedPassword, id]
+        );
     }
 
     /**

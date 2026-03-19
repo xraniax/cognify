@@ -4,12 +4,15 @@ import AuthController from '../controllers/auth.controller.js';
 import { protect } from '../middlewares/auth.middleware.js';
 import { authLimiter } from '../middlewares/rateLimiter.middleware.js';
 import validate from '../middlewares/validate.middleware.js';
-import { registerSchema, loginSchema } from '../middlewares/auth.validator.js';
+import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema } from '../middlewares/auth.validator.js';
 
 const router = express.Router();
 
 router.post('/register', validate(registerSchema), AuthController.register);
 router.post('/login', authLimiter, validate(loginSchema), AuthController.login);
+router.post('/forgot-password', authLimiter, validate(forgotPasswordSchema), AuthController.forgotPassword);
+router.get('/reset-password/:token', authLimiter, AuthController.validateResetToken);
+router.post('/reset-password', authLimiter, validate(resetPasswordSchema), AuthController.resetPassword);
 router.get('/me', protect, AuthController.getMe);
 
 // --- Social Auth ---

@@ -25,6 +25,19 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     (error) => {
+        // Handle 401 Unauthorized errors (expired or invalid token)
+        if (error.response?.status === 401) {
+            const code = error.response?.data?.code;
+            if (code === 'TOKEN_EXPIRED' || code === 'TOKEN_INVALID' || !localStorage.getItem('token')) {
+                // Clear the token and redirect to login
+                localStorage.removeItem('token');
+                // Use window.location to redirect as we are outside React component context
+                if (window.location.pathname !== '/login') {
+                    window.location.href = '/login?expired=true';
+                }
+            }
+        }
+
         // Build a standardized error object
         const customError = new Error(
             error.response?.data?.message || error.message || 'An unexpected error occurred'
@@ -41,6 +54,9 @@ export const authService = {
     login: (email, password) => api.post('/auth/login', { email, password }),
     register: (userData) => api.post('/auth/register', userData),
     getMe: () => api.get('/auth/me'),
+    forgotPassword: (email) => api.post('/auth/forgot-password', { email }),
+    validateResetToken: (token) => api.get(`/auth/reset-password/${token}`),
+    resetPassword: (token, password) => api.post('/auth/reset-password', { token, password }),
 };
 
 export const materialService = {
