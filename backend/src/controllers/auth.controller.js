@@ -75,8 +75,8 @@ class AuthController {
         const user = req.user;
         const token = generateToken(user.id);
 
-        // Redirect to frontend with token in URL (Login.jsx will handle it)
-        const redirectUrl = `${process.env.FRONTEND_URL}/login?token=${token}`;
+        // Redirect to frontend dashboard with token in URL
+        const redirectUrl = `${process.env.FRONTEND_URL}/dashboard?token=${token}`;
         res.redirect(redirectUrl);
     });
 

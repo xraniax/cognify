@@ -15,21 +15,14 @@ const Login = () => {
 
     useEffect(() => {
         const params = new URLSearchParams(location.search);
-        const token = params.get('token');
         const error = params.get('error');
 
-        if (token) {
-            loginWithToken(token).then(() => {
-                navigate('/dashboard');
-            }).catch(e => {
-                setErr('Social login session failed. Please try again.');
-            });
-        } else if (error === 'auth_failed') {
+        if (error === 'auth_failed') {
             setErr('Authentication failed. Please check your external provider permissions.');
         } else if (params.get('expired') === 'true') {
             setErr('Your session has expired. Please log in again.');
         }
-    }, [location, loginWithToken, navigate]);
+    }, [location]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -47,7 +40,8 @@ const Login = () => {
     };
 
     const handleSocialLogin = (provider) => {
-        window.location.href = `${import.meta.env.VITE_API_URL}/auth/${provider}`;
+        const backendBase = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
+        window.location.href = `${backendBase}/auth/${provider}`;
     };
 
     return (

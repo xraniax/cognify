@@ -21,27 +21,50 @@ const ProtectedRoute = ({ children }) => {
   return children;
 };
 
+const AppContent = () => {
+  const { loginWithToken, loading: authLoading } = useAuth();
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (token) {
+      loginWithToken(token).then(() => {
+        // Clear token from URL for security and cleanliness
+        const url = new URL(window.location);
+        url.searchParams.delete('token');
+        window.history.replaceState({}, document.title, url.pathname + url.search);
+      }).catch(err => {
+        console.error('Landing token handling failed', err);
+      });
+    }
+  }, [loginWithToken]);
+
+  return (
+    <div className="h-screen flex flex-col overflow-hidden">
+      <Navbar />
+      <main className="flex-1 min-h-0 flex flex-col">
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password/:token" element={<ResetPassword />} />
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/subjects/:id" element={<ProtectedRoute><SubjectDetail /></ProtectedRoute>} />
+          <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
+          <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+          <Route path="/" element={<Navigate to="/dashboard" />} />
+        </Routes>
+      </main>
+    </div>
+  );
+};
+
 const App = () => {
   return (
     <AuthProvider>
       <Toaster position="top-right" />
       <Router>
-        <div className="h-screen flex flex-col overflow-hidden">
-          <Navbar />
-          <main className="flex-1 min-h-0 flex flex-col">
-            <Routes>
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<Register />} />
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/reset-password/:token" element={<ResetPassword />} />
-              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-              <Route path="/subjects/:id" element={<ProtectedRoute><SubjectDetail /></ProtectedRoute>} />
-              <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
-              <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
-              <Route path="/" element={<Navigate to="/dashboard" />} />
-            </Routes>
-          </main>
-        </div>
+        <AppContent />
       </Router>
     </AuthProvider>
   );
