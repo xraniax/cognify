@@ -5,7 +5,7 @@ import User from '../../models/user.model.js';
 
 const getCallbackURL = (provider) => {
     const apiBase = process.env.BACKEND_URL || 'http://localhost:5000';
-    return `${apiBase}/api/auth/${provider}/callback`;
+    return `${apiBase}/${provider}/callback`;
 };
 
 passport.use(new GoogleStrategy({
@@ -14,14 +14,15 @@ passport.use(new GoogleStrategy({
     callbackURL: getCallbackURL('google')
 }, async (accessToken, refreshToken, profile, done) => {
     try {
-        const email = profile.emails[0].value;
-        const name = profile.displayName;
+        const email = profile.emails && profile.emails.length > 0 ? profile.emails[0].value : `${profile.id}@google.com`;
+        const name = profile.displayName || profile.name?.givenName || 'Google User';
         const provider = 'google';
         const providerId = profile.id;
 
         const user = await User.findOrCreateByProvider(email, name, provider, providerId);
         return done(null, user);
     } catch (err) {
+        console.error('Google Auth Error:', err);
         return done(err, null);
     }
 }));
@@ -32,15 +33,15 @@ passport.use(new GitHubStrategy({
     callbackURL: getCallbackURL('github')
 }, async (accessToken, refreshToken, profile, done) => {
     try {
-        // GitHub might not return email if it's private.
-        const email = profile.emails?.[0]?.value || profile._json?.email || `${profile.username}@github.com`;
-        const name = profile.displayName || profile.username;
+        const email = (profile.emails && profile.emails.length > 0) ? profile.emails[0].value : (profile._json?.email || `${profile.id}@github.com`);
+        const name = profile.displayName || profile.username || 'GitHub User';
         const provider = 'github';
         const providerId = profile.id;
 
         const user = await User.findOrCreateByProvider(email, name, provider, providerId);
         return done(null, user);
     } catch (err) {
+        console.error('GitHub Auth Error:', err);
         return done(err, null);
     }
 }));

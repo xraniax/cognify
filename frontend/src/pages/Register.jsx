@@ -30,7 +30,8 @@ const Register = () => {
     };
 
     const handleSocialLogin = (provider) => {
-        window.location.href = `${import.meta.env.VITE_API_URL}/auth/${provider}`;
+        const backendBase = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
+        window.location.href = `${backendBase}/auth/${provider}`;
     };
 
     return (
