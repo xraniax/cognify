@@ -56,9 +56,14 @@ export const AuthProvider = ({ children }) => {
             setUser(data);
             return res.data;
         } catch (err) {
-            const message = err.response?.data?.message || 'Registration failed';
-            setError(message);
-            throw new Error(message);
+            const errorData = err.response?.data;
+            const message = errorData?.message || 'Registration failed';
+            setError({ message, errors: errorData?.errors });
+
+            // Build a more informative error object
+            const customError = new Error(message);
+            customError.errors = errorData?.errors;
+            throw customError;
         } finally {
             setLoading(false);
         }

@@ -12,10 +12,16 @@ const validate = (schema) => (req, res, next) => {
             }
         }
 
+        let message = 'Validation failed';
+        if (Object.keys(formattedErrors).length > 0) {
+            // Use the first error message as the main message for better UX
+            message = Object.values(formattedErrors)[0];
+        }
+
         return res.status(400).json({
             status: 'error',
             code: 'VALIDATION_ERROR',
-            message: 'Validation failed',
+            message: message,
             errors: formattedErrors,
         });
     }

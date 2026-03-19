@@ -23,6 +23,8 @@ CREATE TABLE users (
     role user_role DEFAULT 'user',
     auth_provider VARCHAR(20) DEFAULT 'local',
     provider_id VARCHAR(255) UNIQUE,
+    reset_token_hash TEXT,
+    reset_token_expires TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );

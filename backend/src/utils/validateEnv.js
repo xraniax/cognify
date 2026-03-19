@@ -14,7 +14,12 @@ const validateEnv = () => {
         'GOOGLE_CLIENT_SECRET',
         'GITHUB_CLIENT_ID',
         'GITHUB_CLIENT_SECRET',
-        'SESSION_SECRET'
+        'SESSION_SECRET',
+        'SMTP_HOST',
+        'SMTP_PORT',
+        'SMTP_USER',
+        'SMTP_PASS',
+        'EMAIL_FROM'
     ];
 
     const missing = required.filter(key => !process.env[key]);
