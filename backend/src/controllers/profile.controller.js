@@ -43,7 +43,10 @@ class ProfileController {
         const chatRes = await query(
             "SELECT id, query as message, response, created_at as timestamp FROM chat_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5",
             [userId]
-        );
+        ).catch(err => {
+            console.error('[ProfileController] Chat history query failed (table might be missing):', err.message);
+            return { rows: [] };
+        });
 
         // 4. Analytics (Dynamic messages instead of hardcoded fakes)
         const hasActivity = totalMaterials > 0 || chatRes.rows.length > 0;

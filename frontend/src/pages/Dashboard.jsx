@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { subjectService } from '../services/api';
-import { Search, Filter, SortAsc, SortDesc, Clock, Plus, X, Edit2, Trash2, BookOpen } from 'lucide-react';
+import { Search, Filter, SortAsc, Plus, X, Edit2, Trash2, BookOpen } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatDistanceToNow } from 'date-fns';
 import CustomModal from '../components/Common/CustomModal';
@@ -9,16 +9,14 @@ import Skeleton from '../components/Common/Skeleton';
 
 import { useAuthStore } from '../store/useAuthStore';
 import { useSubjectStore } from '../store/useSubjectStore';
-import { useUIStore } from '../store/useUIStore';
 
 const Dashboard = () => {
-    const user = useAuthStore(state => state.user);
-    const { subjects, fetchSubjects, createSubject, selectSubject } = useSubjectStore();
-    const { setLoading, loadingStates } = useUIStore();
-    
-    const loading = loadingStates['subjects'] || false;
-    const creating = loadingStates['createSubject'] || false;
-    const [fetchError, setFetchError] = useState(null);
+    const user = useAuthStore((state) => state.data.user);
+    const subjects = useSubjectStore((state) => state.data.subjects);
+    const loading = useSubjectStore((state) => state.loading);
+    const fetchError = useSubjectStore((state) => state.error);
+    const { fetchSubjects, createSubject } = useSubjectStore((state) => state.actions);
+
     const [newSubjectName, setNewSubjectName] = useState('');
     const [createError, setCreateError] = useState(null);
 
@@ -32,18 +30,8 @@ const Dashboard = () => {
     const [isAdding, setIsAdding] = useState(false);
 
     useEffect(() => {
-        const init = async () => {
-            setLoading('subjects', true);
-            try {
-                await fetchSubjects();
-            } catch (err) {
-                setFetchError('Failed to load subjects');
-            } finally {
-                setLoading('subjects', false);
-            }
-        };
-        init();
-    }, [fetchSubjects, setLoading]);
+        fetchSubjects().catch(() => {});
+    }, [fetchSubjects]);
 
     // Client-side filtering and sorting
     const filteredAndSortedSubjects = React.useMemo(() => {
@@ -83,7 +71,6 @@ const Dashboard = () => {
     const handleCreateSubject = async (e) => {
         e.preventDefault();
         if (!newSubjectName.trim()) return;
-        setLoading('createSubject', true);
         setCreateError(null);
         try {
             await createSubject(newSubjectName);
@@ -93,8 +80,6 @@ const Dashboard = () => {
         } catch (err) {
             setCreateError(err.message || 'Failed to create subject.');
             toast.error('Failed to create subject');
-        } finally {
-            setLoading('createSubject', false);
         }
     };
 
@@ -109,7 +94,7 @@ const Dashboard = () => {
                     await subjectService.delete(id);
                     await fetchSubjects();
                     toast.success('Subject deleted');
-                } catch (err) {
+                } catch {
                     toast.error('Failed to delete subject');
                 } finally {
                     setIsModalOpen(false);
@@ -199,16 +184,16 @@ const Dashboard = () => {
                                 value={newSubjectName}
                                 onChange={(e) => { setNewSubjectName(e.target.value); setCreateError(null); }}
                                 autoFocus
-                                disabled={creating}
+                                disabled={loading}
                             />
                         </div>
                         <div className="flex gap-3">
                             <button
                                 type="submit"
                                 className="btn-vibrant px-10 h-14 min-w-[180px]"
-                                disabled={creating || !newSubjectName.trim()}
+                                disabled={loading || !newSubjectName.trim()}
                             >
-                                {creating ? (
+                                {loading ? (
                                     <div className="flex items-center gap-2">
                                         <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
                                         Creating...

@@ -6,30 +6,25 @@ import { useUIStore } from '../store/useUIStore';
 const Register = () => {
     const [formData, setFormData] = useState({ name: '', email: '', password: '' });
     const [err, setErr] = useState({ message: '', fields: {} });
-    const [sending, setSending] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
 
-    const register = useAuthStore(state => state.register);
-    const setLoading = useUIStore(state => state.setLoading);
+    const registerAction = useAuthStore(state => state.actions.register);
+    const globalLoading = useUIStore(state => state.actions.getGlobalLoading(['auth']));
+    const sending = !!globalLoading;
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setSending(true);
-        setLoading('register', true);
         setErr({ message: '', fields: {} });
 
         try {
-            await register(formData);
+            await registerAction(formData);
             navigate('/dashboard');
         } catch (error) {
             setErr({
                 message: error.message || 'Registration failed.',
                 fields: error.errors || {}
             });
-        } finally {
-            setSending(false);
-            setLoading('register', false);
         }
     };
 

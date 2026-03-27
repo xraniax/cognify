@@ -5,7 +5,7 @@ import { useSpeech } from '../hooks/useSpeech';
 import { PanelLeft, PanelRight } from 'lucide-react';
 import { useSubjectStore } from '../store/useSubjectStore';
 import { useMaterialStore } from '../store/useMaterialStore';
-import { useUIStore } from '../store/useUIStore';
+import { PROCESSING, normalizeStatus } from '../constants/statusConstants';
 import toast from 'react-hot-toast';
 import CustomModal from '../components/Common/CustomModal';
 
@@ -22,14 +22,17 @@ const SubjectDetail = () => {
     const normalizedId = String(id);
     const redirectedMaterialId = location.state?.openMaterialId;
     
-    const { subjects, fetchSubjects } = useSubjectStore();
-    const { materials, fetchMaterials, clearAllPolling } = useMaterialStore();
-    const { setLoading, loadingStates } = useUIStore();
+    const subjects = useSubjectStore((state) => state.data.subjects);
+    const subjectsLoading = useSubjectStore((state) => state.loading);
+    const fetchSubjects = useSubjectStore((state) => state.actions.fetchSubjects);
+    const materials = useMaterialStore((state) => state.data.materials);
+    const materialsLoading = useMaterialStore((state) => state.loading);
+    const fetchMaterials = useMaterialStore((state) => state.actions.fetchMaterials);
+    const clearAllPolling = useMaterialStore((state) => state.actions.clearAllPolling);
     
     const subject = subjects.find((s) => String(s.id) === normalizedId);
     const uploads = materials.filter((m) => String(m.subject_id) === normalizedId);
-    const loading = loadingStates['subjectDetail'] || false;
-    const isGenerating = loadingStates['generating'] || false;
+    const loading = subjectsLoading || materialsLoading;
 
     // Modal state
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -51,13 +54,13 @@ const SubjectDetail = () => {
     // Generation state
     const [genError, setGenError] = useState('');
     const [genType, setGenType] = useState('summary');
+    const [isGenerating, setIsGenerating] = useState(false);
     const [genResult, setGenResult] = useState('');
 
     const { isListening, speak, listen } = useSpeech();
 
     useEffect(() => {
         const init = async () => {
-            setLoading('subjectDetail', true);
             try {
                 await Promise.all([fetchSubjects(), fetchMaterials()]);
                 
@@ -69,15 +72,13 @@ const SubjectDetail = () => {
                 }
             } catch {
                 console.error('Failed to load subject details');
-            } finally {
-                setLoading('subjectDetail', false);
             }
         };
         init();
         return () => {
             clearAllPolling();
         };
-    }, [id, fetchSubjects, fetchMaterials, setLoading, clearAllPolling, redirectedMaterialId]);
+    }, [id, fetchSubjects, fetchMaterials, clearAllPolling, redirectedMaterialId]);
 
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -143,7 +144,7 @@ const SubjectDetail = () => {
             setGenError('Select at least one document from the Source Files panel first.');
             return;
         }
-        setLoading('generating', true);
+        setIsGenerating(true);
         setGenResult('');
         try {
             const res = await materialService.generateCombined(targets, genType);
@@ -151,7 +152,7 @@ const SubjectDetail = () => {
         } catch (err) {
             setGenError(err.message || 'Generation failed. Please try again.');
         } finally {
-            setLoading('generating', false);
+            setIsGenerating(false);
         }
     };
 

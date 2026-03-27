@@ -20,8 +20,9 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import LoadingOverlay from './components/Common/LoadingOverlay';
 import JobProgress from './components/Common/JobProgress';
-import { useUIStore } from './store/useUIStore';
+import { useAuthStore } from './store/useAuthStore';
 import { useMaterialStore } from './store/useMaterialStore';
+import { useUIStore } from './store/useUIStore';
 
 const RouteLoadingState = () => (
   <div className="flex-1 flex items-center justify-center bg-white">
@@ -96,16 +97,17 @@ const AppContent = () => {
 };
 
 const App = () => {
-  const loadingStates = useUIStore(state => state.loadingStates);
-  const jobProgress = useMaterialStore(state => state.jobProgress);
-  
-  // Only block UI for critical auth operations
-  const isBlocking = loadingStates['login'] || loadingStates['register'];
+  const globalLoading = useUIStore((state) => state.actions.getGlobalLoading());
+  const jobProgress = useMaterialStore((state) => state.data.jobProgress);
+
+  const isVisible = !!globalLoading;
+  const loadingMessage = globalLoading?.message || 'Please wait...';
+  const isBlocking = globalLoading?.blocking ?? true;
 
   return (
     <AuthProvider>
       <Toaster position="top-right" />
-      <LoadingOverlay visible={isBlocking} message="Please wait..." />
+      <LoadingOverlay visible={isVisible} message={loadingMessage} blocking={isBlocking} />
       <JobProgress job={jobProgress} />
       <Router>
         <AppContent />

@@ -1,6 +1,7 @@
 import { query } from '../utils/config/db.js';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
+import { FAILED } from '../constants/status.enum.js';
 
 // Cost factor for bcrypt key derivation. Higher = slower brute force.
 // 12 rounds is a good balance of security and performance.
@@ -163,17 +164,17 @@ class User {
 
         const result = await query(
             `SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.last_active_at, u.storage_limit_bytes, u.avatar_url, u.settings, u.achievements,
-             (SELECT COUNT(*)::int FROM materials m WHERE m.user_id = u.id AND UPPER(m.status) != 'FAILED') as material_count,
+             (SELECT COUNT(*)::int FROM materials m WHERE m.user_id = u.id AND UPPER(m.status) != $3) as material_count,
              (SELECT COUNT(*)::int FROM subjects s WHERE s.user_id = u.id) as workspace_count,
              ((SELECT COALESCE(SUM(f.size_bytes), 0)::bigint FROM files f
                WHERE f.user_id = u.id) + 
               (SELECT COALESCE(SUM(OCTET_LENGTH(COALESCE(m.content, ''))), 0)::bigint FROM materials m
-               WHERE m.user_id = u.id AND UPPER(m.status) != 'FAILED')
+               WHERE m.user_id = u.id AND UPPER(m.status) != $3)
              ) as storage_usage_bytes
              FROM users u
              ORDER BY ${sortColumn} ${sortDirection}
              LIMIT $1 OFFSET $2`,
-             [limit, offset]
+             [limit, offset, FAILED]
         );
         return result.rows;
     }

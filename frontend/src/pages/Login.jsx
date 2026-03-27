@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/useAuthStore';
 import { useUIStore } from '../store/useUIStore';
@@ -7,31 +7,34 @@ const Login = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [err, setErr] = useState('');
-    const [sending, setSending] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
 
-    const login = useAuthStore(state => state.login);
-    const setLoading = useUIStore(state => state.setLoading);
+    const login = useAuthStore(state => state.actions.login);
+    const globalLoading = useUIStore(state => state.actions.getGlobalLoading(['auth']));
+    const sending = !!globalLoading;
     const navigate = useNavigate();
     const location = useLocation();
 
-    useEffect(() => {
+    const authErrorFromQuery = useMemo(() => {
         const params = new URLSearchParams(location.search);
         const error = params.get('error');
 
         if (error === 'auth_failed') {
-            setErr('Authentication failed. Please check your external provider permissions.');
-        } else if (error === 'account_suspended') {
-            setErr('Your account has been suspended. Please contact support if you believe this is a mistake.');
-        } else if (params.get('expired') === 'true') {
-            setErr('Your session has expired. Please log in again.');
+            return 'Authentication failed. Please check your external provider permissions.';
         }
-    }, [location]);
+        if (error === 'account_suspended') {
+            return 'Your account has been suspended. Please contact support if you believe this is a mistake.';
+        }
+        if (params.get('expired') === 'true') {
+            return 'Your session has expired. Please log in again.';
+        }
+        return '';
+    }, [location.search]);
+
+    const displayedError = err || authErrorFromQuery;
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setSending(true);
-        setLoading('login', true);
         setErr('');
 
         try {
@@ -39,9 +42,6 @@ const Login = () => {
             navigate('/dashboard');
         } catch (error) {
             setErr(error.message || 'Login failed. Please check your credentials.');
-        } finally {
-            setSending(false);
-            setLoading('login', false);
         }
     };
 
@@ -58,9 +58,9 @@ const Login = () => {
                     <p className="text-gray-500 font-medium">Please enter your details to sign in</p>
                 </div>
 
-                {err && (
+                {displayedError && (
                     <div className="bg-red-50 text-red-600 p-4 rounded-xl mb-6 text-sm font-medium border border-red-100 animate-in slide-in-from-top-2">
-                        {err}
+                        {displayedError}
                     </div>
                 )}
 

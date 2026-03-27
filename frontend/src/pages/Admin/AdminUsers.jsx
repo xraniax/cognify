@@ -10,6 +10,7 @@ import { toast } from 'react-hot-toast';
 import CustomModal from '../../components/Common/CustomModal';
 import Skeleton from '../../components/Common/Skeleton';
 import { formatDistanceToNow, format } from 'date-fns';
+import { useUIStore } from '../../store/useUIStore';
 
 const formatBytes = (bytes) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -112,7 +113,11 @@ const AdminUsers = () => {
 
     const handleAction = async () => {
         if (!selectedUser || !modalType) return;
+        const uiActions = useUIStore.getState().actions;
+        const msg = modalType === 'quota' ? 'Updating quota...' : `${modalType.charAt(0).toUpperCase() + modalType.slice(1)}ing user...`;
+        
         setIsActionLoading(true);
+        uiActions.setLoading('adminAction', true, msg, false);
         try {
             if (modalType === 'suspend') {
                 await adminService.updateUserStatus(selectedUser.id, 'suspended');
@@ -141,6 +146,7 @@ const AdminUsers = () => {
             toast.error(error.response?.data?.message || 'Action failed');
         } finally {
             setIsActionLoading(false);
+            uiActions.setLoading('adminAction', false);
         }
     };
 

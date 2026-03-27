@@ -1,34 +1,27 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMaterialStore } from '../store/useMaterialStore';
-import { useUIStore } from '../store/useUIStore';
 import { materialService } from '../services/api';
+import { PROCESSING, normalizeStatus } from '../constants/statusConstants';
 import { Search, Calendar, BookOpen, ChevronRight, Clock, FileText, Trash2, LayoutGrid, List } from 'lucide-react';
 import { format, isToday, isYesterday, subDays, startOfDay } from 'date-fns';
 import Skeleton from '../components/Common/Skeleton';
+import StatusBadge from '../components/Common/StatusBadge';
 import toast from 'react-hot-toast';
 
 const History = () => {
     const navigate = useNavigate();
-    const { materials, fetchMaterials } = useMaterialStore();
-    const { setLoading, loadingStates } = useUIStore();
-    const loading = loadingStates['history'] || false;
+    const materials = useMaterialStore((state) => state.data.materials);
+    const loading = useMaterialStore((state) => state.loading);
+    const fetchMaterials = useMaterialStore((state) => state.actions.fetchMaterials);
     const [searchQuery, setSearchQuery] = useState('');
     const [viewMode, setViewMode] = useState('grid');
 
     useEffect(() => {
-        const init = async () => {
-            setLoading('history', true);
-            try {
-                await fetchMaterials();
-            } catch {
-                toast.error('Failed to load study history');
-            } finally {
-                setLoading('history', false);
-            }
-        };
-        init();
-    }, [fetchMaterials, setLoading]);
+        fetchMaterials().catch(() => {
+            toast.error('Failed to load study history');
+        });
+    }, [fetchMaterials]);
 
     const handleDelete = async (e, id) => {
         e.preventDefault();
@@ -83,7 +76,7 @@ const History = () => {
                 </div>
                 <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "space-y-4"}>
                     {items.map(m => {
-                        const isProcessing = String(m.status || '').toUpperCase() === 'PROCESSING';
+                        const isProcessing = normalizeStatus(m.status) === PROCESSING;
                         return (
                             <div 
                                 key={m.id} 
@@ -101,13 +94,9 @@ const History = () => {
                                         )}
                                     </div>
                                     <div className="min-w-0 flex-grow">
-                                        <div className="flex items-center gap-2">
-                                            <h4 className="font-bold text-gray-900 truncate group-hover:text-indigo-600 transition-colors">{m.title}</h4>
-                                            {isProcessing && (
-                                                <span className="text-[8px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-1.5 py-0.5 rounded animate-pulse">
-                                                    AI Processing
-                                                </span>
-                                            )}
+                                        <div className="flex items-center justify-between gap-4">
+                                            <h4 className="font-bold text-gray-900 truncate group-hover:text-indigo-600 transition-colors uppercase tracking-tight">{m.title}</h4>
+                                            <StatusBadge status={m.status} />
                                         </div>
                                         <div className="flex items-center gap-2 mt-1">
                                             <span className="px-2 py-0.5 rounded-md bg-gray-50 text-gray-400 text-[10px] font-bold uppercase tracking-wider">
@@ -123,8 +112,8 @@ const History = () => {
 
                                 {viewMode === 'grid' && (
                                     <div className="mt-4 pt-4 border-t border-gray-50 flex items-center justify-between">
-                                        <div className="text-xs text-gray-400 font-medium line-clamp-1">
-                                            {isProcessing ? "AI is refining knowledge..." : m.ai_generated_content?.result ? "AI Insights Ready" : "Document Active"}
+                                        <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wider line-clamp-1">
+                                            {m.ai_generated_content?.result ? "Brain Analysis Ready" : "Source Document Active"}
                                         </div>
                                         <button 
                                             onClick={(e) => handleDelete(e, m.id)}

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useMaterialStore } from '../../store/useMaterialStore';
 import { useSubjectStore } from '../../store/useSubjectStore';
-import { useUIStore } from '../../store/useUIStore';
 import { materialService } from '../../services/api';
 import { File as FileIcon, Upload as UploadIcon, X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -18,10 +17,10 @@ const FileUpload = ({ subjectId: initialSubjectId, onSuccess, onCancel, inline =
         allowed_types: ['application/pdf'] 
     });
 
-    const uploadMaterial = useMaterialStore(state => state.uploadMaterial);
-    const { subjects, fetchSubjects } = useSubjectStore();
-    const { setLoading, loadingStates } = useUIStore();
-    const uploading = loadingStates['upload'] || false;
+    const uploadMaterial = useMaterialStore((state) => state.actions.uploadMaterial);
+    const uploading = useMaterialStore((state) => state.loading);
+    const subjects = useSubjectStore((state) => state.data.subjects);
+    const fetchSubjects = useSubjectStore((state) => state.actions.fetchSubjects);
 
     useEffect(() => {
         const loadSettings = async () => {
@@ -72,7 +71,6 @@ const FileUpload = ({ subjectId: initialSubjectId, onSuccess, onCancel, inline =
             return;
         }
 
-        setLoading('upload', true);
         setValidationErrors({});
 
         try {
@@ -103,8 +101,6 @@ const FileUpload = ({ subjectId: initialSubjectId, onSuccess, onCancel, inline =
             } else {
                 toast.error(err.message || 'Upload failed');
             }
-        } finally {
-            setLoading('upload', false);
         }
     };
 

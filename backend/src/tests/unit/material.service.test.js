@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import { mockUser, mockMaterial, mockSubject } from '../utils/mockData.js';
+import { COMPLETED, FAILED } from '../../constants/status.enum.js';
 
 // Define mocks before anything else
 jest.unstable_mockModule('../../models/material.model.js', () => ({
@@ -8,6 +9,7 @@ jest.unstable_mockModule('../../models/material.model.js', () => ({
         updateAIResult: jest.fn(),
         updateContent: jest.fn(),
         updateStatus: jest.fn(),
+        findByTitle: jest.fn(),
         findById: jest.fn(),
         findByIds: jest.fn(),
         findByUserId: jest.fn(),
@@ -22,6 +24,12 @@ jest.unstable_mockModule('../../services/subject.service.js', () => ({
     }
 }));
 
+jest.unstable_mockModule('../../services/quota.service.js', () => ({
+    default: {
+        checkUploadAllowance: jest.fn()
+    }
+}));
+
 jest.unstable_mockModule('axios', () => ({
     default: {
         post: jest.fn()
@@ -32,6 +40,7 @@ jest.unstable_mockModule('axios', () => ({
 const { default: axios } = await import('axios');
 const { default: Material } = await import('../../models/material.model.js');
 const { default: SubjectService } = await import('../../services/subject.service.js');
+const { default: QuotaService } = await import('../../services/quota.service.js');
 const { default: MaterialService } = await import('../../services/material.service.js');
 
 describe('MaterialService Unit Tests', () => {
@@ -43,7 +52,9 @@ describe('MaterialService Unit Tests', () => {
         it('should successfully process a text-only document', async () => {
             // Setup mocks using the imported (mocked) modules
             SubjectService.getOrCreateImportedSubject.mockResolvedValue(mockSubject);
+            QuotaService.checkUploadAllowance.mockResolvedValue(true);
             Material.create.mockResolvedValue(mockMaterial);
+            Material.findByTitle.mockResolvedValue(null);
             Material.findById.mockResolvedValue(mockMaterial);
             Material.updateContent.mockResolvedValue({ ...mockMaterial, content: 'Extracted text' });
             Material.updateAIResult.mockResolvedValue(mockMaterial);
@@ -69,12 +80,14 @@ describe('MaterialService Unit Tests', () => {
             );
 
             expect(Material.create).toHaveBeenCalled();
-            expect(result.status).toBe('completed');
+            expect(result.status).toBe(COMPLETED);
         });
 
         it('should handle AI engine failure by marking status as failed', async () => {
             SubjectService.getOrCreateImportedSubject.mockResolvedValue(mockSubject);
+            QuotaService.checkUploadAllowance.mockResolvedValue(true);
             Material.create.mockResolvedValue(mockMaterial);
+            Material.findByTitle.mockResolvedValue(null);
             Material.findById.mockResolvedValue(mockMaterial);
 
             axios.post.mockRejectedValue(new Error('Engine Down'));
@@ -87,7 +100,7 @@ describe('MaterialService Unit Tests', () => {
                 'summary'
             );
 
-            expect(Material.updateStatus).toHaveBeenCalledWith(expect.anything(), mockUser.id, 'failed');
+            expect(Material.updateStatus).toHaveBeenCalledWith(expect.anything(), mockUser.id, FAILED);
         });
     });
 });

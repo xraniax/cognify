@@ -1,3 +1,5 @@
+import { COMPLETED } from '../../constants/status.enum.js';
+
 export const mockUser = {
     id: '123e4567-e89b-12d3-a456-426614174000',
     email: 'test@example.com',
@@ -11,7 +13,7 @@ export const mockMaterial = {
     title: 'Test Document',
     content: 'Mock content for testing',
     type: 'upload',
-    status: 'completed'
+    status: COMPLETED
 };
 
 export const mockSubject = {

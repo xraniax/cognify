@@ -9,6 +9,18 @@ import SubjectService from './subject.service.js';
 import SettingsService from './settings.service.js';
 import QuotaService from './quota.service.js';
 import { query } from '../utils/config/db.js';
+import {
+    COMPLETED,
+    FAILED,
+    FAILURE,
+    PENDING_JOB,
+    PROCESSING,
+    RECEIVED,
+    STARTED,
+    SUCCESS,
+    TERMINAL_STATUSES,
+    normalizeStatus
+} from '../constants/status.enum.js';
 
 class MaterialService {
     /**
@@ -52,7 +64,7 @@ class MaterialService {
             normalizedTitle, 
             content || '', 
             type,
-            'PENDING_JOB'
+            PENDING_JOB
         );
         
         // 5. Track File Persistence and Link to Material
@@ -102,14 +114,14 @@ class MaterialService {
             const { job_id } = aiResponse.data;
 
             // 9. Update record with real job_id and shift to PROCESSING
-            await Material.updateStatus(documentRecord.id, userId, 'PROCESSING', job_id);
+            await Material.updateStatus(documentRecord.id, userId, PROCESSING, job_id);
 
             console.info(`[MaterialService] Async job triggered: ${job_id} for material: ${documentRecord.id}`);
 
             return await Material.findById(documentRecord.id, userId);
         } catch (error) {
             console.error(`[MaterialService] Failed to trigger AI job: ${error.message}`, { ...opContext, materialId: documentRecord.id });
-            await Material.updateStatus(documentRecord.id, userId, 'FAILED');
+            await Material.updateStatus(documentRecord.id, userId, FAILED);
             return await Material.findById(documentRecord.id, userId);
         }
     }
@@ -132,13 +144,12 @@ class MaterialService {
         if (!material) return null;
 
         // 1. If terminal state, return DB truth immediately
-        const terminalStates = ['COMPLETED', 'FAILED'];
-        if (terminalStates.includes(material.status?.toUpperCase())) {
+        if (TERMINAL_STATUSES.includes(normalizeStatus(material.status))) {
             return material;
         }
 
         // 2. Watchdog: check if job is stuck in PROCESSING for too long (> 10 mins)
-        if (material.status === 'PROCESSING' && material.started_at) {
+        if (normalizeStatus(material.status) === PROCESSING && material.started_at) {
             const startedAt = new Date(material.started_at);
             const now = new Date();
             const diffMinutes = (now - startedAt) / (1000 * 60);
@@ -156,9 +167,10 @@ class MaterialService {
             try {
                 const response = await axios.get(`${process.env.ENGINE_URL}/job/${material.job_id}`);
                 const { status, result, error } = response.data;
+                const engineStatus = normalizeStatus(status);
 
                 // SUCCESS: Sync results to DB
-                if (status === 'SUCCESS' && result) {
+                if (engineStatus === SUCCESS && result) {
                     const extractedText = result.extracted_text || material.content;
                     await Material.updateContent(materialId, userId, extractedText);
                     await Material.updateAIResult(materialId, userId, {
@@ -171,15 +183,15 @@ class MaterialService {
                 }
 
                 // FAILURE: Record error in DB
-                if (status === 'FAILURE') {
+                if (engineStatus === FAILURE) {
                     await Material.recordFailure(materialId, userId, error || 'Unknown engine error');
                     await this._garbageCollectFile(materialId);
                     return await Material.findById(materialId, userId);
                 }
 
                 // STARTED or RECEIVED: Keep as PROCESSING in DB
-                if ((status === 'STARTED' || status === 'RECEIVED') && material.status !== 'PROCESSING') {
-                    await Material.updateStatus(materialId, userId, 'PROCESSING');
+                if ((engineStatus === STARTED || engineStatus === RECEIVED) && normalizeStatus(material.status) !== PROCESSING) {
+                    await Material.updateStatus(materialId, userId, PROCESSING);
                     return await Material.findById(materialId, userId);
                 }
             } catch (err) {
@@ -215,13 +227,15 @@ class MaterialService {
                 ? await global.__mockAxiosPost(endpoint, payload, options)
                 : await axios.post(endpoint, payload, options);
 
-            // Update Subject activity for involved materials
-            // Note: In this specific implementation, we assume materials belong to a subject grounded in context
-            if (sourceDocuments.length > 0 && sourceDocuments[0].subject_id) {
-                await Subject.touch(sourceDocuments[0].subject_id, userId);
-            }
+            const result = aiResponse.data;
 
-            return aiResponse.data;
+            // 4. Log interaction asynchronously (history)
+            query(
+                "INSERT INTO chat_history (user_id, query, response) VALUES ($1, $2, $3)",
+                [userId, question, result.result || result.response || 'No response']
+            ).catch(err => console.error('[MaterialService] Failed to log chat:', err.message));
+
+            return result;
         } catch (error) {
             console.error('[MaterialService] Engine Chat Error:', error.message);
             const isTimeout = error.code === 'ECONNABORTED';
@@ -280,6 +294,28 @@ class MaterialService {
             }
         } catch (gcErr) {
             console.error(`[GC] Failed to clean up file for material ${materialId}:`, gcErr.message);
+        }
+    }
+
+    /**
+     * Cancel a running AI job.
+     */
+    static async cancelJob(userId, materialId) {
+        const material = await Material.findById(materialId, userId);
+        if (!material) throw new Error('Material not found');
+        if (!material.job_id) throw new Error('Material has no active job');
+
+        try {
+            // Forward cancellation to Python engine
+            await axios.post(`${process.env.ENGINE_URL}/job/cancel`, { job_id: material.job_id }, { timeout: 5000 });
+            
+            // Revert material status to IDLE or just keep it as is?
+            // Usually, we mark it as FAILED with a 'Cancelled by user' message.
+            await Material.recordFailure(materialId, userId, 'Processing cancelled by user');
+            return true;
+        } catch (error) {
+            console.error('[MaterialService] Job Cancel Error:', error.message);
+            throw new Error('Failed to cancel job with AI engine');
         }
     }
 

@@ -7,26 +7,58 @@ import { create } from 'zustand';
  * errors: { [taskKey]: string | null }
  */
 export const useUIStore = create((set, get) => ({
-    loadingStates: {},
-    errors: {},
+    data: {
+        loadingStates: {},
+        errors: {}
+    },
+    loading: false,
+    error: null,
+    actions: {
+        setLoading: (key, isLoading, message = 'Loading...', blocking = true) =>
+            set((state) => ({
+                ...state,
+                data: {
+                    ...state.data,
+                    loadingStates: { 
+                        ...state.data.loadingStates, 
+                        [key]: isLoading ? { loading: true, message, blocking } : { loading: false, message: '', blocking: true }
+                    }
+                }
+            })),
 
-    setLoading: (key, isLoading) => set((state) => ({
-        loadingStates: { ...state.loadingStates, [key]: isLoading }
-    })),
+        setError: (key, message) =>
+            set((state) => ({
+                ...state,
+                data: {
+                    ...state.data,
+                    errors: { ...state.data.errors, [key]: message },
+                    loadingStates: { 
+                        ...state.data.loadingStates, 
+                        [key]: { loading: false, message: '' }
+                    }
+                }
+            })),
 
-    setError: (key, message) => set((state) => ({
-        errors: { ...state.errors, [key]: message },
-        loadingStates: { ...state.loadingStates, [key]: false }
-    })),
+        clearError: (key) =>
+            set((state) => ({
+                ...state,
+                data: {
+                    ...state.data,
+                    errors: { ...state.data.errors, [key]: null }
+                }
+            })),
 
-    clearError: (key) => set((state) => ({
-        errors: { ...state.errors, [key]: null }
-    })),
-
-    // Helper to check if ANY critical task is loading
-    isGlobalLoading: (keys = []) => {
-        const loadingStates = get().loadingStates || {};
-        if (keys.length === 0) return Object.values(loadingStates).some(Boolean);
-        return keys.some((k) => Boolean(loadingStates[k]));
+        // Helper to check if ANY critical task is loading
+        getGlobalLoading: (keys = []) => {
+            const loadingStates = get().data.loadingStates || {};
+            const activeKeys = keys.length > 0 ? keys : Object.keys(loadingStates);
+            
+            for (const key of activeKeys) {
+                if (loadingStates[key]?.loading) {
+                    return loadingStates[key];
+                }
+            }
+            return null;
+        }
     }
 }));

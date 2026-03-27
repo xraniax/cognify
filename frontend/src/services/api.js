@@ -71,6 +71,7 @@ export const materialService = {
     generateCombined: (materialIds, taskType) => api.post('/materials/generate-combined', { materialIds, taskType }),
     delete: (id) => api.delete(`/materials/${id}`),
     sync: (id) => api.get(`/materials/${id}/sync`),
+    cancel: (id) => api.post(`/materials/${id}/cancel`),
 };
 
 export const subjectService = {

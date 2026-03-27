@@ -1,5 +1,7 @@
 import React from 'react';
 import { Trash2, Sparkles, PanelLeftClose, FileText, CheckCircle2 } from 'lucide-react';
+import { PROCESSING, normalizeStatus } from '../../constants/statusConstants';
+import StatusBadge from '../Common/StatusBadge';
 
 const FilePanel = ({
     materials,
@@ -55,7 +57,7 @@ const FilePanel = ({
                         </div>
                     ) : (
                         materials.map((m) => {
-                            const isProcessing = String(m.status || '').toUpperCase() === 'PROCESSING';
+                            const isProcessing = normalizeStatus(m.status) === PROCESSING;
                             const isSelected = selectedMaterials.includes(m.id);
                             
                             return (
@@ -73,24 +75,18 @@ const FilePanel = ({
                                     <div className={`mt-1 shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
                                         isSelected ? 'bg-indigo-500 text-white' : 'bg-gray-50 text-gray-400'
                                     }`}>
-                                        {isProcessing ? (
-                                            <div className="w-4 h-4 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
-                                        ) : isSelected ? (
+                                        {isSelected ? (
                                             <CheckCircle2 className="w-4 h-4" />
                                         ) : (
                                             <FileText className="w-4 h-4" />
                                         )}
                                     </div>
                                     <div className="min-w-0 flex-grow">
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex items-center justify-between gap-2 overflow-hidden">
                                             <h4 className={`text-sm font-bold truncate ${isSelected ? 'text-indigo-900' : 'text-gray-700'}`}>
                                                 {m.title}
                                             </h4>
-                                            {isProcessing && (
-                                                <span className="text-[8px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-1.5 py-0.5 rounded">
-                                                    AI Refining...
-                                                </span>
-                                            )}
+                                            <StatusBadge status={m.status} />
                                         </div>
                                         <div className="flex items-center gap-2 mt-1">
                                             <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1">

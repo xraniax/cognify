@@ -18,6 +18,7 @@ router.get('/history', MaterialController.getHistory);
 router.post('/chat-combined', aiLimiter, validate(chatCombinedSchema), MaterialController.chatCombined);
 router.post('/generate-combined', aiLimiter, validate(generateCombinedSchema), MaterialController.generateCombined);
 router.get('/:id/sync', MaterialController.syncStatus);
+router.post('/:id/cancel', MaterialController.cancelJob);
 router.delete('/:id', MaterialController.delete);
 
 export default router;

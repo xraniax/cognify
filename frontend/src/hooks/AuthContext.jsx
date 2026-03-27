@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useCallback } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
+import { useUIStore } from '../store/useUIStore';
 
 const AuthContext = createContext();
 
@@ -7,28 +8,37 @@ const AuthContext = createContext();
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }) => {
-    const auth = useAuthStore();
-    const { isInitialized, loadUser } = auth;
+    const data = useAuthStore((state) => state.data);
+    const globalLoading = useUIStore((state) => state.actions.getGlobalLoading(['auth']));
+    const error = useAuthStore((state) => state.error);
+    const actions = useAuthStore((state) => state.actions);
+    
+    const { isInitialized, user } = data;
+    const { loadUser, login, register, logout, setUser } = actions;
+    
+    const loading = !isInitialized || !!globalLoading;
 
     useEffect(() => {
         if (!isInitialized) {
-            loadUser();
+            loadUser().catch(() => {});
         }
     }, [isInitialized, loadUser]);
 
-    const value = {
-        user: auth.user,
-        loading: auth.loading,
-        error: auth.error,
-        login: auth.login,
-        register: auth.register,
-        logout: auth.logout,
-        updateUser: auth.setUser,
-        loginWithToken: async (token) => {
-            localStorage.setItem('token', token);
-            return await auth.loadUser();
-        }
-    };
+    const loginWithToken = useCallback(async (token) => {
+        localStorage.setItem('token', token);
+        return await loadUser();
+    }, [loadUser]);
+
+    const value = useMemo(() => ({
+        user,
+        loading,
+        error,
+        login,
+        register,
+        logout,
+        updateUser: setUser,
+        loginWithToken
+    }), [user, loading, error, login, register, logout, setUser, loginWithToken]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

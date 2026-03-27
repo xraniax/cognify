@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { profileService } from '../services/api';
 import { useAuth } from '../hooks/AuthContext';
+import { useUIStore } from '../store/useUIStore';
+import StatusBadge from '../components/Common/StatusBadge';
 import toast from 'react-hot-toast';
 
 // Simple SVG Icons
@@ -9,18 +11,28 @@ const Icons = {
   Stats: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
   Activity: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>,
   Settings: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
-  Award: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg>
+  Award: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg>,
+  HardDrive: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 1.1.9 2 2 2h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2zm0 5h16M7 15h.01M11 15h.01" /></svg>
+};
+
+const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
 const Profile = () => {
     const { user, updateUser } = useAuth();
     const [profileData, setProfileData] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const uiLoading = useUIStore(state => state.actions.getGlobalLoading(['profile']));
+    const uiActions = useUIStore(state => state.actions);
     const [activeTab, setActiveTab] = useState('info');
     
     // Edit state
     const [isEditing, setIsEditing] = useState(false);
-    const [editForm, setEditForm] = useState({ name: '', notifications: true, theme: 'system' });
+    const [editForm, setEditForm] = useState({ name: '', notifications: true, theme: 'light' });
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
@@ -29,18 +41,18 @@ const Profile = () => {
 
     const fetchProfile = async () => {
         try {
-            setLoading(true);
+            uiActions.setLoading('profile', true, 'Loading your data...', false);
             const res = await profileService.getProfile();
             setProfileData(res.data.data);
             setEditForm({
                 name: res.data.data.basic_info.name || '',
                 notifications: res.data.data.settings.notifications ?? true,
-                theme: res.data.data.settings.theme || 'system'
+                theme: res.data.data.settings.theme || 'light'
             });
         } catch (err) {
             toast.error(err.message || 'Failed to load profile');
         } finally {
-            setLoading(false);
+            uiActions.setLoading('profile', false);
         }
     };
 
@@ -72,15 +84,26 @@ const Profile = () => {
         }
     };
 
-    if (loading) {
+    if (uiLoading && !profileData) {
         return (
-            <div className="flex h-full items-center justify-center p-8 bg-[#fcfbf9]">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-fuchsia-600"></div>
+            <div className="flex-1 flex flex-col items-center justify-center p-20 bg-[#fcfbf9] min-h-[400px]">
+                <div className="w-16 h-16 border-4 border-fuchsia-50 border-t-fuchsia-500 rounded-full animate-spin mb-6 shadow-sm"></div>
+                <h3 className="text-xl font-black text-gray-900 mb-2">Architecting your profile</h3>
+                <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Synchronizing knowledge...</p>
             </div>
         );
     }
 
-    if (!profileData) return <div className="p-8 text-center text-gray-500">Failed to load profile</div>;
+    if (!profileData) return (
+        <div className="flex-1 flex flex-col items-center justify-center p-20 bg-white">
+            <div className="w-20 h-20 bg-red-50 text-red-500 rounded-[2rem] flex items-center justify-center mb-6 border border-red-100">
+                <Icons.Activity />
+            </div>
+            <h3 className="text-2xl font-black text-gray-900 mb-2">Knowledge retrieval failed</h3>
+            <p className="text-gray-500 font-medium mb-8">We couldn't load your profile data at this time.</p>
+            <button onClick={fetchProfile} className="btn-vibrant px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs">Retry sync</button>
+        </div>
+    );
 
     const { basic_info, stats, activity, settings, analytics } = profileData;
 
@@ -356,13 +379,34 @@ const Profile = () => {
                                 <ul className="space-y-4 mb-10">
                                     {activity.recent_uploads?.length > 0 ? activity.recent_uploads.map(item => (
                                         <li key={item.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
-                                            <div>
-                                                <p className="font-semibold text-gray-900">{item.title}</p>
-                                                <p className="text-sm text-gray-500">{new Date(item.created_at).toLocaleString()}</p>
+                                            <div className="flex items-center gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="font-semibold text-gray-900 truncate max-w-[200px]">{item.title}</p>
+                                                    <p className="text-[10px] text-gray-400 font-medium">{new Date(item.created_at).toLocaleString()}</p>
+                                                </div>
+                                                <StatusBadge status={item.status} size="sm" />
                                             </div>
-                                            <span className="text-xs uppercase font-bold tracking-wider bg-white border border-gray-200 px-3 py-1 rounded-lg text-gray-600">Material</span>
                                         </li>
                                     )) : <li className="text-gray-500 italic p-4">No recent uploads.</li>}
+                                </ul>
+
+                                <h3 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-100 flex items-center gap-2">
+                                    <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                    Recent Quizzes
+                                    <span className="text-xs ml-2 bg-gray-100 text-gray-600 px-2 py-1 rounded-full">{activity.recent_quizzes?.length || 0}</span>
+                                </h3>
+                                <ul className="space-y-4 mb-10">
+                                    {activity.recent_quizzes?.length > 0 ? activity.recent_quizzes.map(item => (
+                                        <li key={item.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
+                                            <div className="flex items-center gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="font-semibold text-gray-900 truncate max-w-[200px]">{item.title}</p>
+                                                    <p className="text-[10px] text-gray-400 font-medium">{new Date(item.created_at).toLocaleString()}</p>
+                                                </div>
+                                                <StatusBadge status={item.status} size="sm" />
+                                            </div>
+                                        </li>
+                                    )) : <li className="text-gray-500 italic p-4">No recent quizzes.</li>}
                                 </ul>
 
                                 <h3 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-100 flex items-center gap-2">

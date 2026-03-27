@@ -1,4 +1,5 @@
 import { query } from '../utils/config/db.js';
+import { FAILED } from '../constants/status.enum.js';
 
 class File {
     /**
@@ -101,8 +102,8 @@ class File {
             `SELECT COALESCE(SUM(f.size_bytes), 0)::bigint as usage_bytes 
              FROM files f
              LEFT JOIN materials m ON f.material_id = m.id
-             WHERE f.user_id = $1 AND (m.status IS NULL OR UPPER(m.status) != 'FAILED')`,
-            [userId]
+             WHERE f.user_id = $1 AND (m.status IS NULL OR UPPER(m.status) != $2)`,
+            [userId, FAILED]
         );
         return result.rows[0].usage_bytes;
     }

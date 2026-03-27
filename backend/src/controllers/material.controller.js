@@ -105,6 +105,12 @@ class MaterialController {
         });
     });
 
+    static cancelJob = asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        await MaterialService.cancelJob(req.user.id, id);
+        res.status(200).json({ status: 'success', message: 'Job cancellation requested' });
+    });
+
     static delete = asyncHandler(async (req, res) => {
         const { id } = req.params;
         const deleted = await MaterialService.deleteMaterial(id, req.user.id);

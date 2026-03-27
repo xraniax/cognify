@@ -1,4 +1,5 @@
 import { query } from '../utils/config/db.js';
+import { COMPLETED, FAILED, PROCESSING, normalizeStatus } from '../constants/status.enum.js';
 
 class Material {
     /**
@@ -6,11 +7,11 @@ class Material {
      */
     static async create(userId, subjectId, title, content, type, status = null, jobId = null) {
         // Default status logic if not explicitly provided
-        const finalStatus = status || (jobId ? 'PROCESSING' : 'COMPLETED');
+        const finalStatus = status || (jobId ? PROCESSING : COMPLETED);
         
         const result = await query(
             'INSERT INTO materials (user_id, subject_id, title, content, type, job_id, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-            [userId, subjectId, title, content, type, jobId, finalStatus.toUpperCase()]
+            [userId, subjectId, title, content, type, jobId, normalizeStatus(finalStatus)]
         );
         return result.rows[0];
     }
@@ -21,8 +22,8 @@ class Material {
      */
     static async updateAIResult(materialId, userId, aiResult) {
         const result = await query(
-            'UPDATE materials SET ai_generated_content = $2, processed_at = NOW(), completed_at = NOW(), status = \'COMPLETED\' WHERE id = $1 AND user_id = $3 RETURNING *',
-            [materialId, aiResult, userId]
+            'UPDATE materials SET ai_generated_content = $2, processed_at = NOW(), completed_at = NOW(), status = $4 WHERE id = $1 AND user_id = $3 RETURNING *',
+            [materialId, aiResult, userId, COMPLETED]
         );
         return result.rows[0];
     }
@@ -43,13 +44,13 @@ class Material {
      * user_id enforced to prevent IDOR.
      */
     static async updateStatus(materialId, userId, status, jobId = null) {
-        const normalizedStatus = status.toUpperCase();
+        const normalizedStatus = normalizeStatus(status);
         
         // Auto-timestamps:
         // - PROCESSING sets started_at
         // - COMPLETED/FAILED sets completed_at
-        const startedAtSql = normalizedStatus === 'PROCESSING' ? ', started_at = COALESCE(started_at, NOW())' : '';
-        const completedAtSql = (normalizedStatus === 'COMPLETED' || normalizedStatus === 'FAILED') ? ', completed_at = NOW()' : '';
+        const startedAtSql = normalizedStatus === PROCESSING ? ', started_at = COALESCE(started_at, NOW())' : '';
+        const completedAtSql = (normalizedStatus === COMPLETED || normalizedStatus === FAILED) ? ', completed_at = NOW()' : '';
 
         const sql = jobId 
             ? `UPDATE materials SET status = $2, job_id = $4 ${startedAtSql} ${completedAtSql} WHERE id = $1 AND user_id = $3 RETURNING *`
@@ -80,8 +81,8 @@ class Material {
      */
     static async recordFailure(materialId, userId, errorMessage) {
         const result = await query(
-            'UPDATE materials SET status = \'FAILED\', error_message = $2, completed_at = NOW() WHERE id = $1 AND user_id = $3 RETURNING *',
-            [materialId, errorMessage, userId]
+            'UPDATE materials SET status = $4, error_message = $2, completed_at = NOW() WHERE id = $1 AND user_id = $3 RETURNING *',
+            [materialId, errorMessage, userId, FAILED]
         );
         return result.rows[0];
     }

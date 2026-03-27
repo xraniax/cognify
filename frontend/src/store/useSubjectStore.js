@@ -1,27 +1,62 @@
 import { create } from 'zustand';
 import { subjectService } from '../services/api';
+import { useUIStore } from './useUIStore';
 
-export const useSubjectStore = create((set) => ({
-    subjects: [],
-    loading: false,
-    selectedSubjectId: null,
-
-    fetchSubjects: async () => {
-        set({ loading: true });
-        try {
-            const res = await subjectService.getAll();
-            set({ subjects: res.data.data, loading: false });
-        } catch (err) {
-            console.error('Failed to fetch subjects:', err);
-            set({ loading: false });
-        }
+export const useSubjectStore = create((set, get) => ({
+    data: {
+        subjects: [],
+        selectedSubjectId: null
     },
+    error: null,
+    actions: {
+        clearError: () => set({ error: null }),
 
-    selectSubject: (id) => set({ selectedSubjectId: id }),
+        fetchSubjects: async () => {
+            const uiActions = useUIStore.getState().actions;
+            uiActions.setLoading('subjects', true, 'Loading subjects...', false);
+            set({ error: null });
+            try {
+                const res = await subjectService.getAll();
+                const subjects = res.data.data || [];
+                set((state) => ({
+                    ...state,
+                    error: null,
+                    data: { ...state.data, subjects }
+                }));
+                return subjects;
+            } catch (err) {
+                set({ error: err.message || 'Failed to fetch subjects' });
+                throw err;
+            } finally {
+                uiActions.setLoading('subjects', false);
+            }
+        },
 
-    createSubject: async (name, description) => {
-        const res = await subjectService.create(name, description);
-        set((state) => ({ subjects: [res.data.data, ...state.subjects] }));
-        return res.data.data;
+        selectSubject: (id) =>
+            set((state) => ({
+                ...state,
+                data: { ...state.data, selectedSubjectId: id }
+            })),
+
+        createSubject: async (name, description) => {
+            const uiActions = useUIStore.getState().actions;
+            uiActions.setLoading('createSubject', true, 'Creating subject...', true);
+            set({ error: null });
+            try {
+                const res = await subjectService.create(name, description);
+                const subject = res.data.data;
+                set((state) => ({
+                    ...state,
+                    error: null,
+                    data: { ...state.data, subjects: [subject, ...state.data.subjects] }
+                }));
+                return subject;
+            } catch (err) {
+                set({ error: err.message || 'Failed to create subject' });
+                throw err;
+            } finally {
+                uiActions.setLoading('createSubject', false);
+            }
+        }
     }
 }));

@@ -1,62 +1,109 @@
 import { create } from 'zustand';
 import { authService } from '../services/api';
+import { useUIStore } from './useUIStore';
 
 export const useAuthStore = create((set, get) => ({
-    user: null,
-    loading: true,
+    data: {
+        user: null,
+        isInitialized: false
+    },
     error: null,
-    isInitialized: false,
+    actions: {
+        setUser: (user) =>
+            set((state) => ({
+                ...state,
+                data: { ...state.data, user }
+            })),
 
-    setUser: (user) => set({ user, isLoggedIn: !!user }),
+        clearError: () => set({ error: null }),
 
-    loadUser: async () => {
-        const token = localStorage.getItem('token');
-        if (!token) {
-            set({ loading: false, isInitialized: true });
-            return;
-        }
+        loadUser: async () => {
+            const uiActions = useUIStore.getState().actions;
+            const token = localStorage.getItem('token');
+            if (!token) {
+                set((state) => ({
+                    ...state,
+                    error: null,
+                    data: { ...state.data, user: null, isInitialized: true }
+                }));
+                return null;
+            }
 
-        try {
-            const res = await authService.getMe();
-            set({ user: res.data.data, loading: false, isInitialized: true });
-        } catch (err) {
-            console.error('Auth check failed:', err);
+            uiActions.setLoading('auth', true, 'Checking your session...', true);
+            set({ error: null });
+            try {
+                const res = await authService.getMe();
+                const user = res.data.data;
+                set((state) => ({
+                    ...state,
+                    error: null,
+                    data: { ...state.data, user, isInitialized: true }
+                }));
+                return user;
+            } catch (err) {
+                localStorage.removeItem('token');
+                set((state) => ({
+                    ...state,
+                    error: err.message || 'Auth check failed',
+                    data: { ...state.data, user: null, isInitialized: true }
+                }));
+                throw err;
+            } finally {
+                uiActions.setLoading('auth', false);
+            }
+        },
+
+        login: async (email, password) => {
+            const uiActions = useUIStore.getState().actions;
+            uiActions.setLoading('auth', true, 'Signing you in...', true);
+            set({ error: null });
+            try {
+                const res = await authService.login(email, password);
+                const { token, ...userData } = res.data.data;
+                localStorage.setItem('token', token);
+                set((state) => ({
+                    ...state,
+                    error: null,
+                    data: { ...state.data, user: userData, isInitialized: true }
+                }));
+                return res.data;
+            } catch (err) {
+                set({ error: err.message || 'Login failed' });
+                throw err;
+            } finally {
+                uiActions.setLoading('auth', false);
+            }
+        },
+
+        register: async (userData) => {
+            const uiActions = useUIStore.getState().actions;
+            uiActions.setLoading('auth', true, 'Creating your account...', true);
+            set({ error: null });
+            try {
+                const res = await authService.register(userData);
+                const { token, ...user } = res.data.data;
+                localStorage.setItem('token', token);
+                set((state) => ({
+                    ...state,
+                    error: null,
+                    data: { ...state.data, user, isInitialized: true }
+                }));
+                return res.data;
+            } catch (err) {
+                set({ error: err.message || 'Registration failed' });
+                throw err;
+            } finally {
+                uiActions.setLoading('auth', false);
+            }
+        },
+
+        logout: () => {
             localStorage.removeItem('token');
-            set({ user: null, loading: false, isInitialized: true });
+            set((state) => ({
+                ...state,
+                error: null,
+                data: { ...state.data, user: null, isInitialized: true }
+            }));
         }
-    },
-
-    login: async (email, password) => {
-        set({ loading: true, error: null });
-        try {
-            const res = await authService.login(email, password);
-            const { token, ...userData } = res.data.data;
-            localStorage.setItem('token', token);
-            set({ user: userData, loading: false });
-            return res.data;
-        } catch (err) {
-            const message = err.message || 'Login failed';
-            set({ error: message, loading: false });
-            throw err;
-        }
-    },
-
-    register: async (userData) => {
-        set({ loading: true, error: null });
-        try {
-            const res = await authService.register(userData);
-            const { token, ...data } = res.data.data;
-            localStorage.setItem('token', token);
-            set({ user: data, loading: false });
-            return res.data;
-        } catch (err) {
-            set({ error: err.message, loading: false });
-            throw err;
-        }
-    },
-
-    logout: () => {
-        localStorage.removeItem('token');
-        set({ user: null });
     }
 }));

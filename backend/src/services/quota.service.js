@@ -1,6 +1,7 @@
 import { query } from '../utils/config/db.js';
 import SettingsService from './settings.service.js';
 import User from '../models/user.model.js';
+import { FAILED } from '../constants/status.enum.js';
 
 class QuotaService {
     /**
@@ -14,7 +15,7 @@ class QuotaService {
         const sql = `
             SELECT 
                 (COALESCE((SELECT SUM(f.size_bytes) FROM files f WHERE f.user_id = u.id), 0) +
-                 COALESCE((SELECT SUM(OCTET_LENGTH(COALESCE(m.content, ''))) FROM materials m WHERE m.user_id = u.id AND UPPER(m.status) != 'FAILED'), 0))::bigint as used_bytes,
+                 COALESCE((SELECT SUM(OCTET_LENGTH(COALESCE(m.content, ''))) FROM materials m WHERE m.user_id = u.id AND UPPER(m.status) != $2), 0))::bigint as used_bytes,
                 u.storage_limit_bytes,
                 u.status
             FROM users u
@@ -22,7 +23,7 @@ class QuotaService {
             GROUP BY u.id, u.storage_limit_bytes, u.status
         `;
         
-        const result = await query(sql, [userId]);
+        const result = await query(sql, [userId, FAILED]);
         
         if (result.rows.length === 0) {
             // User might exist but haven't uploaded anything
