@@ -187,9 +187,12 @@ const SubjectDetail = () => {
                 // Let fetchMaterials catch up so the material is available in store
                 setTimeout(async () => {
                     await fetchMaterials();
-                    // We need to find the latest material matching our genType/subject
+                    
+                    // Use the specific material ID we tracked during generation
                     const currentMaterials = useMaterialStore.getState().data.materials;
-                    const newMat = currentMaterials.find(m => m.status === 'COMPLETED' && m.type === genType);
+                    const newMatId = jobProgress.materialId; 
+                    const newMat = currentMaterials.find(m => String(m.id) === String(newMatId));
+                    
                     if (newMat) {
                         setTabs(prev => {
                             if (!prev.find(t => String(t.id) === String(newMat.id))) {

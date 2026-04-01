@@ -157,7 +157,7 @@ export const useMaterialStore = create((set, get) => ({
                     const response = await materialService.sync(materialId);
                     if (!response?.data?.data) return;
 
-                    const { material } = response.data.data;
+                    const material = response.data.data;
                     const status = normalizeStatus(material.status);
 
                     if (status === COMPLETED || status === SUCCESS) {
@@ -173,7 +173,8 @@ export const useMaterialStore = create((set, get) => ({
                                         stage: 'success',
                                         progress: 100,
                                         message: 'Refining knowledge complete!',
-                                        result: result
+                                        result: result,
+                                        materialId: materialId
                                     }
                                 }
                             }));

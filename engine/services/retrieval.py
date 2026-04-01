@@ -47,13 +47,12 @@ def retrieve_chunks_by_topic(
         raise EmbeddingFailedError(f"Failed to generate embedding for topic: '{topic}'")
 
     # 2️⃣ query chunks with similarity ordering (filter out NULL embeddings to avoid crash)
-    chunks = session.query(Chunk).join(Document)\
+    query = session.query(Chunk).join(Document)\
         .filter(Document.subject_id == subject_id)\
         .filter(Chunk.embedding != None)\
         .order_by(Chunk.embedding.cosine_distance(topic_embedding))\
-        .limit(top_k)\
-        .all()
+        .limit(top_k)
 
-    duration = time.perf_counter() - start_time
-    log.info(f"STEP: RETRIEVAL SUCCESS (duration: {duration:.2f}s, retrieved: {len(chunks)})")
+    chunks = query.all()
+    log.info(f"STEP: RETRIEVAL SUCCESS for subject {subject_id} (duration: {time.perf_counter() - start_time:.2f}s, retrieved: {len(chunks)})")
     return chunks

@@ -267,8 +267,8 @@ class MaterialService {
 
             // 4. Log interaction asynchronously (history)
             query(
-                "INSERT INTO chat_history (user_id, query, response) VALUES ($1, $2, $3)",
-                [userId, question, result.result || result.response || 'No response']
+                "INSERT INTO chat_history (user_id, subject_id, type, query, response) VALUES ($1, $2, $3, $4, $5)",
+                [userId, subjectId, 'text', question, result.result || result.response || 'No response']
             ).catch(err => console.error('[MaterialService] Failed to log chat:', err.message));
 
             if (result.job_id) {
@@ -321,7 +321,7 @@ class MaterialService {
             const result = aiResponse.data;
 
             // 3. Create a placeholder material record in the DB
-            const subject = await Subject.findById(subjectId, userId);
+            const subject = await Subject.findById(finalSubjectId, userId);
             const subjectName = subject ? subject.name : 'Unknown Subject';
             const dateStr = new Date().toLocaleDateString();
             const displayType = materialType.charAt(0).toUpperCase() + materialType.slice(1);
@@ -329,7 +329,7 @@ class MaterialService {
 
             const materialRecord = await Material.create(
                 userId,
-                subjectId,
+                finalSubjectId,
                 title,
                 '', // empty content initially
                 materialType,

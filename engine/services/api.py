@@ -351,6 +351,14 @@ async def process_document_route(
     Trigger background processing for a document via the modular Celery pipeline.
     Accepts either an NFS file_path or a direct file upload.
     """
+    # Path remapping for cross-container consistency (Docker volume sharing)
+    # Backend sends /app/uploads/... but engine sees it as /data/uploads/...
+    if file_path and file_path.startswith('/app/uploads/'):
+        alt_path = file_path.replace('/app/uploads/', '/data/uploads/')
+        if os.path.exists(alt_path):
+            file_path = alt_path
+            logger.info(f"Remapped backend path to engine path: {file_path}")
+
     if file_path and os.path.exists(file_path):
         logger.info(f"Triggering pipeline for NFS file: {file_path} (document_id={document_id}, user_id={user_id})")
         job_id = _trigger_pipeline(file_path, document_id, subject_id, user_id)

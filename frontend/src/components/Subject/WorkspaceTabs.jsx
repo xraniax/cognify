@@ -93,8 +93,8 @@ const WorkspaceTabs = ({
                 </Reorder.Group>
             </div>
 
-            {/* Tab Content Area */}
-            <div className="flex-1 overflow-y-auto min-h-0 relative bg-white">
+            {/* Tab Content Area — overflow-hidden here so absolute inset-0 fills correctly; each content renders its own scroll */}
+            <div className="flex-1 overflow-hidden min-h-0 relative bg-white">
                 <AnimatePresence mode="wait">
                     <motion.div
                         key={activeTabId}

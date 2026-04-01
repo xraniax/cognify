@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useUIStore } from '../../store/useUIStore';
 
 const MIN_PCT = 12; // minimum panel width as a percentage
@@ -14,7 +14,15 @@ const WorkspaceLayout = ({
     const [widths, setWidths] = useState([22, 50, 28]);
     const containerRef = useRef(null);
     const dragging = useRef(null); // { separatorIndex, startX, startWidths }
-    
+
+    // Reactive mobile state — updates on window resize
+    const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     // Mobile View State
     const activePanel = useUIStore((state) => state.data.activeWorkspacePanel);
 
@@ -56,7 +64,6 @@ const WorkspaceLayout = ({
     const rightWidth = rightPanelCollapsed ? 0 : widths[2];
     const middleWidth = 100 - leftWidth - rightWidth;
     
-    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
 
     return (
         <div ref={containerRef} className="flex-1 flex overflow-hidden bg-[#FFF8F0]/20 select-none pb-20 md:pb-0 relative">

@@ -95,7 +95,9 @@ def task_ocr(self, file_path, document_id, subject_id, user_id=None):
         finally:
             db.close()
     except Exception as e:
-        log.warning(f"STEP: OCR could not create engine Document record: {e} — chunk persistence may fail")
+        log.error(f"STEP: OCR CRITICAL - Could not create/find engine Document record: {e}")
+        log.error(f"DEBUG: subject_id={subject_id} (type={type(subject_id)}), filename={filename}")
+        raise ValueError(f"Failed to establish engine Document record for subject {subject_id}: {e}")
 
     from services.preprocessing import preprocess_step
     try:
@@ -269,12 +271,18 @@ def task_generate(self, subject_id, material_type, topic=None, language="en", to
         from models import Chunk, Document
         from sqlalchemy import func
         chunk_count = db.query(func.count(Chunk.id)).join(Document).filter(Document.subject_id == subject_id).scalar()
+        log.info(f"STEP: GENERATION Validating content for subject {subject_id} (found {chunk_count} chunks)")
+        
         if chunk_count == 0:
             if self.request.retries < self.max_retries:
                 log.warning(f"STEP: RETRYING - No chunks found for subject {subject_id} (Attempt {self.request.retries + 1}/{self.max_retries}). Waiting for persistence...")
                 raise self.retry(countdown=5) # Wait 5 seconds for race condition
             else:
-                log.error(f"[ERROR] No chunks found for subject_id: {subject_id} after {self.max_retries} attempts — subject remains empty.")
+                log.error(f"[ERROR] No chunks found for subject_id: {subject_id} (type={type(subject_id)}) after {self.max_retries} attempts.")
+                # Diagnostic: check if subject exists at all in engine DB
+                from models import Subject as EngineSubject
+                exists = db.query(EngineSubject).filter(EngineSubject.id == subject_id).first() is not None
+                log.error(f"DIAGNOSTIC: Subject {subject_id} exists in engine DB: {exists}")
                 raise ValueError(f"No content found for subject {subject_id}. Please ensure documents are uploaded and processed.")
 
         # 1. Retrieve context
