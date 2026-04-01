@@ -19,7 +19,7 @@ OLLAMA_GENERATION_MODEL = os.getenv("OLLAMA_GENERATION_MODEL", "qwen2:0.5b")
 
 OLLAMA_GENERATION_TIMEOUT = int(os.getenv("OLLAMA_GENERATION_TIMEOUT", "300"))
 OLLAMA_CHAT_TIMEOUT = int(os.getenv("OLLAMA_CHAT_TIMEOUT", "120"))
-OLLAMA_MAX_CONTEXT_CHARS = int(os.getenv("OLLAMA_MAX_CONTEXT_CHARS", "15000"))
+OLLAMA_MAX_CONTEXT_CHARS = int(os.getenv("OLLAMA_MAX_CONTEXT_CHARS", "6000"))
 
 def build_prompt(material_type: str, context: str, topic: Optional[str], language: str) -> str:
     """Build a structured prompt for the LLM based on material type."""
@@ -37,32 +37,38 @@ def build_prompt(material_type: str, context: str, topic: Optional[str], languag
 
     elif material_type == "quiz":
         base_instructions = (
-            f"Generate a multiple-choice or short-answer quiz based on the context in {language}. "
-            f"Include {5} questions. For each question, provide options (if MCQ), the correct answer, and a short explanation."
+            f"Create a {language} quiz with 5 multiple-choice questions. "
+            f"IMPORTANT: Each question MUST have exactly 4 choices."
         )
         json_structure = {
             "type": "quiz",
             "questions": [
                 {
                     "id": 1,
-                    "question": "Question text?",
+                    "question": "Sample Question?",
                     "options": ["A", "B", "C", "D"],
                     "correct_answer": "A",
-                    "explanation": "Why A is correct"
+                    "explanation": "Why A is correct."
                 }
             ]
         }
-        base_instructions += f"\nOutput MUST be a JSON object following this structure: {json.dumps(json_structure)}"
+        prompt = (
+            f"Context:\n{context}\n\n"
+            f"Task: {base_instructions}\n"
+            f"Output JSON format:\n{json.dumps(json_structure, indent=2)}\n"
+            f"Generate now:"
+        )
+        return prompt
 
     elif material_type == "flashcards":
-        base_instructions = f"Create a set of 5-10 flashcards (Front/Back) based on the context in {language}."
+        base_instructions = f"Create a set of 5-8 flashcards (Front/Back) based on the context in {language}."
         json_structure = {
             "type": "flashcards",
             "cards": [
-                {"front": "Question/Term", "back": "Answer/Definition"}
+                {"front": "Photosynthesis", "back": "The process by which green plants and some other organisms use sunlight to synthesize foods with the help of chlorophyll."}
             ]
         }
-        base_instructions += f"\nOutput MUST be a JSON object following this structure: {json.dumps(json_structure)}"
+        base_instructions += f"\nExample JSON output:\n{json.dumps(json_structure, indent=2)}"
 
     elif material_type == "exam":
         base_instructions = (
@@ -74,13 +80,13 @@ def build_prompt(material_type: str, context: str, topic: Optional[str], languag
         json_structure = {
             "type": "exam",
             "questions": [
-                {"question": "Question text?", "answer_space": "__________"}
+                {"question": "Explain the significance of the Magna Carta.", "answer_space": "____________________"}
             ],
             "answer_sheet": [
-                {"question_id": 1, "answer": "The answer", "explanation": "Explanation"}
+                {"question_id": 1, "answer": "It established that everyone is subject to the law, even the king.", "explanation": "It's a cornerstone of British constitutional law."}
             ]
         }
-        base_instructions += f"\nOutput MUST be a JSON object following this structure: {json.dumps(json_structure)}"
+        base_instructions += f"\nExample JSON output:\n{json.dumps(json_structure, indent=2)}"
     else:
         base_instructions = f"Process the given context and generate {material_type} in {language}."
 
@@ -162,6 +168,32 @@ def generate_study_material(
                 
                 parsed_json = json.loads(generated_text)
                 
+                # Structural repair layer - handle common LLM hallucinations
+                if material_type == "quiz":
+                    if "quiz_questions" in parsed_json: parsed_json["questions"] = parsed_json.pop("quiz_questions")
+                    if "quiz" in parsed_json and not isinstance(parsed_json["quiz"], str): 
+                        parsed_json["questions"] = parsed_json.pop("quiz")
+                    
+                    if "questions" in parsed_json and isinstance(parsed_json["questions"], list):
+                        for i, q in enumerate(parsed_json["questions"]):
+                            if "question_id" in q: q["id"] = q.pop("question_id")
+                            if "id" not in q: q["id"] = i + 1
+                            if "title" in q: q["question"] = q.pop("title")
+                            if "answer" in q: q["correct_answer"] = q.pop("answer")
+                            if "choices" in q: q["options"] = q.pop("choices")
+                            if "options" not in q: q["options"] = []
+                            if "explanation" not in q: q["explanation"] = "Generated by AI."
+                
+                elif material_type == "flashcards":
+                    if "flashcards" in parsed_json: parsed_json["cards"] = parsed_json.pop("flashcards")
+                
+                elif material_type == "exam":
+                    if "exam_questions" in parsed_json: parsed_json["questions"] = parsed_json.pop("exam_questions")
+                    if "questions" in parsed_json:
+                        for q in parsed_json["questions"]:
+                            if "text" in q: q["question"] = q.pop("text")
+                            if "answer_space" not in q: q["answer_space"] = "____________________"
+                
                 # Structural validation
                 from .schemas import ExamOutput, QuizOutput, FlashcardsOutput
                 from pydantic import ValidationError
@@ -176,7 +208,8 @@ def generate_study_material(
                 except ValidationError as ve:
                     logger.error(f"Structural validation failed for {material_type}: {ve}")
                     if attempt == retries - 1:
-                        return {"error": "Invalid structure from LLM", "raw": generated_text, "details": str(ve)}
+                        # Raise exception so the task is marked as FAILED in Celery/Backend
+                        raise ValueError(f"AI generated invalid structure for {material_type} and could not be repaired: {ve}")
                     continue # Retry on validation error
 
                 duration = time.perf_counter() - start_time

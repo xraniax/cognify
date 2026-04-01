@@ -21,6 +21,9 @@ import MaterialsPanel from '../components/Subject/MaterialsPanel';
 import ChatPanel from '../components/Subject/ChatPanel';
 import UploadModal from '../components/Subject/UploadModal';
 import Skeleton from '../components/Common/Skeleton';
+import QuizView from '../components/Subject/QuizView';
+import FlashcardsView from '../components/Subject/FlashcardsView';
+import ExamView from '../components/Subject/ExamView';
 
 const SubjectDetail = () => {
     const { id } = useParams();
@@ -467,6 +470,32 @@ const SubjectDetail = () => {
             try { parsedContent = JSON.parse(parsedContent); } catch(e) {}
         }
         if (parsedContent?.result) parsedContent = parsedContent.result;
+        
+        // Handle specialized rendering for structured content
+        if (tab.type === 'quiz') {
+            return (
+                <div className="flex-1 h-full overflow-y-auto bg-[#FAFBFF]">
+                    <QuizView quizData={parsedContent} />
+                </div>
+            );
+        }
+
+        if (tab.type === 'flashcards') {
+            return (
+                <div className="flex-1 h-full overflow-y-auto bg-[#FAFBFF]">
+                    <FlashcardsView flashcardsData={parsedContent} />
+                </div>
+            );
+        }
+
+        if (tab.type === 'exam') {
+            return (
+                <div className="flex-1 h-full overflow-y-auto bg-[#FAFBFF]">
+                    <ExamView examData={parsedContent} />
+                </div>
+            );
+        }
+
         const displayContent = typeof parsedContent === 'object' ? JSON.stringify(parsedContent, null, 2) : String(parsedContent);
 
         return (

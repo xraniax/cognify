@@ -1,6 +1,6 @@
 import React from 'react';
 import { Reorder, AnimatePresence, motion } from 'framer-motion';
-import { X, Pin, FileText, Sparkles, BrainCircuit } from 'lucide-react';
+import { X, Pin, FileText, Sparkles, BrainCircuit, Layers, CheckCircle2 } from 'lucide-react';
 
 const WorkspaceTabs = ({
     tabs,
@@ -58,13 +58,21 @@ const WorkspaceTabs = ({
                                     onClick={() => setActiveTabId(tab.id)}
                                 >
                                     {/* Icon */}
-                                    <div className={`flex-shrink-0 ${isActive ? 'text-indigo-500' : 'text-gray-400'}`}>
+                                    <div className={`flex-shrink-0 ${isActive ? '' : 'opacity-70'}`}>
                                         {tab.id === 'generator' ? (
-                                            <BrainCircuit className="w-3.5 h-3.5" />
+                                            <BrainCircuit className="w-3.5 h-3.5 text-purple-500" />
                                         ) : tab.type === 'upload' ? (
-                                            <FileText className="w-3.5 h-3.5" />
+                                            <FileText className="w-3.5 h-3.5 text-gray-400" />
+                                        ) : tab.type === 'summary' ? (
+                                            <FileText className="w-3.5 h-3.5 text-indigo-500" />
+                                        ) : tab.type === 'quiz' ? (
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                        ) : tab.type === 'flashcards' ? (
+                                            <Layers className="w-3.5 h-3.5 text-purple-500" />
+                                        ) : tab.type === 'exam' ? (
+                                            <BrainCircuit className="w-3.5 h-3.5 text-amber-500" />
                                         ) : (
-                                            <Sparkles className="w-3.5 h-3.5" />
+                                            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
                                         )}
                                     </div>
                                     

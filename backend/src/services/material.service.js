@@ -59,14 +59,14 @@ class MaterialService {
         // 4. Save material record FIRST (status: PENDING_JOB)
         // We need the ID to link the file record
         const documentRecord = await Material.create(
-            userId, 
-            finalSubjectId, 
-            normalizedTitle, 
-            content || '', 
+            userId,
+            finalSubjectId,
+            normalizedTitle,
+            content || '',
             type,
             PENDING_JOB
         );
-        
+
         // 5. Track File Persistence and Link to Material
         let filePath = null;
         if (file) {
@@ -95,7 +95,7 @@ class MaterialService {
             formData.append('document_id', documentRecord.id);
             formData.append('subject_id', finalSubjectId);
             formData.append('user_id', userId);
-            
+
             if (filePath) {
                 formData.append('file_path', filePath);
                 if (fs.existsSync(filePath)) {
@@ -248,8 +248,8 @@ class MaterialService {
 
         try {
             const endpoint = `${process.env.ENGINE_URL}/chat`;
-            const payload = { 
-                subject_id: subjectId, 
+            const payload = {
+                subject_id: subjectId,
                 question: question,
                 top_k: 8, // Increase context for better chat
                 user_id: userId
@@ -295,7 +295,7 @@ class MaterialService {
 
         const finalSubjectId = subjectId || (sourceDocuments.length > 0 ? sourceDocuments[0].subject_id : null);
         if (!finalSubjectId) return { result: "No subject context available for generation." };
-        
+
         // Map backend task types to engine material types
         const typeMap = {
             'summary': 'summary',
@@ -307,25 +307,30 @@ class MaterialService {
 
         try {
             const endpoint = `${process.env.ENGINE_URL}/generate`;
-            const payload = { 
-                subject_id: finalSubjectId, 
+            const payload = {
+                subject_id: finalSubjectId,
                 material_type: materialType,
                 top_k: 10, // More context for study material generation
                 user_id: userId
             };
             const options = { timeout: 300000 }; // 5 minutes for generation
-            const aiResponse = await ( (process.env.NODE_ENV === 'test' && global.__mockAxiosPost) 
-                ? global.__mockAxiosPost(endpoint, payload, options) 
-                : axios.post(endpoint, payload, options) );
+            const aiResponse = await ((process.env.NODE_ENV === 'test' && global.__mockAxiosPost)
+                ? global.__mockAxiosPost(endpoint, payload, options)
+                : axios.post(endpoint, payload, options));
 
             const result = aiResponse.data;
 
             // 3. Create a placeholder material record in the DB
             const subject = await Subject.findById(finalSubjectId, userId);
             const subjectName = subject ? subject.name : 'Unknown Subject';
-            const dateStr = new Date().toLocaleDateString();
             const displayType = materialType.charAt(0).toUpperCase() + materialType.slice(1);
-            const title = `AI ${displayType} - ${subjectName} - ${dateStr}`;
+            let contextTitle = subjectName;
+            if (sourceDocuments.length === 1) {
+                contextTitle = sourceDocuments[0].title;
+            } else if (sourceDocuments.length > 1) {
+                contextTitle = 'Multiple Sources';
+            }
+            const title = `${displayType} of ${contextTitle}`;
 
             const materialRecord = await Material.create(
                 userId,
@@ -382,7 +387,7 @@ class MaterialService {
         try {
             // Forward cancellation to Python engine
             await axios.post(`${process.env.ENGINE_URL}/job/cancel`, { job_id: material.job_id }, { timeout: 5000 });
-            
+
             // Revert material status to IDLE or just keep it as is?
             // Usually, we mark it as FAILED with a 'Cancelled by user' message.
             await Material.recordFailure(materialId, userId, 'Processing cancelled by user');
