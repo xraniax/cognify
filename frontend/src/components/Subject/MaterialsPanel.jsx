@@ -9,11 +9,13 @@ const MaterialsPanel = ({
     setGenType,
     handleGenerate,
     isGenerating,
+    jobProgress,
     selectedCount,
     genResult,
     setGenResult,
     genError,
 }) => {
+    const displayMessage = jobProgress?.message || 'Processing Knowledge...';
     return (
         <div className="panel-inner">
             <div className="panel-header border-b border-gray-100/50 bg-white/80 backdrop-blur-sm sticky top-0 z-10 transition-all">
@@ -63,7 +65,7 @@ const MaterialsPanel = ({
                     </div>
 
                     <button
-                        onClick={handleGenerate}
+                        onClick={() => handleGenerate()}
                         disabled={isGenerating || selectedCount === 0}
                         className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 transition-all duration-500 font-black uppercase tracking-widest text-xs ${
                             isGenerating || selectedCount === 0
@@ -74,7 +76,7 @@ const MaterialsPanel = ({
                         {isGenerating ? (
                             <>
                                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                <span>Processing Knowledge...</span>
+                                <span>{displayMessage}</span>
                             </>
                         ) : (
                             <>

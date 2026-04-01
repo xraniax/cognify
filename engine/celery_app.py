@@ -29,7 +29,15 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_time_limit=300, # 5 minutes max per task
     task_soft_time_limit=240, # 4 minutes soft limit for cleanup
+    task_default_queue="celery",
 )
+
+# Debug: Print registered tasks on startup
+print("--- REGISTERED CELERY TASKS ---")
+for task_name in sorted(celery_app.tasks.keys()):
+    if not task_name.startswith('celery.'):
+        print(f"  - {task_name}")
+print("-------------------------------")
 
 if __name__ == "__main__":
     celery_app.start()

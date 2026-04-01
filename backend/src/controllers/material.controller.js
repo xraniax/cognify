@@ -86,13 +86,13 @@ class MaterialController {
     });
 
     static generateCombined = asyncHandler(async (req, res) => {
-        const { materialIds, taskType } = req.body;
+        const { materialIds, taskType, subjectId } = req.body;
         if (!materialIds || !taskType) {
             res.status(400);
             throw new Error('materialIds and taskType are required');
         }
 
-        const result = await MaterialService.generateWithContext(req.user.id, materialIds, taskType);
+        const result = await MaterialService.generateWithContext(req.user.id, materialIds, taskType, subjectId);
         res.status(200).json({ status: 'success', data: result });
     });
 

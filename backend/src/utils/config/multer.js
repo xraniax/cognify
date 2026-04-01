@@ -22,35 +22,35 @@ const storage = multer.diskStorage({
   },
 });
 
-/**
- * File filter: only allow PDF files.
- * Checks both the MIME type and the file extension for defence-in-depth.
- */
-const pdfOnlyFilter = (req, file, cb) => {
-  const mimeOk = file.mimetype === 'application/pdf';
-  const extOk = path.extname(file.originalname).toLowerCase() === '.pdf';
+const ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg']);
 
-  if (mimeOk && extOk) {
+/**
+ * File filter: only allow supported document files.
+ */
+const documentOnlyFilter = (req, file, cb) => {
+  const extOk = ALLOWED_EXTENSIONS.has(path.extname(file.originalname).toLowerCase());
+
+  if (extOk) {
     cb(null, true); // Accept file
   } else {
     // Pass an error with a status code so errorHandler can render it correctly
-    const err = new Error('Only PDF files are allowed. Please upload a file with a .pdf extension.');
+    const err = new Error(`Only supported document formats are allowed: ${[...ALLOWED_EXTENSIONS].join(', ')}.`);
     err.statusCode = 400;
     cb(err, false); // Reject file
   }
 };
 
 /**
- * Middleware for PDF uploads using dynamic limits from DB.
+ * Middleware for document uploads using dynamic limits from DB.
  */
-export const pdfUpload = async (req, res, next) => {
+export const documentUpload = async (req, res, next) => {
   try {
     const controls = await SettingsService.getStorageControls();
     const maxSizeBytes = (controls?.max_file_size_mb || 10) * 1024 * 1024;
 
     const upload = multer({
       storage,
-      fileFilter: pdfOnlyFilter,
+      fileFilter: documentOnlyFilter,
       limits: { fileSize: maxSizeBytes }
     }).single('file');
 

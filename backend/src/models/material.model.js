@@ -93,9 +93,11 @@ class Material {
     static async findByUserId(userId) {
         const result = await query(
             `SELECT m.*, s.name as subject_name,
+            f.path as file_path,
             json_build_object('id', s.id, 'name', s.name) as subject
             FROM materials m
             LEFT JOIN subjects s ON m.subject_id = s.id
+            LEFT JOIN files f ON f.material_id = m.id
             WHERE m.user_id = $1 
             ORDER BY m.created_at DESC`,
             [userId]
@@ -109,9 +111,11 @@ class Material {
     static async findById(id, userId) {
         const result = await query(
             `SELECT m.*, s.name as subject_name,
+            f.path as file_path,
             json_build_object('id', s.id, 'name', s.name) as subject
             FROM materials m
             LEFT JOIN subjects s ON m.subject_id = s.id
+            LEFT JOIN files f ON f.material_id = m.id
             WHERE m.id = $1 AND m.user_id = $2`,
             [id, userId]
         );
@@ -123,7 +127,11 @@ class Material {
      */
     static async findBySubjectId(subjectId, userId) {
         const result = await query(
-            'SELECT * FROM materials WHERE subject_id = $1 AND user_id = $2 ORDER BY created_at DESC',
+            `SELECT m.*, f.path as file_path 
+            FROM materials m 
+            LEFT JOIN files f ON f.material_id = m.id 
+            WHERE m.subject_id = $1 AND m.user_id = $2 
+            ORDER BY m.created_at DESC`,
             [subjectId, userId]
         );
         return result.rows;
@@ -137,7 +145,11 @@ class Material {
     static async findByIds(ids, userId) {
         if (!ids || ids.length === 0) return [];
         const result = await query(
-            'SELECT * FROM materials WHERE id = ANY($1) AND user_id = $2 ORDER BY created_at DESC',
+            `SELECT m.*, f.path as file_path 
+            FROM materials m 
+            LEFT JOIN files f ON f.material_id = m.id 
+            WHERE m.id = ANY($1) AND m.user_id = $2 
+            ORDER BY m.created_at DESC`,
             [ids, userId]
         );
         return result.rows;

@@ -1,30 +1,46 @@
 /**
  * Centralized error handling middleware.
- * - Logs the full stack trace on the server for debugging.
- * - Returns a clean JSON body to the client without internal details in production.
  */
 const errorHandler = (err, req, res, next) => {
     const statusCode = err.statusCode || (res.statusCode && res.statusCode !== 200 ? res.statusCode : 500);
 
-    // Always log the full error server-side for observability
+    // Logging...
     if (statusCode >= 500) {
-        console.error(`[Error] ${err.stack}`);
+        console.error(`[Error Boundary] ${err.stack}`);
     } else {
         console.warn(`[${statusCode}] ${err.message}`);
     }
 
-    res.status(statusCode).json({
+    // Helper to safely serialize objects with potential circular references
+    const getCircularReplacer = () => {
+        const seen = new WeakSet();
+        return (key, value) => {
+            if (typeof value === "object" && value !== null) {
+                if (seen.has(value)) {
+                    return "[Circular Reference]";
+                }
+                seen.add(value);
+            }
+            return value;
+        };
+    };
+
+    const errorResponse = {
         success: false,
         status: 'error',
         code: err.code || statusCode || 'UNKNOWN_ERROR',
-        message:
-            statusCode >= 500 && process.env.NODE_ENV === 'production'
-                ? 'An unexpected server error occurred. Please try again later.'
-                : err.message || 'Internal Server Error',
-        error: err.message || 'Internal Server Error', // Alias for 'message' to meet user requirement
-        // Only include the stack trace in non-production environments
-        ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
-    });
+        message: err.message || 'Internal Server Error',
+        stack: process.env.NODE_ENV === 'production' ? null : err.stack
+    };
+
+    try {
+        // Use the circular replacer to prevent "cyclic object value" crashes
+        const safeJson = JSON.stringify(errorResponse, getCircularReplacer());
+        res.status(statusCode).set('Content-Type', 'application/json').send(safeJson);
+    } catch (serializeErr) {
+        console.error(`[Fatal] Even safe serialization failed: ${serializeErr.message}`);
+        res.status(statusCode).send('Critical Server Error: Circular data detected in error reporting.');
+    }
 };
 
 export default errorHandler;

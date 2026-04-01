@@ -90,25 +90,27 @@ class MaterialService {
         console.info(`[MaterialService] Starting async processing: ${JSON.stringify(opContext)}`);
 
         try {
-            // 7. Construct payload for Python Engine
-            const params = new URLSearchParams();
-            params.append('document_id', documentRecord.id);
-            params.append('subject_id', finalSubjectId);
+            // 7. Construct FormData for Python Engine (supports file uploads)
+            const formData = new FormData();
+            formData.append('document_id', documentRecord.id);
+            formData.append('subject_id', finalSubjectId);
+            formData.append('user_id', userId);
             
             if (filePath) {
-                params.append('file_path', filePath);
+                formData.append('file_path', filePath);
+                if (fs.existsSync(filePath)) {
+                    formData.append('file', fs.createReadStream(filePath));
+                }
             } else {
-                // For text/notes, we still want to trigger the chain
-                // The engine expects either file or file_path.
-                // If it's a note, we should probably handle it differently, 
-                // but for now let's ensure the PDF path works.
-                params.append('content', content || '');
+                formData.append('content', content || '');
             }
 
-            // 8. Trigger Async Processing in Engine
-            const aiResponse = await axios.post(`${process.env.ENGINE_URL}/process-document`, params.toString(), {
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                timeout: 10000 
+            // Send directly to Python Engine's process-document route
+            const aiResponse = await axios.post(`${process.env.ENGINE_URL || 'http://engine:8000'}/process-document`, formData, {
+                headers: {
+                    ...formData.getHeaders()
+                },
+                timeout: 30000
             });
 
             const { job_id } = aiResponse.data;
@@ -157,7 +159,7 @@ class MaterialService {
             if (diffMinutes > 10) {
                 console.warn(`[MaterialService] Job ${material.job_id} timed out after ${diffMinutes.toFixed(1)} mins.`);
                 await Material.recordFailure(materialId, userId, 'Job timeout / worker failure');
-                await this._garbageCollectFile(materialId);
+                await MaterialService._garbageCollectFile(materialId);
                 return await Material.findById(materialId, userId);
             }
         }
@@ -171,21 +173,47 @@ class MaterialService {
 
                 // SUCCESS: Sync results to DB
                 if (engineStatus === SUCCESS && result) {
-                    const extractedText = result.extracted_text || material.content;
-                    await Material.updateContent(materialId, userId, extractedText);
-                    await Material.updateAIResult(materialId, userId, {
-                        chunk_count: result.chunk_count,
-                        provider: result.provider,
-                        model: result.model,
-                        processed_at: new Date().toISOString(),
-                    });
+                    // Check if this is a study material generation result (from task_generate)
+                    if (result.material_type) {
+                        const updateData = {
+                            completed_at: new Date().toISOString(),
+                            status: COMPLETED,
+                            processed_at: new Date().toISOString()
+                        };
+
+                        if (result.content) {
+                            // Text-based material (e.g., summary)
+                            await query(
+                                'UPDATE materials SET content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
+                                [materialId, result.content, COMPLETED, updateData.completed_at, updateData.processed_at, userId]
+                            );
+                        } else if (result.ai_generated_content) {
+                            // Structured material (e.g., quiz, flashcards)
+                            await query(
+                                'UPDATE materials SET ai_generated_content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
+                                [materialId, JSON.stringify(result.ai_generated_content), COMPLETED, updateData.completed_at, updateData.processed_at, userId]
+                            );
+                        }
+                    } else {
+                        // Standard document processing result (task_ocr/task_chunk/task_embed)
+                        const extractedText = result.extracted_text || material.content;
+                        await Material.updateContent(materialId, userId, extractedText);
+                        await Material.updateAIResult(materialId, userId, {
+                            chunk_count: result.chunk_count,
+                            provider: result.provider,
+                            model: result.model,
+                            processed_at: new Date().toISOString(),
+                        });
+                    }
                     return await Material.findById(materialId, userId);
                 }
 
+                const errorMsg = error || result?.error || (result?.status === 'FAILED' ? result?.error : null) || 'AI Generation Failed';
+
                 // FAILURE: Record error in DB
-                if (engineStatus === FAILURE) {
-                    await Material.recordFailure(materialId, userId, error || 'Unknown engine error');
-                    await this._garbageCollectFile(materialId);
+                if (engineStatus === FAILURE || result?.status === 'FAILED') {
+                    await Material.recordFailure(materialId, userId, errorMsg);
+                    await MaterialService._garbageCollectFile(materialId);
                     return await Material.findById(materialId, userId);
                 }
 
@@ -209,19 +237,24 @@ class MaterialService {
     }
 
     /**
-     * AI Chat grounded in specific document IDs
+     * AI Chat grounded in a subject's knowledge base.
      */
     static async chatWithContext(userId, materialIds, question) {
         const sourceDocuments = await Material.findByIds(materialIds, userId);
         if (sourceDocuments.length === 0) return { result: "No source documents selected for context." };
 
-        // Combine content from selected documents
-        const context = sourceDocuments.map(m => `--- SOURCE: ${m.title} ---\n${m.content}`).join('\n\n');
+        // We use the subject_id of the first document to provide the search context
+        const subjectId = sourceDocuments[0].subject_id;
 
         try {
             const endpoint = `${process.env.ENGINE_URL}/chat`;
-            const payload = { context, question };
-            const options = { timeout: 15000 };
+            const payload = { 
+                subject_id: subjectId, 
+                question: question,
+                top_k: 8, // Increase context for better chat
+                user_id: userId
+            };
+            const options = { timeout: 30000 };
 
             const aiResponse = process.env.NODE_ENV === 'test' && global.__mockAxiosPost
                 ? await global.__mockAxiosPost(endpoint, payload, options)
@@ -229,11 +262,18 @@ class MaterialService {
 
             const result = aiResponse.data;
 
+            // Update Subject activity
+            await Subject.touch(subjectId, userId);
+
             // 4. Log interaction asynchronously (history)
             query(
                 "INSERT INTO chat_history (user_id, query, response) VALUES ($1, $2, $3)",
                 [userId, question, result.result || result.response || 'No response']
             ).catch(err => console.error('[MaterialService] Failed to log chat:', err.message));
+
+            if (result.job_id) {
+                console.info(`[MaterialService] Chat job triggered: ${result.job_id}`);
+            }
 
             return result;
         } catch (error) {
@@ -247,32 +287,66 @@ class MaterialService {
     }
 
     /**
-     * Generate study tools grounded in specific document IDs
+     * AI Generation grounded in a subject's knowledge base.
      */
-    static async generateWithContext(userId, materialIds, taskType) {
+    static async generateWithContext(userId, materialIds, taskType, subjectId = null) {
         const sourceDocuments = await Material.findByIds(materialIds, userId);
-        if (sourceDocuments.length === 0) return { result: "No source documents selected for context." };
+        if (sourceDocuments.length === 0 && !subjectId) return { result: "No source documents selected for context." };
 
-        const context = sourceDocuments.map(m => `--- SOURCE: ${m.title} ---\n${m.content}`).join('\n\n');
+        const finalSubjectId = subjectId || (sourceDocuments.length > 0 ? sourceDocuments[0].subject_id : null);
+        if (!finalSubjectId) return { result: "No subject context available for generation." };
+        
+        // Map backend task types to engine material types
+        const typeMap = {
+            'summary': 'summary',
+            'quiz': 'quiz',
+            'flashcards': 'flashcards',
+            'mock_exam': 'exam'
+        };
+        const materialType = typeMap[taskType] || 'summary';
 
         try {
             const endpoint = `${process.env.ENGINE_URL}/generate`;
-            const payload = { content: context, task_type: taskType };
-            const options = { timeout: 30000 };
+            const payload = { 
+                subject_id: finalSubjectId, 
+                material_type: materialType,
+                top_k: 10, // More context for study material generation
+                user_id: userId
+            };
+            const options = { timeout: 300000 }; // 5 minutes for generation
+            const aiResponse = await ( (process.env.NODE_ENV === 'test' && global.__mockAxiosPost) 
+                ? global.__mockAxiosPost(endpoint, payload, options) 
+                : axios.post(endpoint, payload, options) );
 
-            const aiResponse = process.env.NODE_ENV === 'test' && global.__mockAxiosPost
-                ? await global.__mockAxiosPost(endpoint, payload, options)
-                : await axios.post(endpoint, payload, options);
+            const result = aiResponse.data;
 
-            // Update Subject activity for involved materials
-            if (sourceDocuments.length > 0 && sourceDocuments[0].subject_id) {
-                await Subject.touch(sourceDocuments[0].subject_id, userId);
-            }
+            // 3. Create a placeholder material record in the DB
+            const subject = await Subject.findById(subjectId, userId);
+            const subjectName = subject ? subject.name : 'Unknown Subject';
+            const dateStr = new Date().toLocaleDateString();
+            const displayType = materialType.charAt(0).toUpperCase() + materialType.slice(1);
+            const title = `AI ${displayType} - ${subjectName} - ${dateStr}`;
 
-            return aiResponse.data;
+            const materialRecord = await Material.create(
+                userId,
+                subjectId,
+                title,
+                '', // empty content initially
+                materialType,
+                PROCESSING,
+                result.job_id
+            );
+
+            console.info(`[MaterialService] Generation job tracked: ${result.job_id} for material: ${materialRecord.id}`);
+
+            return {
+                status: result.status,
+                job_id: result.job_id,
+                material_id: materialRecord.id
+            };
         } catch (error) {
             console.error('[MaterialService] Engine Generate Error:', error.message);
-            const isTimeout = error.code === 'ECONNABORTED';
+            const isTimeout = error.code === 'ECONNABORTED' || error.message.includes('timeout');
             const enhancedError = new Error(isTimeout ? 'AI engine took too long to generate content.' : 'AI engine generation failed.');
             enhancedError.statusCode = 503;
             enhancedError.code = isTimeout ? 'ENGINE_TIMEOUT' : 'ENGINE_UNAVAILABLE';
@@ -326,7 +400,7 @@ class MaterialService {
     static async deleteMaterial(materialId, userId) {
         // Run garbage collection BEFORE deleting the material row, 
         // to ensure the physical path lookup succeeds.
-        await this._garbageCollectFile(materialId);
+        await MaterialService._garbageCollectFile(materialId);
         return await Material.delete(materialId, userId);
     }
 }

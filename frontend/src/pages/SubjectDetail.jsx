@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { materialService } from '../services/api';
+import { materialService, BASE_URL } from '../services/api';
 import { useSpeech } from '../hooks/useSpeech';
-import { PanelLeft, PanelRight, Upload, BookOpen, Lock } from 'lucide-react';
+import { PanelLeft, PanelRight, Upload, BookOpen, Lock, Sparkles } from 'lucide-react';
 import { useSubjectStore } from '../store/useSubjectStore';
 import { useMaterialStore } from '../store/useMaterialStore';
 import { useUIStore } from '../store/useUIStore';
@@ -15,6 +15,7 @@ import FloatingActionButton from '../components/Common/FloatingActionButton';
 import { requireAuth } from '../utils/requireAuth';
 
 import WorkspaceLayout from '../components/Subject/WorkspaceLayout';
+import WorkspaceTabs from '../components/Subject/WorkspaceTabs';
 import FilePanel from '../components/Subject/FilePanel';
 import MaterialsPanel from '../components/Subject/MaterialsPanel';
 import ChatPanel from '../components/Subject/ChatPanel';
@@ -62,11 +63,19 @@ const SubjectDetail = () => {
     const [chatCollapsed, setChatCollapsed] = useState(false);
     const [filePanelCollapsed, setFilePanelCollapsed] = useState(false);
     
+    const jobProgress = useMaterialStore((state) => state.data.jobProgress);
+    
     // Generation state
     const [genError, setGenError] = useState('');
     const [genType, setGenType] = useState('summary');
     const [isGenerating, setIsGenerating] = useState(false);
     const [genResult, setGenResult] = useState('');
+
+    // Tabs State
+    const [tabs, setTabs] = useState([
+        { id: 'generator', title: 'Study Intelligence', type: 'generator', pinned: true }
+    ]);
+    const [activeTabId, setActiveTabId] = useState('generator');
 
     const chatEndRef = useRef(null);
     const { speak, listen, isListening, cancel } = useSpeech();
@@ -80,7 +89,41 @@ const SubjectDetail = () => {
                 // Handle redirected material selection
                 if (redirectedMaterialId) {
                     const mid = redirectedMaterialId;
-                    setSelectedUploads([mid]);
+                    const currentMaterials = useMaterialStore.getState().data.materials;
+                    const redirectedMaterial = currentMaterials.find(m => m.id === mid);
+                    
+                    if (redirectedMaterial && redirectedMaterial.type !== 'upload') {
+                        // Open generated insight in a tab
+                        setTabs(prev => {
+                            if (!prev.find(t => String(t.id) === String(mid))) {
+                                return [...prev, {
+                                    id: mid,
+                                    title: redirectedMaterial.title || redirectedMaterial.type,
+                                    type: redirectedMaterial.type,
+                                    material: redirectedMaterial,
+                                    pinned: false
+                                }];
+                            }
+                            return prev;
+                        });
+                        setActiveTabId(mid);
+                    } else if (redirectedMaterial && redirectedMaterial.type === 'upload') {
+                        // Open source document in a tab
+                        setTabs(prev => {
+                            if (!prev.find(t => String(t.id) === String(mid))) {
+                                return [...prev, {
+                                    id: mid,
+                                    title: redirectedMaterial.title,
+                                    type: 'upload',
+                                    material: redirectedMaterial,
+                                    pinned: false
+                                }];
+                            }
+                            return prev;
+                        });
+                        setActiveTabId(mid);
+                        setSelectedUploads([mid]);
+                    }
                 }
             } catch {
                 console.error('Failed to load subject details');
@@ -94,8 +137,88 @@ const SubjectDetail = () => {
     }, [id, fetchSubjects, fetchMaterials, clearAllPolling, redirectedMaterialId, setWorkspacePanel, cancel, user]);
 
     useEffect(() => {
+        const handleOpenMaterial = (e) => {
+            const { id } = e.detail;
+            const currentMaterials = useMaterialStore.getState().data.materials;
+            const material = currentMaterials.find(m => String(m.id) === String(id));
+            
+            if (material) {
+                setTabs(prev => {
+                    if (!prev.find(t => String(t.id) === String(id))) {
+                        return [...prev, {
+                            id,
+                            title: material.title || material.type,
+                            type: material.type,
+                            material,
+                            pinned: false
+                        }];
+                    }
+                    return prev;
+                });
+                setActiveTabId(id);
+                setWorkspacePanel('content');
+            }
+        };
+
+        window.addEventListener('open-material', handleOpenMaterial);
+        return () => window.removeEventListener('open-material', handleOpenMaterial);
+    }, [setWorkspacePanel]);
+
+    useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [chatMessages, isThinking]);
+
+    // Sync generation result from polling state
+    useEffect(() => {
+        if (!jobProgress) return;
+
+        if (jobProgress.result) {
+            const rawResult = jobProgress.result;
+            const resultStr = typeof rawResult === 'object' ? JSON.stringify(rawResult, null, 2) : String(rawResult);
+            
+            if (resultStr.includes('cyclic') || resultStr.includes('circular')) {
+                setGenError('Internal Technical Error: A circular data structure was detected in the AI output.');
+                setIsGenerating(false);
+            } else {
+                setGenResult(resultStr);
+                setIsGenerating(false);
+                
+                // After success, wait briefly, then automatically open the new material in a tab
+                // Let fetchMaterials catch up so the material is available in store
+                setTimeout(async () => {
+                    await fetchMaterials();
+                    // We need to find the latest material matching our genType/subject
+                    const currentMaterials = useMaterialStore.getState().data.materials;
+                    const newMat = currentMaterials.find(m => m.status === 'COMPLETED' && m.type === genType);
+                    if (newMat) {
+                        setTabs(prev => {
+                            if (!prev.find(t => String(t.id) === String(newMat.id))) {
+                                return [...prev, {
+                                    id: newMat.id,
+                                    title: newMat.title || newMat.type,
+                                    type: newMat.type,
+                                    material: newMat,
+                                    pinned: false
+                                }];
+                            }
+                            return prev;
+                        });
+                        setActiveTabId(newMat.id);
+                        setGenResult('');
+                    }
+                }, 1500);
+            }
+        }
+
+        if (jobProgress.stage === 'failed') {
+            let msg = jobProgress.message || 'Generation failed.';
+            if (typeof msg === 'string' && (msg.includes('cyclic') || msg.includes('circular'))) {
+                msg = 'Internal Technical Error: Circular data detected in error reporting. Please refresh the page.';
+            }
+            setGenError(msg);
+            setIsGenerating(false);
+        }
+    }, [jobProgress]);
 
     const handleUploadSuccess = async () => {
         await fetchMaterials();
@@ -149,9 +272,18 @@ const SubjectDetail = () => {
         setChatError('');
     };
 
-    const handleGenerate = async (singleId = null) => {
+    const handleGenerate = async (idOrEvent = null) => {
         setGenError('');
-        const targets = singleId ? [singleId] : selectedUploads;
+        
+        // Defensive: if called as an event handler, idOrEvent will be a synthetic event object.
+        // We only want to use it if it's a primitive string (a specific material ID).
+        const singleId = typeof idOrEvent === 'string' ? idOrEvent : null;
+        
+        const rawTargets = singleId ? [singleId] : selectedUploads;
+        // FINAL GUARD: Ensure only non-empty strings are passed to the backend
+        const targets = rawTargets
+            .filter(t => t && typeof t === 'string' && t !== '[object Object]')
+            .map(t => String(t));
 
         if (targets.length === 0) {
             setGenError('Select at least one document from the Source Files panel first.');
@@ -159,12 +291,40 @@ const SubjectDetail = () => {
         }
         setIsGenerating(true);
         setGenResult('');
+        
         try {
-            const res = await materialService.generateCombined(targets, genType);
-            setGenResult(res.data.data.result);
+            console.debug('[SubjectDetail] Triggering generation for sanitized targets:', targets, genType, id);
+            const res = await materialService.generateCombined(targets, genType, id);
+            
+            if (!res?.data?.data) {
+                throw new Error('Malformed response from server: Missing data field.');
+            }
+
+            const { material_id, job_id } = res.data.data;
+            console.info(`[SubjectDetail] Generation Trigger SUCCESS: materialId=${material_id}, jobId=${job_id}`);
+
+            if (material_id) {
+                const safeMid = String(material_id);
+                fetchMaterials(); 
+                // Ensure we use the correct store action path
+                useMaterialStore.getState().actions.startPolling(safeMid);
+                
+                // Set the active tab to generator until it finishes polling
+                setActiveTabId('generator');
+            } else {
+                const fallbackResult = res.data.data.result || res.data.data.content || '';
+                setGenResult(typeof fallbackResult === 'object' ? JSON.stringify(fallbackResult, null, 2) : String(fallbackResult));
+                setIsGenerating(false);
+            }
         } catch (err) {
-            setGenError(err.message || 'Generation failed. Please try again.');
-        } finally {
+            console.error('[SubjectDetail] handleGenerate Error:', err);
+            
+            let displayError = err.message || 'Generation failed. Please try again.';
+            if (displayError.toLowerCase().includes('cyclic') || displayError.toLowerCase().includes('circular')) {
+                displayError = 'Internal Technical Error: A circular reference was detected. Please refresh the page and try again.';
+            }
+            
+            setGenError(displayError);
             setIsGenerating(false);
         }
     };
@@ -228,6 +388,101 @@ const SubjectDetail = () => {
             </div>
         );
     }
+
+    const renderTabContent = (tabId) => {
+        if (tabId === 'generator') {
+            return (
+                <MaterialsPanel
+                    genType={genType}
+                    setGenType={setGenType}
+                    handleGenerate={handleGenerate}
+                    isGenerating={isGenerating}
+                    jobProgress={jobProgress}
+                    selectedCount={selectedUploads.length}
+                    genResult={genResult}
+                    setGenResult={setGenResult}
+                    genError={genError}
+                />
+            );
+        }
+
+        const tab = tabs.find(t => t.id === tabId);
+        if (!tab) return null;
+
+        if (tab.type === 'upload') {
+            const hasFile = !!tab.material?.file_path;
+            const hasContent = !!tab.material?.content;
+            
+            if (hasFile) {
+                const fileUrl = `${BASE_URL}/${tab.material.file_path}`;
+                if (tab.material.file_path.toLowerCase().endsWith('.pdf')) {
+                    return (
+                        <div className="flex-1 h-full w-full bg-gray-100 flex flex-col">
+                            <iframe 
+                                src={`${fileUrl}#view=FitH`} 
+                                className="w-full flex-1 border-none"
+                                title={tab.title}
+                            />
+                        </div>
+                    );
+                } else {
+                    return (
+                        <div className="flex-1 h-full bg-gray-50 flex flex-col items-center justify-center p-8 text-center text-gray-500">
+                            <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50 text-indigo-400" />
+                            <h3 className="text-lg font-bold mb-2">{tab.title}</h3>
+                            <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="mt-4 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 font-bold text-sm transition-colors">
+                                Download File
+                            </a>
+                            <p className="text-xs mt-4 text-gray-400">Use the Study Intelligence tab to analyze this file.</p>
+                        </div>
+                    );
+                }
+            } else if (hasContent) {
+                return (
+                    <div className="flex-1 h-full overflow-y-auto p-6 md:p-8 bg-[#FAFBFF]">
+                        <div className="max-w-4xl mx-auto bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-sm text-gray-800 leading-relaxed text-sm whitespace-pre-wrap font-mono">
+                            {tab.material.content}
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex-1 h-full bg-gray-50 flex items-center justify-center p-8 text-center text-gray-400">
+                    <div>
+                        <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <h3 className="text-lg font-bold text-gray-500 mb-2">{tab.title}</h3>
+                        <p className="text-sm">Document preview is not available.</p>
+                        <p className="text-xs mt-2">Use the Study Intelligence tab to analyze this file.</p>
+                    </div>
+                </div>
+            );
+        }
+
+        let parsedContent = tab.material?.ai_generated_content || tab.material?.content || '';
+        if (typeof parsedContent === 'string') {
+            try { parsedContent = JSON.parse(parsedContent); } catch(e) {}
+        }
+        if (parsedContent?.result) parsedContent = parsedContent.result;
+        const displayContent = typeof parsedContent === 'object' ? JSON.stringify(parsedContent, null, 2) : String(parsedContent);
+
+        return (
+            <div className="flex-1 h-full overflow-y-auto p-6 md:p-8 bg-[#FAFBFF]">
+                <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
+                    <div className="flex items-center gap-3 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                            <Sparkles className="w-4 h-4 text-indigo-500" />
+                        </div>
+                        <h3 className="text-lg font-black text-gray-900 tracking-tight capitalize">{tab.type.replace('_', ' ')} Insight</h3>
+                    </div>
+                    <div className="bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-xl shadow-indigo-100/20 text-gray-800 leading-relaxed text-sm whitespace-pre-wrap relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 rounded-bl-[4rem] group-hover:scale-110 transition-transform"></div>
+                        {displayContent}
+                    </div>
+                </div>
+            </div>
+        );
+    };
 
     return (
         <div className="subject-page flex-1 min-h-0 flex flex-col bg-[#FFF8F0]/30 animate-in fade-in duration-700 pb-20 md:pb-0">
@@ -301,15 +556,12 @@ const SubjectDetail = () => {
                     />
                 }
                 middlePanel={
-                    <MaterialsPanel
-                        genType={genType}
-                        setGenType={setGenType}
-                        handleGenerate={handleGenerate}
-                        isGenerating={isGenerating}
-                        selectedCount={selectedUploads.length}
-                        genResult={genResult}
-                        setGenResult={setGenResult}
-                        genError={genError}
+                    <WorkspaceTabs
+                        tabs={tabs}
+                        setTabs={setTabs}
+                        activeTabId={activeTabId}
+                        setActiveTabId={setActiveTabId}
+                        renderTabContent={renderTabContent}
                     />
                 }
                 rightPanel={

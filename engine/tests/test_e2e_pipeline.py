@@ -10,7 +10,7 @@ try:
     import database
     import models
     from services.processor import process_subject
-    from utils.embeddings import get_embedder
+    from services.embeddings import generate_embeddings as get_embedder
     from pgvector.sqlalchemy import Vector
 except ImportError as e:
     print(f"Import failed: {e}")

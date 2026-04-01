@@ -3,14 +3,14 @@ import { materialService } from '../services/api';
 import { COMPLETED, FAILED, PROCESSING, SUCCESS, normalizeStatus } from '../constants/statusConstants';
 import toast from 'react-hot-toast';
 import { useUIStore } from './useUIStore';
-import { requireAuth } from '../utils/requireAuth';
+import { useAuthStore } from './useAuthStore';
 
 const pollingIntervals = new Map();
 
 export const useMaterialStore = create((set, get) => ({
     data: {
         materials: [],
-        jobProgress: null, // { jobId, materialId, stage, progress, message }
+        jobProgress: null, // { jobId, materialId, stage, progress, message, result }
         isPublic: false
     },
     error: null,
@@ -53,9 +53,14 @@ export const useMaterialStore = create((set, get) => ({
             }
         },
 
-        uploadMaterial: (formData) => requireAuth(async () => {
+        uploadMaterial: async (formData) => {
+            const user = useAuthStore.getState().data.user;
+            if (!user) {
+                useUIStore.getState().actions.setModal('authPrompt');
+                return;
+            }
             const uiActions = useUIStore.getState().actions;
-            uiActions.setLoading('upload', true, 'Uploading document...', false); // Non-blocking
+            uiActions.setLoading('upload', true, 'Uploading document...', false);
             uiActions.clearError('upload');
             set({ error: null });
 
@@ -89,7 +94,7 @@ export const useMaterialStore = create((set, get) => ({
             } finally {
                 uiActions.setLoading('upload', false);
             }
-        }),
+        },
 
         clearPolling: (materialId) => {
             const intervalId = pollingIntervals.get(materialId);
@@ -106,7 +111,12 @@ export const useMaterialStore = create((set, get) => ({
             pollingIntervals.clear();
         },
 
-        cancelJob: (materialId) => requireAuth(async () => {
+        cancelJob: async (materialId) => {
+            const user = useAuthStore.getState().data.user;
+            if (!user) {
+                useUIStore.getState().actions.setModal('authPrompt');
+                return;
+            }
             try {
                 await materialService.cancel(materialId);
                 set((state) => ({
@@ -117,24 +127,57 @@ export const useMaterialStore = create((set, get) => ({
             } catch (err) {
                 set({ error: err.message || 'Failed to cancel job' });
             }
-        }),
+        },
 
-        startPolling: (materialId) => {
-            // Prevent duplicated pollers when uploads are retried quickly.
-            get().actions.clearPolling(materialId);
+        startPolling: async (materialId) => {
+            if (pollingIntervals.has(materialId)) return;
+
+            const startTime = Date.now();
+            const MAX_POLLING_MS = 600000; // 10 minutes timeout
 
             const intervalId = setInterval(async () => {
+                if (Date.now() - startTime > MAX_POLLING_MS) {
+                    console.warn(`[MaterialStore] Polling timeout for ${materialId}`);
+                    get().actions.clearPolling(materialId);
+                    set((state) => ({
+                        ...state,
+                        data: {
+                            ...state.data,
+                            jobProgress: {
+                                stage: FAILED.toLowerCase(),
+                                progress: 100,
+                                message: 'Generation session timed out. Please try again.'
+                            }
+                        }
+                    }));
+                    return;
+                }
+
                 try {
-                    const res = await materialService.sync(materialId);
-                    const material = res.data.data;
+                    const response = await materialService.sync(materialId);
+                    if (!response?.data?.data) return;
+
+                    const { material } = response.data.data;
                     const status = normalizeStatus(material.status);
 
                     if (status === COMPLETED || status === SUCCESS) {
                         get().actions.clearPolling(materialId);
-                        set((state) => ({
-                            ...state,
-                            data: { ...state.data, jobProgress: null }
-                        }));
+                        
+                        if (material.type !== 'document') {
+                            const result = material.ai_generated_content || material.content;
+                            set((state) => ({
+                                ...state,
+                                data: {
+                                    ...state.data,
+                                    jobProgress: {
+                                        stage: 'success',
+                                        progress: 100,
+                                        message: 'Refining knowledge complete!',
+                                        result: result
+                                    }
+                                }
+                            }));
+                        }
                         await get().actions.fetchMaterials();
                     } else if (status === FAILED) {
                         get().actions.clearPolling(materialId);
@@ -156,21 +199,13 @@ export const useMaterialStore = create((set, get) => ({
                             }));
                         }, 5000);
                     } else {
-                        // Map status or stage_message to granular stages
                         const stageMessage = material.stage_message || '';
                         let stage = status.toLowerCase();
                         let progress = status === PROCESSING ? 40 : 10;
 
-                        if (stageMessage.toLowerCase().includes('ocr')) {
-                            stage = 'ocr';
-                            progress = 30;
-                        } else if (stageMessage.toLowerCase().includes('chunk')) {
-                            stage = 'chunking';
-                            progress = 60;
-                        } else if (stageMessage.toLowerCase().includes('embed')) {
-                            stage = 'embedding';
-                            progress = 90;
-                        }
+                        if (stageMessage.toLowerCase().includes('ocr')) { stage = 'ocr'; progress = 30; }
+                        else if (stageMessage.toLowerCase().includes('chunk')) { stage = 'chunking'; progress = 60; }
+                        else if (stageMessage.toLowerCase().includes('embed')) { stage = 'embedding'; progress = 90; }
 
                         set((state) => ({
                             ...state,
@@ -187,7 +222,11 @@ export const useMaterialStore = create((set, get) => ({
                         }));
                     }
                 } catch (err) {
-                    set({ error: err.message || 'Polling error' });
+                    console.error('[MaterialStore] Polling loop error:', err);
+                    const msg = err.message === 'cyclic object value' 
+                        ? 'Circular data error during sync' 
+                        : (err.message || 'Polling error');
+                    set({ error: msg });
                 }
             }, 3000);
             pollingIntervals.set(materialId, intervalId);

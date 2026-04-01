@@ -13,7 +13,7 @@ const app = express();
 
 // Middlewares
 app.use(cors({
-  origin: [process.env.FRONTEND_URL || 'http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: [process.env.FRONTEND_URL || 'http://frontend:3000', 'http://127.0.0.1:3000'],
   credentials: true
 }));
 app.use(express.json());
@@ -49,6 +49,10 @@ app.use('/api/materials', materialRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/profile', profileRoutes);
+
+app.get('/', (req, res) => {
+  res.json({ message: 'Cognify Backend API', version: '1.0.0', endpoints: { auth: '/api/auth', materials: '/api/materials', subjects: '/api/subjects', health: '/health' } });
+});
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', message: 'Cognify Backend is healthy' });
