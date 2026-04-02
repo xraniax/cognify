@@ -33,3 +33,5 @@ frontend/dist
 
 # Docker
 postgres_data
+
+engine/services/credentials/
