@@ -100,7 +100,7 @@ CREATE TABLE chat_history (
     type chat_type NOT NULL,
     query TEXT NOT NULL,
     response TEXT NOT NULL,
-    embedding vector(1536),  -- PGVector column for chat embeddings
+    embedding vector(768),  -- PGVector column for chat embeddings matching nomic-embed-text
 
     created_at TIMESTAMP DEFAULT NOW()
 );

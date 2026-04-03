@@ -252,7 +252,7 @@ def task_store(self, data):
     soft_time_limit=300,
     time_limit=360
 )
-def task_generate(self, subject_id, material_type, topic=None, language="en", top_k=5, user_id=None):
+def task_generate(self, subject_id, material_type, topic=None, language="en", top_k=10, user_id=None):
     """
     Step 5: Generate study materials (Summary/Quiz/Flashcards/Exam) asynchronously.
     """

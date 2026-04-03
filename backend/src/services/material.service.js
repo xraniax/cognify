@@ -106,12 +106,16 @@ class MaterialService {
             }
 
             // Send directly to Python Engine's process-document route
-            const aiResponse = await axios.post(`${process.env.ENGINE_URL || 'http://engine:8000'}/process-document`, formData, {
-                headers: {
-                    ...formData.getHeaders()
-                },
-                timeout: 30000
-            });
+            const engineUrl = process.env.ENGINE_URL || 'http://engine:8000';
+            const endpoint = `${engineUrl}/process-document`;
+            const aiResponse = await ((process.env.NODE_ENV === 'test' && global.__mockAxiosPost)
+                ? global.__mockAxiosPost(endpoint, formData, { headers: formData.getHeaders(), timeout: 30000 })
+                : axios.post(endpoint, formData, {
+                    headers: {
+                        ...formData.getHeaders()
+                    },
+                    timeout: 30000
+                }));
 
             const { job_id } = aiResponse.data;
 
@@ -122,9 +126,11 @@ class MaterialService {
 
             return await Material.findById(documentRecord.id, userId);
         } catch (error) {
-            console.error(`[MaterialService] Failed to trigger AI job: ${error.message}`, { ...opContext, materialId: documentRecord.id });
-            await Material.updateStatus(documentRecord.id, userId, FAILED);
-            return await Material.findById(documentRecord.id, userId);
+            console.error(`[MaterialService] Failed to trigger AI job: ${error.message}`, { ...opContext, materialId: documentRecord?.id });
+            if (documentRecord) {
+                await Material.updateStatus(documentRecord.id, userId, FAILED);
+            }
+            return documentRecord ? await Material.findById(documentRecord.id, userId) : null;
         }
     }
 

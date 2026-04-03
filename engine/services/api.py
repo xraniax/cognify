@@ -419,7 +419,7 @@ async def retrieve_route(body: RetrieveRequest, db: Session = Depends(get_db)):
     """Retrieve top-k relevant chunks for a given topic and subject."""
     logger.info("Retrieve request for subject: %s, topic: %s", body.subject_id, body.topic)
     try:
-        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), body.topic, body.top_k)
+        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), body.topic, body.top_k or 10)
         return {
             "status": "success",
             "stage": "retrieval",
@@ -441,7 +441,7 @@ async def chat_route(body: ChatRequest, db: Session = Depends(get_db)):
     logger.info("Chat request: subject=%s, query=%s, user_id=%s", body.subject_id, body.question, body.user_id)
     try:
         # 1. Retrieve context chunks
-        chunks = retrieve_chunks_by_topic(db, body.subject_id, None, body.top_k)
+        chunks = retrieve_chunks_by_topic(db, body.subject_id, None, body.top_k or 10)
         chunk_texts = [c.content for c in chunks if c.content]
         
         # 2. Generate response
@@ -473,7 +473,7 @@ async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
             body.material_type, 
             body.topic, 
             body.language, 
-            body.top_k,
+            body.top_k or 10,
             body.user_id
         )
         

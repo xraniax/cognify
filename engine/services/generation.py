@@ -45,17 +45,18 @@ def build_prompt(material_type: str, context: str, topic: Optional[str], languag
             "questions": [
                 {
                     "id": 1,
-                    "question": "Sample Question?",
-                    "options": ["A", "B", "C", "D"],
-                    "correct_answer": "A",
-                    "explanation": "Why A is correct."
+                    "question": "Question text here?",
+                    "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+                    "correct_answer": "Option 1",
+                    "explanation": "Why Option 1 is correct."
                 }
             ]
         }
         prompt = (
             f"Context:\n{context}\n\n"
             f"Task: {base_instructions}\n"
-            f"Output JSON format:\n{json.dumps(json_structure, indent=2)}\n"
+            f"Output JSON shape:\n{json.dumps(json_structure, indent=2)}\n"
+            f"Important: Return ONLY valid JSON. No preamble. No markdown code blocks.\n"
             f"Generate now:"
         )
         return prompt
@@ -65,10 +66,11 @@ def build_prompt(material_type: str, context: str, topic: Optional[str], languag
         json_structure = {
             "type": "flashcards",
             "cards": [
-                {"front": "Photosynthesis", "back": "The process by which green plants and some other organisms use sunlight to synthesize foods with the help of chlorophyll."}
+                {"front": "Term A", "back": "Definition A"},
+                {"front": "Term B", "back": "Definition B"}
             ]
         }
-        base_instructions += f"\nExample JSON output:\n{json.dumps(json_structure, indent=2)}"
+        base_instructions += f"\nFollow this JSON structure: {json.dumps(json_structure)}"
 
     elif material_type == "exam":
         base_instructions = (
@@ -88,7 +90,8 @@ def build_prompt(material_type: str, context: str, topic: Optional[str], languag
         prompt = (
             f"Context:\n{context}\n\n"
             f"Task: {base_instructions}\n"
-            f"Output JSON format:\n{json.dumps(json_structure, indent=2)}\n"
+            f"Output JSON shape:\n{json.dumps(json_structure, indent=2)}\n"
+            f"Important: Return ONLY valid JSON. No preamble. No markdown code blocks.\n"
             f"Generate now:"
         )
         return prompt
