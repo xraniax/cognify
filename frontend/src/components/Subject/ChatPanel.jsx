@@ -19,10 +19,10 @@ const ChatPanel = ({
     return (
         <div className={`panel-inner chat-panel`}>
             {/* Panel Header — always visible */}
-            <div className="panel-header border-b border-gray-100/50 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
+            <div className="panel-header border-b border-gray-100/50 glass-panel sticky top-0 z-10 transition-all shadow-sm">
                 <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-indigo-500 anim-pulse"></div>
-                    <span className="panel-title font-black tracking-tight text-gray-900">AI Tutor</span>
+                    <div className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.6)]"></div>
+                    <span className="panel-title font-black tracking-tight text-gray-900 uppercase tracking-[0.1em]">AI Tutor</span>
                 </div>
                 <div className="flex items-center gap-1">
                     <button
@@ -69,12 +69,12 @@ const ChatPanel = ({
                                         <Bot className="w-4 h-4 text-indigo-500" />
                                     </div>
                                 )}
-                                <div className={`px-4 py-3 rounded-2xl shadow-sm text-sm leading-relaxed ${
+                                <div className={`px-5 py-4 rounded-3xl shadow-xl leading-relaxed text-[13px] transition-all duration-300 ${
                                     msg.role === 'user' 
-                                        ? 'bg-indigo-600 text-white rounded-br-none' 
-                                        : 'bg-white text-gray-800 border border-gray-100 rounded-bl-none'
+                                        ? 'bg-gradient-to-br from-indigo-600 to-purple-600 text-white rounded-br-none border border-indigo-400/20' 
+                                        : 'glass-panel text-gray-800 border-white/40 rounded-bl-none'
                                 }`}>
-                                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                                    <div className="whitespace-pre-wrap font-medium">{msg.content}</div>
                                     {msg.role === 'ai' && (
                                         <button
                                             onClick={() => handleTTS(msg.content)}
@@ -99,8 +99,8 @@ const ChatPanel = ({
                             <div className="w-8 h-8 rounded-full bg-white shadow-sm border border-gray-100 flex items-center justify-center shrink-0">
                                 <Bot className="w-4 h-4 text-indigo-400" />
                             </div>
-                            <div className="px-4 py-3 bg-white border border-gray-100 rounded-2xl rounded-bl-none shadow-sm flex items-center gap-2">
-                                <div className="flex gap-1">
+                            <div className="px-5 py-4 glass-panel rounded-3xl rounded-bl-none shadow-xl flex items-center gap-2 animate-neural">
+                                <div className="flex gap-1.5">
                                     <div className="w-2 h-2 bg-indigo-200 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
                                     <div className="w-2 h-2 bg-indigo-300 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
                                     <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></div>

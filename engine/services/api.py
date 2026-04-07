@@ -1,5 +1,6 @@
 import os
 import tempfile
+import json
 import logging
 import traceback
 from typing import List, Optional
@@ -9,7 +10,9 @@ import requests
 from fastapi import FastAPI, File, HTTPException, UploadFile, Request, Depends, Form
 from sqlalchemy.orm import Session
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+import asyncio
+import redis.asyncio as async_redis
 
 from celery import chain
 from celery.result import AsyncResult
@@ -43,10 +46,14 @@ from .document_processor import process_document, process_text_pipeline
 from .embeddings import embed_step, ollama_tags_url
 from .processor import process_subject
 from .retrieval import retrieve_chunks_by_topic
-from .generation import generate_study_material, evaluate_quiz, generate_chat_response
+from .generation import (
+    generate_study_material, evaluate_quiz, generate_chat_response,
+    evaluate_answer_semantically
+)
 from .schemas import (
     EmbedRequest, ProcessTextRequest, RetrieveRequest, GenerateRequest,
     ChatRequest, QuizEvaluateRequest, QuizEvaluateResponse,
+    EvaluateAnswerRequest, EvaluateAnswerResponse,
     DebugChunkRequest, DebugStoreRequest, DebugGenerateRequest
 )
 
@@ -189,6 +196,56 @@ async def get_job_status(job_id: str):
         response["meta"] = task_result.info
 
     return response
+
+
+@app.get("/job/{job_id}/stream")
+async def stream_job_updates(job_id: str):
+    """
+    Server-Sent Events (SSE) endpoint to stream generation updates from Redis.
+    """
+    redis_url = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+    
+    async def event_generator():
+        client = async_redis.from_url(redis_url)
+        pubsub = client.pubsub()
+        channel = f"job:{job_id}:stream"
+        
+        try:
+            await pubsub.subscribe(channel)
+            logger.info(f"SSE: Client subscribed to {channel}")
+            
+            # Send initial connection event
+            yield "data: {\"status\": \"connected\"}\n\n"
+            
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30.0)
+                if message:
+                    data = message["data"].decode("utf-8")
+                    yield f"data: {data}\n\n"
+                    
+                    # If the message indicates it's the final chunk, we can exit the loop
+                    try:
+                        parsed = json.loads(data)
+                        if parsed.get("is_final"):
+                            logger.info(f"SSE: Received final chunk for {job_id}")
+                            break
+                    except:
+                        pass
+                else:
+                    # Keep-alive or timeout check
+                    yield "data: {\"status\": \"ping\"}\n\n"
+                
+                await asyncio.sleep(0.01)
+                
+        except Exception as e:
+            logger.error(f"SSE Error for {job_id}: {e}")
+            yield f"data: {{\"status\": \"error\", \"message\": \"{str(e)}\"}}\n\n"
+        finally:
+            await pubsub.unsubscribe(channel)
+            await client.close()
+            logger.info(f"SSE: Client unsubscribed and closed for {job_id}")
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.post("/preprocess")
@@ -465,7 +522,7 @@ async def chat_route(body: ChatRequest, db: Session = Depends(get_db)):
 @app.post("/generate")
 async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
     """Generate study materials using LLM based on retrieved context."""
-    logger.info("Generate request (async): subject=%s, type=%s, topic=%s, user_id=%s", body.subject_id, body.material_type, body.topic, body.user_id)
+    logger.info("Generate request (async): subject=%s, type=%s, topic=%s, user_id=%s, options=%s", body.subject_id, body.material_type, body.topic, body.user_id, body.options)
     try:
         # Trigger the async task
         task = task_generate.delay(
@@ -474,7 +531,8 @@ async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
             body.topic, 
             body.language, 
             body.top_k or 10,
-            body.user_id
+            body.user_id,
+            options=body.options
         )
         
         return {
@@ -512,6 +570,29 @@ async def evaluate_quiz_route(body: QuizEvaluateRequest):
         return _stage_error_response(
             "evaluation",
             "Quiz evaluation failed",
+            details=str(e),
+            status_code=500,
+        )
+
+@app.post("/evaluate-answer", response_model=EvaluateAnswerResponse)
+async def evaluate_answer_route(body: EvaluateAnswerRequest):
+    """
+    Evaluate a single student answer semantically using LLM.
+    Useful for short_answer, problem, and scenario questions.
+    """
+    logger.info("Evaluate answer request: q='%s'...", body.question[:50])
+    try:
+        result = evaluate_answer_semantically(
+            body.question,
+            body.correct_answer,
+            body.user_answer
+        )
+        return result
+    except Exception as e:
+        logger.exception("Answer evaluation failed")
+        return _stage_error_response(
+            "evaluation",
+            "Answer evaluation failed",
             details=str(e),
             status_code=500,
         )

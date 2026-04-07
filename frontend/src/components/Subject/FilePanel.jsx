@@ -20,9 +20,9 @@ const FilePanel = ({
     return (
         <div className="panel-inner h-full flex flex-col">
             {/* Panel Header */}
-            <div className="panel-header flex-shrink-0">
+            <div className="panel-header flex-shrink-0 glass-panel sticky top-0 z-10 transition-all border-b border-gray-100/50 shadow-sm">
                 <div className="flex items-center justify-between w-full">
-                    <span className="panel-title">Subject Materials</span>
+                    <span className="panel-title font-black uppercase tracking-[0.1em] text-gray-900">Subject Materials</span>
                 </div>
 
                 <button

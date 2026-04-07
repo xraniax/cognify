@@ -295,7 +295,7 @@ class MaterialService {
     /**
      * AI Generation grounded in a subject's knowledge base.
      */
-    static async generateWithContext(userId, materialIds, taskType, subjectId = null) {
+    static async generateWithContext(userId, materialIds, taskType, subjectId = null, genOptions = {}) {
         const sourceDocuments = await Material.findByIds(materialIds, userId);
         if (sourceDocuments.length === 0 && !subjectId) return { result: "No source documents selected for context." };
 
@@ -317,7 +317,9 @@ class MaterialService {
                 subject_id: finalSubjectId,
                 material_type: materialType,
                 top_k: 10, // More context for study material generation
-                user_id: userId
+                user_id: userId,
+                options: genOptions
+
             };
             const options = { timeout: 300000 }; // 5 minutes for generation
             const aiResponse = await ((process.env.NODE_ENV === 'test' && global.__mockAxiosPost)

@@ -124,10 +124,46 @@
   }
 }
 
-/* ─── Global Animation Tokens ───────────────────────────────── */
+/* ─── Premium Glassmorphism Tokens ───────────────────────── */
 :root {
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.3);
+  --glass-blur: blur(12px);
+  --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.08);
+  
   --transition-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
   --transition-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.glass-panel-dark {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* ─── Generation Micro-animations ────────────────────────── */
+@keyframes neural-pulse {
+  0% { transform: scale(1); filter: brightness(1) blur(0px); opacity: 0.8; }
+  50% { transform: scale(1.02); filter: brightness(1.2) blur(1px); opacity: 1; }
+  100% { transform: scale(1); filter: brightness(1) blur(0px); opacity: 0.8; }
+}
+
+@keyframes neural-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.1); }
+  50% { box-shadow: 0 0 40px rgba(168, 85, 247, 0.3); }
+}
+
+.animate-neural {
+  animation: neural-pulse 3s infinite ease-in-out, neural-glow 3s infinite ease-in-out;
 }
 
 .hover-lift {
@@ -184,6 +220,50 @@
 
 .anim-skeleton {
   animation: skeletonPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ─── 3D Flashcard Flip ─────────────────────────────────────── */
+.flashcard-perspective {
+  perspective: 2000px;
+}
+
+.flashcard-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-style: preserve-3d;
+}
+
+.flashcard-inner.flashcard-flipped {
+  transform: rotateY(180deg);
+}
+
+.flashcard-inner.flashcard-animating {
+  transition: transform 0.4s ease-in-out;
+}
+
+.flashcard-face {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  transform-style: preserve-3d;
+}
+
+.flashcard-front {
+  z-index: 2;
+  transform: rotateY(0deg);
+}
+
+.flashcard-back {
+  z-index: 1;
+  transform: rotateY(180deg);
 }
 
 /* ─── Entrance Animations ───────────────────────────────────── */
@@ -601,4 +681,28 @@
 
 .upload-zone--has-file {
   @apply border-green-200 bg-green-50;
+}
+
+/* Custom Scrollbar for Flashcards */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.1);
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+.custom-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.3);
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(99, 102, 241, 0.1) transparent;
 }

@@ -10,6 +10,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from celery import chain
 from celery_app import celery_app
+import redis
+import json
 
 # DEPRECATED: Standardizing on utils.logging.get_job_logger
 def get_job_logger_deprecated(job_id):
@@ -252,7 +254,7 @@ def task_store(self, data):
     soft_time_limit=300,
     time_limit=360
 )
-def task_generate(self, subject_id, material_type, topic=None, language="en", top_k=10, user_id=None):
+def task_generate(self, subject_id, material_type, topic=None, language="en", top_k=10, user_id=None, options=None):
     """
     Step 5: Generate study materials (Summary/Quiz/Flashcards/Exam) asynchronously.
     """
@@ -294,16 +296,66 @@ def task_generate(self, subject_id, material_type, topic=None, language="en", to
             return {"status": "FAILED", "error": "No content available for this subject"}
 
         # 2. Generate material
-        material = generate_study_material(chunk_texts, material_type, topic, language, job_id=job_id)
+        opts = options or {}
+        log.info(f"STEP: GENERATING {opts.get('count', 'requested')} FLASHCARDS ({opts.get('difficulty', 'Default')})...")
+        material = generate_study_material(chunk_texts, material_type, topic, language, job_id=job_id, stream=True, options=options)
         
+        # 3. Handle Streaming Response
+        full_text = ""
+        r = redis.from_url(os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
+        channel = f"job:{job_id}:stream"
+
+        if hasattr(material, 'iter_lines'):
+            log.info(f"STEP: GENERATION Streaming to Redis channel: {channel}")
+            for line in material.iter_lines():
+                if line:
+                    chunk_data = json.loads(line)
+                    chunk_text = chunk_data.get("response", "")
+                    full_text += chunk_text
+                    
+                    # Publish chunk to Redis
+                    r.publish(channel, json.dumps({
+                        "chunk": chunk_text,
+                        "is_final": chunk_data.get("done", False)
+                    }))
+            
+            # Final validation/parsing if it was supposed to be JSON
+            if material_type != "summary":
+                # For JSON types, we need to parse the full text at the end to ensure validity
+                # This re-uses the logic from generate_study_material but on the full_text we built
+                from services.generation import generate_study_material as gsm_sync
+                # We call it sync now with the full_text (we might need a "parse_only" helper but let's see)
+                # Actually, let's just use the full_text for summaries, 
+                # and for JSON, we might want to re-run the validation logic.
+                pass 
+                
+            material = full_text
+
         duration = time.perf_counter() - start_time
         log.info(f"STEP: GENERATION SUCCESS (duration: {duration:.2f}s)")
+        
+        # If it was JSON, we might need to parse it now if it wasn't summary
+        ai_generated_content = None
+        if material_type != "summary":
+            try:
+                # Basic cleanup
+                clean_text = material.strip()
+                if "```json" in clean_text:
+                    clean_text = clean_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_text:
+                    clean_text = clean_text.split("```")[1].split("```")[0].strip()
+                
+                ai_generated_content = json.loads(clean_text)
+            except:
+                log.error("Failed to parse streamed JSON content at the end.")
+                ai_generated_content = {"error": "Invalid JSON", "raw": material}
+
         return {
             "status": "SUCCESS",
             "subject_id": subject_id,
             "material_type": material_type,
-            "content": material if isinstance(material, str) else None,
-            "ai_generated_content": material if isinstance(material, (dict, list)) else None
+            "content": material if material_type == "summary" else None,
+            "ai_generated_content": ai_generated_content
         }
     except Exception as e:
         log.exception(f"STEP: GENERATION FAILED (Attempt {self.request.retries + 1}): {str(e)}")

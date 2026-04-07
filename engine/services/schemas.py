@@ -54,6 +54,7 @@ class GenerateRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     language: str = Field(default="en")
     user_id: Optional[str] = None
+    options: Optional[dict] = None
 
 class ChatRequest(BaseModel):
     subject_id: UUID
@@ -65,8 +66,20 @@ class ChatRequest(BaseModel):
 # --- Structured Output Models ---
 
 class ExamQuestion(BaseModel):
+    id: int
+    type: Literal["single_choice", "multiple_select", "short_answer", "fill_blank", "matching", "problem", "scenario"] = "single_choice"
     question: str
+    options: Optional[List[str]] = None
     answer_space: str = "__________"
+    difficulty: Optional[str] = "Normal"
+    topic: Optional[str] = "General"
+    
+    # Matching type specifics
+    pairs: Optional[List[dict]] = None # [{left: "...", right: "..."}]
+    rightOptions: Optional[List[str]] = None
+    
+    # Fill in the blank specifics
+    blankAnswers: Optional[List[str]] = None
 
 class ExamAnswerSheetItem(BaseModel):
     question_id: int
@@ -81,9 +94,11 @@ class ExamOutput(BaseModel):
 class QuizQuestion(BaseModel):
     id: int
     question: str
-    options: Optional[List[str]] = None
+    options: List[str]
     correct_answer: str
     explanation: str
+    difficulty: Optional[str] = "Normal"
+    topic: Optional[str] = "General"
 
 class QuizOutput(BaseModel):
     type: Literal["quiz"] = "quiz"
@@ -117,6 +132,17 @@ class QuizResultItem(BaseModel):
 class QuizEvaluateResponse(BaseModel):
     type: Literal["quiz_result"] = "quiz_result"
     results: List[QuizResultItem]
+
+class EvaluateAnswerRequest(BaseModel):
+    question: str
+    correct_answer: str
+    user_answer: str
+
+class EvaluateAnswerResponse(BaseModel):
+    is_correct: bool
+    is_almost: bool
+    explanation: str
+    score: float # 0.0 to 1.0
 
 # --- Debug Models ---
 

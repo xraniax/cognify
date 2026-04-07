@@ -84,13 +84,14 @@ export const useUIStore = create((set, get) => ({
             })),
 
         // Helper to check if ANY critical task is loading
-        getGlobalLoading: (keys = []) => {
+        getGlobalLoading: (keys = [], onlyBlocking = false) => {
             const loadingStates = get().data.loadingStates || {};
             const activeKeys = keys.length > 0 ? keys : Object.keys(loadingStates);
             
             for (const key of activeKeys) {
-                if (loadingStates[key]?.loading) {
-                    return loadingStates[key];
+                const status = loadingStates[key];
+                if (status?.loading && (!onlyBlocking || status?.blocking)) {
+                    return status;
                 }
             }
             return null;

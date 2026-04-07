@@ -19,7 +19,7 @@ const Skeleton = ({ className, variant = 'rect', width, height }) => {
             className={`${baseClass} ${variantClasses[variant]} ${className || ''}`}
             style={style}
         >
-            <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent anim-shimmer"></div>
+            <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/60 to-transparent anim-shimmer" style={{ animationDuration: '1.5s' }}></div>
         </div>
     );
 };

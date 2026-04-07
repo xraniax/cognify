@@ -96,20 +96,20 @@ const SECTION_PALETTES = [
 ];
 
 // ─── Block Renderer ───────────────────────────────────────────────────────────
-function BlockRenderer({ block, idx }) {
+function BlockRenderer({ block, idx, isExpanded }) {
     switch (block.type) {
         case 'h1':
             return (
-                <h2 key={idx} className="text-2xl font-black text-gray-900 tracking-tight leading-snug mt-2 mb-1">
+                <h2 key={idx} className={`${isExpanded ? 'text-4xl' : 'text-2xl'} font-black text-gray-900 tracking-tight leading-tight mt-4 mb-2 transition-all duration-500`}>
                     {parseInline(block.text)}
                 </h2>
             );
         case 'h2': {
             const palette = SECTION_PALETTES[(idx) % SECTION_PALETTES.length];
             return (
-                <div key={idx} className={`flex items-center gap-2.5 mt-6 mb-2 pb-2 border-b ${palette.border}`}>
-                    <span className={`w-1.5 h-5 rounded-full ${palette.dot}`} />
-                    <h3 className={`text-base font-black tracking-tight ${palette.icon.replace('text-', 'text-').replace('-400', '-700')}`}>
+                <div key={idx} className={`flex items-center gap-2.5 ${isExpanded ? 'mt-10 mb-4 pb-3' : 'mt-6 mb-2 pb-2'} border-b ${palette.border} transition-all duration-500`}>
+                    <span className={`w-1.5 h-6 rounded-full ${palette.dot}`} />
+                    <h3 className={`${isExpanded ? 'text-xl' : 'text-base'} font-black tracking-tight ${palette.icon.replace('text-', 'text-').replace('-400', '-700')} transition-all`}>
                         {parseInline(block.text)}
                     </h3>
                 </div>
@@ -123,9 +123,9 @@ function BlockRenderer({ block, idx }) {
             );
         case 'quote':
             return (
-                <div key={idx} className="flex gap-3 my-3 p-3.5 rounded-xl bg-amber-50 border border-amber-200/70">
-                    <Lightbulb className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-sm text-amber-900 leading-relaxed font-medium">
+                <div key={idx} className={`flex gap-3 my-4 ${isExpanded ? 'p-6' : 'p-3.5'} rounded-2xl bg-amber-50 border border-amber-200/70 transition-all duration-500`}>
+                    <Lightbulb className={`${isExpanded ? 'w-5 h-5' : 'w-4 h-4'} text-amber-500 flex-shrink-0 mt-0.5`} />
+                    <p className={`${isExpanded ? 'text-base' : 'text-sm'} text-amber-900 leading-relaxed font-medium transition-all`}>
                         {parseInline(block.text)}
                     </p>
                 </div>
@@ -157,7 +157,7 @@ function BlockRenderer({ block, idx }) {
         case 'p':
         default:
             return (
-                <p key={idx} className="text-sm text-gray-700 leading-relaxed my-1.5">
+                <p key={idx} className={`${isExpanded ? 'text-base leading-loose' : 'text-sm leading-relaxed'} text-gray-700 my-2 transition-all duration-500`}>
                     {parseInline(block.text)}
                 </p>
             );
@@ -187,7 +187,7 @@ function StatsBar({ wordCount, readingMins, sectionCount }) {
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-const SummaryView = ({ summaryData, title }) => {
+const SummaryView = ({ summaryData, title, isExpanded = false }) => {
 
     const rawText = useMemo(() => {
         if (!summaryData) return '';
@@ -223,11 +223,11 @@ const SummaryView = ({ summaryData, title }) => {
     const contentBlocks = h1Block ? blocks.filter(b => b !== h1Block) : blocks;
 
     return (
-        <div className="flex-1 h-full overflow-y-auto bg-[#FAFBFF]">
-            <div className="max-w-3xl mx-auto px-6 md:px-8 py-8 space-y-0 animate-in fade-in duration-500">
+        <div className="flex-1 h-full overflow-y-auto bg-transparent transition-all duration-500">
+            <div className={`${isExpanded ? 'max-w-5xl px-12 py-16' : 'max-w-4xl px-8 py-10'} mx-auto space-y-0 animate-in fade-in duration-500 transition-all`}>
 
                 {/* ── Header Card ── */}
-                <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-600 p-6 md:p-8 mb-6 shadow-xl shadow-indigo-200/40">
+                <div className={`relative rounded-[2.5rem] overflow-hidden bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-600 ${isExpanded ? 'p-12 mb-10' : 'p-8 mb-6'} shadow-2xl shadow-indigo-200/40 transition-all duration-500`}>
                     {/* decorative blobs */}
                     <div className="absolute top-0 right-0 w-48 h-48 bg-white/5 rounded-full -translate-y-12 translate-x-12 pointer-events-none" />
                     <div className="absolute bottom-0 left-0 w-32 h-32 bg-white/5 rounded-full translate-y-8 -translate-x-8 pointer-events-none" />
@@ -239,7 +239,7 @@ const SummaryView = ({ summaryData, title }) => {
                             </div>
                             <span className="text-white/70 text-[10px] font-bold uppercase tracking-widest">AI Summary</span>
                         </div>
-                        <h1 className="text-xl md:text-2xl font-black text-white leading-tight tracking-tight mb-4">
+                        <h1 className={`${isExpanded ? 'text-3xl md:text-5xl' : 'text-xl md:text-2xl'} font-black text-white leading-tight tracking-tight mb-6 transition-all duration-500`}>
                             {displayTitle}
                         </h1>
                         {/* Stats */}
@@ -263,9 +263,9 @@ const SummaryView = ({ summaryData, title }) => {
                 </div>
 
                 {/* ── Content ── */}
-                <div className="bg-white border border-gray-100 rounded-2xl px-7 py-6 shadow-lg shadow-indigo-50/30">
+                <div className={`${isExpanded ? 'px-12 py-10' : 'px-8 py-8'} bg-white border border-gray-100 rounded-[2.5rem] shadow-2xl shadow-indigo-50/50 transition-all duration-500`}>
                     {contentBlocks.map((block, idx) => (
-                        <BlockRenderer key={idx} block={block} idx={idx} />
+                        <BlockRenderer key={idx} block={block} idx={idx} isExpanded={isExpanded} />
                     ))}
                 </div>
 

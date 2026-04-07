@@ -1,26 +1,367 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { 
-    FileText, 
-    ClipboardCheck, 
-    Eye, 
-    EyeOff,
-    Printer,
-    Download,
-    Trophy,
-    BookOpen
-} from 'lucide-react';
-import { clsx } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// eslint-disable-next-line no-unused-vars
+import { AnimatePresence, motion } from 'framer-motion';
+import { AlertTriangle, CheckCircle2, Clock3, FileText, Flag, RefreshCw, Save, Trophy } from 'lucide-react';
+import { examService } from '../../services/api';
 
-function cn(...inputs) {
-    return twMerge(clsx(inputs));
-}
+const formatTime = (seconds) => {
+    const safe = Math.max(0, Number(seconds) || 0);
+    const mm = String(Math.floor(safe / 60)).padStart(2, '0');
+    const ss = String(safe % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
+};
 
-const ExamView = ({ examData }) => {
-    const [showAnswers, setShowAnswers] = useState(false);
+const QuestionRenderer = ({
+    question,
+    answer,
+    onChoiceChange,
+    onTextChange,
+    onBlankChange,
+    onMatchChange,
+    readOnly,
+}) => {
+    if (['short_answer', 'problem', 'scenario'].includes(question.type)) {
+        return (
+            <textarea
+                value={answer.answerText || ''}
+                onChange={(e) => onTextChange(question, e.target.value)}
+                disabled={readOnly}
+                placeholder="Write your answer clearly and concisely..."
+                className="w-full min-h-[140px] rounded-2xl border border-gray-200 p-4 text-sm md:text-base text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50"
+            />
+        );
+    }
+    if (question.type === 'fill_blank') {
+        const count = Math.max(1, question.blankAnswers?.length || 1);
+        return (
+            <div className="space-y-3">
+                <p className="text-xs font-semibold text-gray-500">
+                    Fill each blank in order.
+                </p>
+                {Array.from({ length: count }).map((_, idx) => (
+                    <input
+                        key={`${question.id}-blank-${idx}`}
+                        value={answer.blankAnswers?.[idx] || ''}
+                        disabled={readOnly}
+                        onChange={(e) => onBlankChange(question, idx, e.target.value)}
+                        placeholder={`Blank ${idx + 1}`}
+                        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50"
+                    />
+                ))}
+            </div>
+        );
+    }
+    if (question.type === 'matching') {
+        const pairs = question.pairs || [];
+        const options = question.rightOptions || [];
+        return (
+            <div className="space-y-3">
+                <p className="text-xs font-semibold text-gray-500">
+                    Match each item on the left with one option.
+                </p>
+                {pairs.map((pair, idx) => (
+                    <div key={`${question.id}-pair-${idx}`} className="grid grid-cols-1 md:grid-cols-2 gap-2 items-center">
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
+                            {pair.left}
+                        </div>
+                        <select
+                            value={answer.matchAnswers?.[pair.left] || ''}
+                            disabled={readOnly}
+                            onChange={(e) => onMatchChange(question, pair.left, e.target.value)}
+                            className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50"
+                        >
+                            <option value="">Select match...</option>
+                            {options.map((opt) => (
+                                <option key={`${question.id}-${pair.left}-${opt}`} value={opt}>{opt}</option>
+                            ))}
+                        </select>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+    return (
+        <div className="space-y-4">
+            {question.options.map((option, idx) => {
+                const checked = answer.selectedAnswers.includes(idx);
+                const isSingle = question.type === 'single_choice';
+                return (
+                    <label
+                        key={`${question.id}-opt-${idx}`}
+                        className={`flex items-start gap-3 p-4 rounded-2xl border transition-all cursor-pointer ${
+                            checked
+                                ? 'border-indigo-300 bg-indigo-50/60 shadow-sm'
+                                : 'border-gray-200 bg-white hover:border-indigo-200 hover:bg-indigo-50/30'
+                        }`}
+                    >
+                        <input
+                            type={isSingle ? 'radio' : 'checkbox'}
+                            name={`question-${question.id}`}
+                            checked={checked}
+                            disabled={readOnly}
+                            onChange={() => onChoiceChange(question, idx)}
+                            className="mt-0.5 accent-indigo-600"
+                        />
+                        <span className="text-sm md:text-base text-gray-700 font-medium">{option}</span>
+                    </label>
+                );
+            })}
+        </div>
+    );
+};
 
-    if (!examData || !examData.questions || examData.questions.length === 0) {
+// ---------------------------------------------------------------------------
+// Data normaliser
+// ---------------------------------------------------------------------------
+const extractExamData = (data) => {
+    if (!data) return null;
+
+    // If it's a string, try to parse it
+    if (typeof data === 'string') {
+        try {
+            const parsed = JSON.parse(data);
+            return extractExamData(parsed);
+        } catch {
+            // handle error
+        }
+    }
+
+    // Standard shape: { questions: [...] }
+    if (Array.isArray(data.questions)) return data;
+
+    // Handle alternate names
+    const alternateArray = data.exam || data.exam_questions || data.items || data.data;
+    if (Array.isArray(alternateArray)) return { ...data, questions: alternateArray };
+
+    // Dictionary support: if questions is { "1": {...}, "2": {...} }
+    if (data.questions && typeof data.questions === 'object' && !Array.isArray(data.questions)) {
+        const values = Object.values(data.questions);
+        return { ...data, questions: values };
+    }
+
+    // Direct array?
+    if (Array.isArray(data)) return { questions: data };
+
+    // Deep nesting
+    if (data.result) return extractExamData(data.result);
+    
+    return null;
+};
+
+const ExamView = ({ examData: rawExamData, isExpanded = false }) => {
+    const examData = extractExamData(rawExamData);
+    const [exam, setExam] = useState(null);
+    const [answers, setAnswers] = useState({});
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [flagged, setFlagged] = useState({});
+    const [startedAt, setStartedAt] = useState(null);
+    const [result, setResult] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [error, setError] = useState('');
+    const hasAutoSubmitted = useRef(false);
+    const [remainingSeconds, setRemainingSeconds] = useState(null);
+    const [isSavingAttempt, setIsSavingAttempt] = useState(false);
+    const [lastSavedAt, setLastSavedAt] = useState(null);
+
+    useEffect(() => {
+        // Strict session reset to avoid contamination between exams
+        setExam(null);
+        setAnswers({});
+        setCurrentIndex(0);
+        setFlagged({});
+        setResult(null);
+        setError('');
+        setIsSubmitting(false);
+        setStartedAt(null);
+        hasAutoSubmitted.current = false;
+        setRemainingSeconds(null);
+
+        if (!examData || !Array.isArray(examData.questions) || examData.questions.length === 0) return;
+        setExam(examData);
+        setStartedAt(new Date());
+        if (examData.timeLimit && Number.isFinite(examData.timeLimit)) {
+            setRemainingSeconds(Math.max(0, Math.floor(Number(examData.timeLimit) * 60)));
+        }
+
+        examService.getAttempt(examData.id).then((res) => {
+            const attempt = res?.data?.data;
+            if (!attempt) return;
+            const mappedAnswers = {};
+            for (const item of attempt.answers || []) {
+                mappedAnswers[item.questionId] = {
+                    selectedAnswers: Array.isArray(item.selectedAnswers) ? item.selectedAnswers : [],
+                    answerText: item.answerText || '',
+                    blankAnswers: Array.isArray(item.blankAnswers) ? item.blankAnswers : [],
+                    matchAnswers: item.matchAnswers && typeof item.matchAnswers === 'object' ? item.matchAnswers : {},
+                };
+            }
+            setAnswers(mappedAnswers);
+            setFlagged(attempt.flagged || {});
+            if (Number.isInteger(attempt.currentIndex)) setCurrentIndex(attempt.currentIndex);
+        }).catch(() => {
+            // handle error if needed
+        });
+    }, [examData?.id, examData]);
+
+    const serializeAnswers = useCallback(() => {
+        if (!exam?.questions) return [];
+        return exam.questions.map((q) => ({
+            questionId: q.id,
+            selectedAnswers: Array.isArray(answers[q.id]?.selectedAnswers) ? answers[q.id].selectedAnswers : [],
+            answerText: answers[q.id]?.answerText || '',
+            blankAnswers: Array.isArray(answers[q.id]?.blankAnswers) ? answers[q.id].blankAnswers : [],
+            matchAnswers: answers[q.id]?.matchAnswers || {},
+        }));
+    }, [answers, exam]);
+
+    const saveAttempt = useCallback(async () => {
+        if (!exam?.id || result) return;
+        try {
+            setIsSavingAttempt(true);
+            const res = await examService.saveAttempt({
+                examId: exam.id,
+                currentIndex,
+                answers: serializeAnswers(),
+                flagged,
+                startedAt: startedAt?.toISOString(),
+            });
+            setLastSavedAt(res?.data?.data?.updatedAt || new Date().toISOString());
+        } catch {
+            // Ignore autosave errors and keep exam usable
+        } finally {
+            setIsSavingAttempt(false);
+        }
+    }, [currentIndex, exam, flagged, result, serializeAnswers, startedAt]);
+
+    const submitExam = useCallback(async () => {
+        if (!exam?.id || isSubmitting || result) return;
+        setError('');
+        setIsSubmitting(true);
+        try {
+            const payload = {
+                examId: exam.id,
+                answers: exam.questions.map((q) => ({
+                    questionId: q.id,
+                    selectedAnswers: Array.isArray(answers[q.id]?.selectedAnswers) ? answers[q.id].selectedAnswers : [],
+                    answerText: answers[q.id]?.answerText || '',
+                blankAnswers: Array.isArray(answers[q.id]?.blankAnswers) ? answers[q.id].blankAnswers : [],
+                matchAnswers: answers[q.id]?.matchAnswers || {},
+                })),
+                startedAt: startedAt?.toISOString(),
+                submittedAt: new Date().toISOString(),
+            };
+            const res = await examService.submit(payload);
+            setResult(res?.data?.data || null);
+        } catch (err) {
+            setError(err.message || 'Failed to submit exam. Please retry.');
+        } finally {
+            setIsSubmitting(false);
+        }
+    }, [answers, exam, isSubmitting, result, startedAt]);
+
+    useEffect(() => {
+        if (remainingSeconds == null || result) return undefined;
+        if (remainingSeconds <= 0 && !hasAutoSubmitted.current) {
+            hasAutoSubmitted.current = true;
+            submitExam();
+            return undefined;
+        }
+        const timer = window.setTimeout(() => setRemainingSeconds((prev) => Math.max(0, (prev || 0) - 1)), 1000);
+        return () => window.clearTimeout(timer);
+    }, [remainingSeconds, result, submitExam]);
+
+    useEffect(() => {
+        if (!exam?.id || result) return undefined;
+        const timer = window.setTimeout(() => {
+            saveAttempt();
+        }, 1200);
+        return () => window.clearTimeout(timer);
+    }, [answers, currentIndex, flagged, exam?.id, result, saveAttempt]);
+
+    const total = exam?.questions?.length || 0;
+    const currentQuestion = total > 0 ? exam.questions[currentIndex] : null;
+    const selected = currentQuestion ? (answers[currentQuestion.id] || { selectedAnswers: [], answerText: '' }) : { selectedAnswers: [], answerText: '' };
+    const answeredCount = (exam?.questions || []).reduce((acc, q) => {
+        const qAnswer = answers[q.id] || { selectedAnswers: [], answerText: '', blankAnswers: [], matchAnswers: {} };
+        const hasValue = ['short_answer', 'problem', 'scenario'].includes(q.type)
+            ? !!String(qAnswer.answerText || '').trim()
+            : q.type === 'fill_blank'
+                ? (qAnswer.blankAnswers || []).some((ans) => !!String(ans || '').trim())
+                : q.type === 'matching'
+                    ? Object.keys(qAnswer.matchAnswers || {}).length > 0
+                    : qAnswer.selectedAnswers.length > 0;
+        return acc + (hasValue ? 1 : 0);
+    }, 0);
+    const progressPct = total > 0 ? Math.round((answeredCount / total) * 100) : 0;
+    const questionResult = currentQuestion ? result?.details?.find((d) => d.questionId === currentQuestion.id) : null;
+
+    const handleAnswerChange = (question, optionIndex) => {
+        if (result) return;
+        setAnswers((prev) => {
+            const current = prev[question.id] || { selectedAnswers: [], answerText: '', blankAnswers: [], matchAnswers: {} };
+            if (question.type === 'single_choice') {
+                return { ...prev, [question.id]: { ...current, selectedAnswers: [optionIndex] } };
+            }
+            const exists = current.selectedAnswers.includes(optionIndex);
+            const next = exists
+                ? current.selectedAnswers.filter((v) => v !== optionIndex)
+                : [...current.selectedAnswers, optionIndex];
+            return { ...prev, [question.id]: { ...current, selectedAnswers: next.sort((a, b) => a - b) } };
+        });
+    };
+
+    const handleAnswerTextChange = (question, value) => {
+        if (result) return;
+        setAnswers((prev) => {
+            const current = prev[question.id] || { selectedAnswers: [], answerText: '', blankAnswers: [], matchAnswers: {} };
+            return { ...prev, [question.id]: { ...current, answerText: value } };
+        });
+    };
+    const handleBlankChange = (question, idx, value) => {
+        if (result) return;
+        setAnswers((prev) => {
+            const current = prev[question.id] || { selectedAnswers: [], answerText: '', blankAnswers: [], matchAnswers: {} };
+            const blankAnswers = [...(current.blankAnswers || [])];
+            blankAnswers[idx] = value;
+            return { ...prev, [question.id]: { ...current, blankAnswers } };
+        });
+    };
+    const handleMatchChange = (question, left, right) => {
+        if (result) return;
+        setAnswers((prev) => {
+            const current = prev[question.id] || { selectedAnswers: [], answerText: '', blankAnswers: [], matchAnswers: {} };
+            return {
+                ...prev,
+                [question.id]: { ...current, matchAnswers: { ...(current.matchAnswers || {}), [left]: right } },
+            };
+        });
+    };
+
+    const jumpTo = (idx) => setCurrentIndex(Math.min(Math.max(0, idx), total - 1));
+    const toggleFlag = (questionId) => setFlagged((prev) => ({ ...prev, [questionId]: !prev[questionId] }));
+    const resetAttempt = () => {
+        setAnswers({});
+        setCurrentIndex(0);
+        setFlagged({});
+        setResult(null);
+        setError('');
+        setStartedAt(new Date());
+        if (exam?.timeLimit && Number.isFinite(exam.timeLimit)) {
+            setRemainingSeconds(Math.max(0, Math.floor(Number(exam.timeLimit) * 60)));
+        } else {
+            setRemainingSeconds(null);
+        }
+    };
+
+    const summaryByQuestion = useMemo(() => {
+        if (!result?.details) return {};
+        return result.details.reduce((acc, item) => {
+            acc[item.questionId] = item;
+            return acc;
+        }, {});
+    }, [result]);
+
+    if (!exam || !Array.isArray(exam.questions) || exam.questions.length === 0 || !currentQuestion) {
         return (
             <div className="flex flex-col items-center justify-center p-12 text-gray-500">
                 <FileText className="w-12 h-12 mb-4 opacity-20" />
@@ -29,133 +370,211 @@ const ExamView = ({ examData }) => {
         );
     }
 
-    const { questions, answer_sheet } = examData;
-
     return (
-        <div className="max-w-4xl mx-auto py-8 md:py-12 px-6">
-            {/* Exam Header */}
-            <div className="bg-white rounded-[2rem] shadow-xl shadow-gray-200/50 border border-gray-100 p-8 mb-8">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                    <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 rounded-2xl bg-gray-900 flex items-center justify-center">
-                            <ClipboardCheck className="w-8 h-8 text-white" />
-                        </div>
+        <div className={`mx-auto ${isExpanded ? 'max-w-7xl py-10' : 'max-w-6xl py-6'} px-4 md:px-6`}>
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="p-5 md:p-6 border-b border-gray-100 bg-gradient-to-r from-indigo-50/40 via-white to-amber-50/30">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                         <div>
-                            <h2 className="text-3xl font-black text-gray-900 tracking-tight">Mock Examination</h2>
-                            <div className="flex items-center gap-2 mt-1">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Formal Assessment</span>
-                                <span className="text-gray-200 font-bold">•</span>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-500">{questions.length} Questions</span>
+                            <h2 className="text-xl md:text-2xl font-black text-gray-900">{exam.title || 'Mock Exam'}</h2>
+                            <p className="text-xs md:text-sm text-gray-500 font-semibold mt-1">
+                                Progress: Q{currentIndex + 1}/{total}
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <div className="px-3 py-2 rounded-xl bg-white border border-gray-200 text-xs font-bold text-gray-600 flex items-center gap-2">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                                {answeredCount}/{total} Answered
                             </div>
+                            {remainingSeconds != null && (
+                                <div className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 ${
+                                    remainingSeconds <= 60 ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-white text-gray-700 border-gray-200'
+                                }`}>
+                                    <Clock3 className="w-4 h-4" />
+                                    {formatTime(remainingSeconds)}
+                                </div>
+                            )}
                         </div>
                     </div>
-
-                    <div className="flex items-center gap-3">
-                        <button 
-                            onClick={() => setShowAnswers(!showAnswers)}
-                            className={cn(
-                                "flex items-center gap-2 px-5 py-3 rounded-xl font-bold transition-all",
-                                showAnswers 
-                                    ? "bg-indigo-50 text-indigo-600 hover:bg-indigo-100" 
-                                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                            )}
-                        >
-                            {showAnswers ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                            {showAnswers ? "Hide Answers" : "Show Answers"}
-                        </button>
-                        <button className="p-3 bg-gray-100 text-gray-400 rounded-xl hover:bg-gray-200 transition-all">
-                            <Printer className="w-5 h-5" />
-                        </button>
+                    <div className="mt-4 h-2 rounded-full bg-gray-100 overflow-hidden">
+                        <motion.div
+                            className="h-full bg-gradient-to-r from-indigo-500 to-purple-500"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${progressPct}%` }}
+                            transition={{ duration: 0.35 }}
+                        />
                     </div>
                 </div>
-            </div>
 
-            {/* Questions Section */}
-            <div className="space-y-6 mb-12">
-                {questions.map((q, idx) => (
-                    <motion.div 
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: idx * 0.05 }}
-                        key={idx} 
-                        className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden"
-                    >
-                        <div className="absolute top-0 left-0 w-1.5 h-full bg-gray-100 group-hover:bg-indigo-500 transition-colors" />
-                        <div className="flex gap-6">
-                            <div className="text-2xl font-black text-gray-200 group-hover:text-indigo-100 transition-colors">
-                                {(idx + 1).toString().padStart(2, '0')}
-                            </div>
-                            <div className="flex-1">
-                                <h4 className="text-lg font-bold text-gray-800 mb-6 leading-relaxed">
-                                    {q.question}
-                                </h4>
-                                <div className="p-4 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-400 italic font-medium text-sm">
-                                    {q.answer_space || "Type your answer here..."}
+                <div className="grid grid-cols-1 xl:grid-cols-[1fr_240px] min-h-[520px]">
+                    <div className="p-5 md:p-6">
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={currentQuestion.id}
+                                initial={{ opacity: 0, x: 16 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -16 }}
+                                transition={{ duration: 0.2 }}
+                            >
+                                <div className="mb-5">
+                                    <div className="text-[11px] uppercase tracking-widest font-black text-indigo-500 mb-2">
+                                        {currentQuestion.type.replace('_', ' ')} • {currentQuestion.difficulty} • {currentQuestion.topic}
+                                    </div>
+                                    <h3 className="text-lg md:text-2xl font-black text-gray-900 leading-relaxed">
+                                        {currentQuestion.question}
+                                    </h3>
                                 </div>
+                                <QuestionRenderer
+                                    question={currentQuestion}
+                                    answer={selected}
+                                    onChoiceChange={handleAnswerChange}
+                                    onTextChange={handleAnswerTextChange}
+                                    onBlankChange={handleBlankChange}
+                                    onMatchChange={handleMatchChange}
+                                    readOnly={!!result}
+                                />
 
-                                {/* Inline Answer (if toggled) */}
-                                {showAnswers && answer_sheet && (
-                                    (() => {
-                                        const solution = answer_sheet.find(a => a.question_id === (idx + 1) || a.id === (idx + 1));
-                                        if (!solution) return null;
-
-                                        return (
-                                            <motion.div 
-                                                initial={{ opacity: 0, height: 0 }}
-                                                animate={{ opacity: 1, height: 'auto' }}
-                                                className="mt-6 pt-6 border-t border-indigo-50"
-                                            >
-                                                <div className="flex gap-4">
-                                                    <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0 mt-1">
-                                                        <Trophy className="w-4 h-4 text-indigo-500" />
-                                                    </div>
-                                                    <div>
-                                                        <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Official Solution</div>
-                                                        <div className="text-sm font-bold text-gray-900 mb-2">
-                                                            {solution.answer}
-                                                        </div>
-                                                        {solution.explanation && (
-                                                            <div className="text-xs text-gray-500 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                                                                <span className="font-bold text-gray-700">Context:</span> {solution.explanation}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </motion.div>
-                                        );
-                                    })()
+                                {result && questionResult && (
+                                    <div className={`mt-5 p-4 rounded-2xl border ${
+                                        questionResult.isCorrect ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'
+                                    }`}>
+                                        <p className="text-sm font-bold text-gray-800">
+                                            {questionResult.isCorrect ? 'Correct answer.' : questionResult.isAlmost ? 'Almost correct.' : 'Incorrect.'}
+                                        </p>
+                                        {!questionResult.isCorrect && currentQuestion.type !== 'short_answer' && (
+                                            <p className="text-xs text-gray-600 mt-1">
+                                                Correct options: {questionResult.correctAnswers.map((idx) => currentQuestion.options[idx]).join(', ')}
+                                            </p>
+                                        )}
+                                        {!questionResult.isCorrect && ['short_answer', 'problem', 'scenario'].includes(currentQuestion.type) && (
+                                            <p className="text-xs text-gray-600 mt-1">
+                                                Suggested answers: {(questionResult.acceptedAnswers || []).join(' / ')}
+                                            </p>
+                                        )}
+                                        {!questionResult.isCorrect && currentQuestion.type === 'fill_blank' && (
+                                            <p className="text-xs text-gray-600 mt-1">
+                                                Correct blanks: {(questionResult.blankAnswers || []).join(' | ')}
+                                            </p>
+                                        )}
+                                        {!questionResult.isCorrect && currentQuestion.type === 'matching' && (
+                                            <p className="text-xs text-gray-600 mt-1">
+                                                Correct matches: {(questionResult.pairs || []).map((pair) => `${pair.left} -> ${pair.right}`).join(' • ')}
+                                            </p>
+                                        )}
+                                        {questionResult.explanation && (
+                                            <p className="text-xs text-gray-600 mt-2">{questionResult.explanation}</p>
+                                        )}
+                                    </div>
                                 )}
-                            </div>
-                        </div>
-                    </motion.div>
-                ))}
-            </div>
+                            </motion.div>
+                        </AnimatePresence>
 
-            {/* Footer Summary */}
-            <div className="text-center p-12 bg-gray-50 rounded-[3rem] border border-gray-100">
-                <BookOpen className="w-10 h-10 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-xl font-bold text-gray-700 mb-2">End of Examination</h3>
-                <p className="text-sm text-gray-500 max-w-sm mx-auto leading-relaxed">
-                    Review your answers carefully. When you're ready, toggle the "Show Answers" button to verify your knowledge.
-                </p>
-                <div className="mt-8 flex justify-center gap-4">
-                    <button className="px-6 py-3 bg-white border border-gray-200 text-gray-600 rounded-xl font-bold hover:bg-gray-100 transition-all flex items-center gap-2 shadow-sm">
-                        <Download className="w-4 h-4" />
-                        Save as PDF
-                    </button>
-                    <button className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-lg shadow-indigo-100">
-                        <RotateCw className="w-4 h-4" />
-                        Redo Exam
-                    </button>
+                        <div className="mt-6 flex flex-wrap items-center gap-2">
+                            <button
+                                onClick={() => jumpTo(currentIndex - 1)}
+                                disabled={currentIndex === 0}
+                                className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 disabled:opacity-40"
+                            >
+                                Previous
+                            </button>
+                            <button
+                                onClick={() => jumpTo(currentIndex + 1)}
+                                disabled={currentIndex >= total - 1}
+                                className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 disabled:opacity-40"
+                            >
+                                Next
+                            </button>
+                            <button
+                                onClick={() => toggleFlag(currentQuestion.id)}
+                                className={`px-4 py-2 rounded-xl text-sm font-bold border flex items-center gap-2 ${
+                                    flagged[currentQuestion.id] ? 'bg-amber-100 text-amber-700 border-amber-300' : 'bg-white text-gray-600 border-gray-200'
+                                }`}
+                            >
+                                <Flag className="w-4 h-4" />
+                                {flagged[currentQuestion.id] ? 'Flagged' : 'Flag'}
+                            </button>
+                            <button
+                                onClick={submitExam}
+                                disabled={isSubmitting || !!result}
+                                className="ml-auto px-5 py-2 rounded-xl bg-indigo-600 text-white text-sm font-black disabled:opacity-50"
+                            >
+                                {isSubmitting ? 'Submitting...' : result ? 'Submitted' : 'Submit Exam'}
+                            </button>
+                            <button
+                                onClick={saveAttempt}
+                                disabled={!!result || isSavingAttempt}
+                                className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 disabled:opacity-50 flex items-center gap-2"
+                            >
+                                <Save className="w-4 h-4" />
+                                {isSavingAttempt ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                                onClick={resetAttempt}
+                                className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 flex items-center gap-2"
+                            >
+                                <RefreshCw className="w-4 h-4" />
+                                Restart
+                            </button>
+                        </div>
+                        {lastSavedAt && !result && (
+                            <div className="mt-2 text-[11px] text-gray-400 font-semibold">
+                                Saved at {new Date(lastSavedAt).toLocaleTimeString()}
+                            </div>
+                        )}
+                        {error && (
+                            <div className="mt-3 text-xs font-bold text-rose-600 flex items-center gap-1">
+                                <AlertTriangle className="w-4 h-4" />
+                                {error}
+                            </div>
+                        )}
+                        {result && (
+                            <div className="mt-4 p-4 rounded-2xl bg-emerald-50 border border-emerald-200">
+                                <div className="flex items-center gap-2 text-emerald-700 font-black">
+                                    <Trophy className="w-4 h-4" />
+                                    Score: {result.score}/{result.total}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <aside className="border-t xl:border-t-0 xl:border-l border-gray-100 p-4 md:p-5 bg-gray-50/50">
+                        <div className="text-[11px] uppercase tracking-widest font-black text-gray-500 mb-3">Navigator</div>
+                        <div className="grid grid-cols-5 xl:grid-cols-4 gap-2">
+                            {exam.questions.map((q, idx) => {
+                                const qAnswer = answers[q.id] || { selectedAnswers: [], answerText: '', blankAnswers: [], matchAnswers: {} };
+                                const isAnswered = ['short_answer', 'problem', 'scenario'].includes(q.type)
+                                    ? !!String(qAnswer.answerText || '').trim()
+                                    : q.type === 'fill_blank'
+                                        ? (qAnswer.blankAnswers || []).some((ans) => !!String(ans || '').trim())
+                                        : q.type === 'matching'
+                                            ? Object.keys(qAnswer.matchAnswers || {}).length > 0
+                                            : qAnswer.selectedAnswers.length > 0;
+                                const isFlagged = !!flagged[q.id];
+                                const isActive = idx === currentIndex;
+                                const evaluation = summaryByQuestion[q.id];
+                                const base = evaluation
+                                    ? (evaluation.isCorrect ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-amber-100 text-amber-700 border-amber-300')
+                                    : isFlagged
+                                        ? 'bg-yellow-100 text-yellow-700 border-yellow-300'
+                                        : isAnswered
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                            : 'bg-gray-100 text-gray-500 border-gray-200';
+                                return (
+                                    <button
+                                        key={q.id}
+                                        onClick={() => jumpTo(idx)}
+                                        className={`h-9 rounded-lg border text-xs font-black transition-all ${base} ${isActive ? 'ring-2 ring-indigo-400' : ''}`}
+                                    >
+                                        {idx + 1}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </aside>
                 </div>
             </div>
         </div>
     );
 };
-
-// Simple icon shim if RotateCw is missing
-const RotateCw = (props) => (
-  <svg {...props} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-rotate-cw"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-);
 
 export default ExamView;

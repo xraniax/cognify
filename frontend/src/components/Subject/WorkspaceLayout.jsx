@@ -69,7 +69,7 @@ const WorkspaceLayout = ({
         <div ref={containerRef} className="flex-1 flex overflow-hidden bg-[#FFF8F0]/20 select-none pb-20 md:pb-0 relative">
             {/* Left Panel */}
             <div 
-                className={`h-full border-r border-purple-100/30 transition-all duration-300 ease-in-out bg-white/40 backdrop-blur-sm overflow-hidden
+                className={`h-full border-r border-purple-100/30 transition-all duration-300 ease-in-out glass-panel overflow-hidden
                     ${isMobile ? (activePanel === 'files' ? 'flex w-full' : 'hidden') : 'md:flex'}`}
                 style={{ flex: isMobile ? '1 1 100%' : `0 0 ${leftWidth}%` }}
             >
@@ -90,7 +90,7 @@ const WorkspaceLayout = ({
 
             {/* Middle Panel */}
             <div 
-                className={`h-full border-r border-purple-100/30 transition-all duration-300 ease-in-out bg-white/10 overflow-hidden
+                className={`h-full border-r border-purple-100/30 transition-all duration-300 ease-in-out glass-panel-dark overflow-hidden
                     ${isMobile ? (activePanel === 'content' ? 'flex w-full' : 'hidden') : 'md:flex'}`}
                 style={{ flex: isMobile ? '1 1 100%' : `0 0 ${middleWidth}%` }}
             >
@@ -111,7 +111,7 @@ const WorkspaceLayout = ({
 
             {/* Right Panel */}
             <div 
-                className={`h-full transition-all duration-300 ease-in-out bg-white/40 backdrop-blur-sm overflow-hidden
+                className={`h-full transition-all duration-300 ease-in-out glass-panel overflow-hidden
                     ${isMobile ? (activePanel === 'tutor' ? 'flex w-full' : 'hidden') : 'md:flex'}`}
                 style={{ flex: isMobile ? '1 1 100%' : `0 0 ${rightWidth}%` }}
             >

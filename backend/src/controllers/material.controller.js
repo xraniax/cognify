@@ -1,6 +1,7 @@
 import MaterialService from '../services/material.service.js';
 import SettingsService from '../services/settings.service.js';
 import asyncHandler from '../utils/asyncHandler.js';
+import axios from 'axios';
 import fs from 'fs';
 
 /**
@@ -86,13 +87,14 @@ class MaterialController {
     });
 
     static generateCombined = asyncHandler(async (req, res) => {
-        const { materialIds, taskType, subjectId } = req.body;
+        console.log('[MaterialController] generateCombined body:', JSON.stringify(req.body, null, 2));
+        const { materialIds, taskType, subjectId, genOptions } = req.body;
         if (!materialIds || !taskType) {
             res.status(400);
             throw new Error('materialIds and taskType are required');
         }
 
-        const result = await MaterialService.generateWithContext(req.user.id, materialIds, taskType, subjectId);
+        const result = await MaterialService.generateWithContext(req.user.id, materialIds, taskType, subjectId, genOptions);
         res.status(200).json({ status: 'success', data: result });
     });
 
@@ -109,6 +111,40 @@ class MaterialController {
         const { id } = req.params;
         await MaterialService.cancelJob(req.user.id, id);
         res.status(200).json({ status: 'success', message: 'Job cancellation requested' });
+    });
+
+    static streamJob = asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        const material = await MaterialService.checkJobStatus(req.user.id, id);
+        
+        if (!material || !material.job_id) {
+            res.status(404);
+            throw new Error('Streaming not available for this material');
+        }
+
+        const engineUrl = process.env.ENGINE_URL || 'http://engine:8000';
+        const streamUrl = `${engineUrl}/job/${material.job_id}/stream`;
+
+        console.log(`[MaterialController] Proxying stream for job: ${material.job_id}`);
+
+        const response = await axios({
+            method: 'get',
+            url: streamUrl,
+            responseType: 'stream',
+            timeout: 0 // Disable timeout for long-lived streams
+        });
+
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        response.data.pipe(res);
+
+        // Handle client disconnect
+        req.on('close', () => {
+            console.log(`[MaterialController] Client closed connection for job: ${material.job_id}`);
+            if (response.data.destroy) response.data.destroy();
+        });
     });
 
     static delete = asyncHandler(async (req, res) => {

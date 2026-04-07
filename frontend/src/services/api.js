@@ -69,10 +69,70 @@ export const materialService = {
     },
     getHistory: () => api.get('/materials/history'),
     chatCombined: (materialIds, question) => api.post('/materials/chat-combined', { materialIds, question }),
-    generateCombined: (materialIds, taskType, subjectId) => api.post('/materials/generate-combined', { materialIds, taskType, subjectId }),
+    generateCombined: (materialIds, taskType, subjectId, genOptions) => api.post('/materials/generate-combined', { materialIds, taskType, subjectId, genOptions }),
+    streamMaterial: (id, onChunk, onComplete, onError) => {
+        const token = localStorage.getItem('token');
+        const url = `${API_URL}/materials/${id}/stream`;
+        
+        const controller = new AbortController();
+        
+        fetch(url, {
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: controller.signal
+        }).then(response => {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            function process() {
+                reader.read().then(({ done, value }) => {
+                    if (done) {
+                        onComplete();
+                        return;
+                    }
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const jsonStr = line.replace('data: ', '').trim();
+                            if (!jsonStr) continue;
+                            
+                            try {
+                                const data = JSON.parse(jsonStr);
+                                if (data.chunk) onChunk(data.chunk);
+                                if (data.is_final) {
+                                    onComplete();
+                                    controller.abort();
+                                    return;
+                                }
+                            } catch (e) {
+                                // Handle partial JSON or keep-alive
+                            }
+                        }
+                    }
+                    process();
+                }).catch(err => {
+                    if (err.name !== 'AbortError') onError(err);
+                });
+            }
+            process();
+        }).catch(err => {
+            if (err.name !== 'AbortError') onError(err);
+        });
+
+        return () => controller.abort();
+    },
     delete: (id) => api.delete(`/materials/${id}`),
     sync: (id) => api.get(`/materials/${id}/sync`),
     cancel: (id) => api.post(`/materials/${id}/cancel`),
+};
+
+export const examService = {
+    generate: (payload) => api.post('/exams/generate', payload),
+    saveAttempt: (payload) => api.post('/exams/attempts/save', payload),
+    getAttempt: (examId) => api.get(`/exams/attempts/${examId}`),
+    submit: (payload) => api.post('/exams/submit', payload),
 };
 
 export const subjectService = {

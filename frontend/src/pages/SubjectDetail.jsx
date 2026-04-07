@@ -1,13 +1,35 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { materialService, BASE_URL } from '../services/api';
+import { materialService, examService, BASE_URL } from '../services/api';
 import { useSpeech } from '../hooks/useSpeech';
-import { PanelLeft, PanelRight, Upload, BookOpen, Lock, Sparkles } from 'lucide-react';
+import { 
+    PanelLeft, 
+    PanelRight, 
+    Upload, 
+    BookOpen, 
+    Lock, 
+    Sparkles, 
+    XCircle,
+    ChevronRight,
+    FileText,
+    Layout,
+    MoreHorizontal,
+    Plus,
+    Search,
+    Settings,
+    Trash2,
+    X,
+    Check,
+    MessageSquare,
+    History,
+    RefreshCw
+} from 'lucide-react';
 import { useSubjectStore } from '../store/useSubjectStore';
+import { setFlashcardsExpectedCount } from '../components/Subject/FlashcardsView';
 import { useMaterialStore } from '../store/useMaterialStore';
 import { useUIStore } from '../store/useUIStore';
 import { useAuthStore } from '../store/useAuthStore';
-import { PROCESSING, normalizeStatus } from '../constants/statusConstants';
+import { PROCESSING } from '../constants/statusConstants';
 import toast from 'react-hot-toast';
 import CustomModal from '../components/Common/CustomModal';
 import MobilePanelSwitcher from '../components/Common/MobilePanelSwitcher';
@@ -24,6 +46,47 @@ import Skeleton from '../components/Common/Skeleton';
 import QuizView from '../components/Subject/QuizView';
 import FlashcardsView from '../components/Subject/FlashcardsView';
 import ExamView from '../components/Subject/ExamView';
+import SummaryView from '../components/Subject/SummaryView';
+
+// --- Error Boundary for Material Views ---
+class MaterialErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+    }
+    componentDidCatch(error, errorInfo) {
+        console.error("Material Rendering Error:", error, errorInfo);
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="p-8 bg-rose-50 border border-rose-100 rounded-2xl text-center my-4">
+                    <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <XCircle className="w-6 h-6 text-rose-500" />
+                    </div>
+                    <h3 className="text-lg font-bold text-rose-700 mb-2">Failed to render material</h3>
+                    <p className="text-sm text-rose-600 mb-4">There was an error processing this {this.props.type || 'content'}.</p>
+                    <button 
+                        onClick={() => this.setState({ hasError: false, error: null })}
+                        className="px-4 py-2 bg-rose-500 text-white rounded-lg font-bold hover:bg-rose-600 transition-colors"
+                    >
+                        Try again
+                    </button>
+                    <details className="mt-4 text-left">
+                        <summary className="text-xs text-rose-400 cursor-pointer">Error details</summary>
+                        <pre className="mt-2 p-3 bg-rose-900 text-rose-50 text-[10px] rounded-lg overflow-auto max-h-40">
+                            {this.state.error?.toString()}
+                        </pre>
+                    </details>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
 
 const SubjectDetail = () => {
     const { id } = useParams();
@@ -32,23 +95,28 @@ const SubjectDetail = () => {
     const redirectedMaterialId = location.state?.openMaterialId;
     
     const subjects = useSubjectStore((state) => state.data.subjects);
-    const isPublic = useSubjectStore((state) => state.data.isPublic);
-    const user = useAuthStore((state) => state.data.user);
-    const subjectsLoading = useUIStore(state => state.data.loadingStates['subjects']?.loading);
     const fetchSubjects = useSubjectStore((state) => state.actions.fetchSubjects);
     const materials = useMaterialStore((state) => state.data.materials);
-    const materialsLoading = useUIStore(state => state.data.loadingStates['materials']?.loading);
+    const materialsLoadingState = useUIStore(state => state.data.loadingStates['materials']);
+    const subjectsLoadingState = useUIStore(state => state.data.loadingStates['subjects']);
+    const isPublic = useSubjectStore((state) => state.data.isPublic);
+    const user = useAuthStore((state) => state.data.user);
     const fetchMaterials = useMaterialStore((state) => state.actions.fetchMaterials);
     const clearAllPolling = useMaterialStore((state) => state.actions.clearAllPolling);
-    
     const setWorkspacePanel = useUIStore(state => state.actions.setWorkspacePanel);
-    
+
+    const loading = materialsLoadingState?.loading || subjectsLoadingState?.loading;
+    const isAnyBlocking = materialsLoadingState?.blocking || subjectsLoadingState?.blocking;
+
     const subject = subjects.find((s) => String(s.id) === normalizedId);
-    const uploads = (materials || []).filter((m) => {
-        const mid = m.subject_id || (m.subject && m.subject.id);
-        return String(mid) == String(normalizedId);
-    });
-    const loading = subjectsLoading || materialsLoading;
+    
+    // Derived state for document list
+    const uploads = useMemo(() => {
+        return (materials || []).filter((m) => {
+            const mid = m.subject_id || (m.subject && m.subject.id);
+            return String(mid) === String(normalizedId);
+        });
+    }, [materials, normalizedId]);
 
     // Modal state
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -70,9 +138,9 @@ const SubjectDetail = () => {
     
     // Generation state
     const [genError, setGenError] = useState('');
-    const [genType, setGenType] = useState('summary');
     const [isGenerating, setIsGenerating] = useState(false);
     const [genResult, setGenResult] = useState('');
+    const [genType, setGenType] = useState('summary');
 
     // Tabs State & Persistence
     const savedTabsKey = `cognify_tabs_${id}`;
@@ -86,7 +154,7 @@ const SubjectDetail = () => {
                 const parsed = JSON.parse(saved);
                 const otherTabs = parsed.filter(t => t.id !== 'generator');
                 return [base, ...otherTabs];
-            } catch (e) {
+            } catch {
                 return [base];
             }
         }
@@ -104,6 +172,15 @@ const SubjectDetail = () => {
     useEffect(() => {
         localStorage.setItem(savedTabsKey, JSON.stringify(tabs));
     }, [tabs, savedTabsKey]);
+
+    // Compute enhanced tabs with deleted status
+    const enhancedTabs = useMemo(() => {
+        return tabs.map(tab => {
+            if (tab.id === 'generator') return { ...tab, isDeleted: false };
+            const exists = (materials || []).some(m => String(m.id) === String(tab.id));
+            return { ...tab, isDeleted: !exists };
+        });
+    }, [tabs, materials]);
 
     useEffect(() => {
         if (activeTabId) {
@@ -252,7 +329,7 @@ const SubjectDetail = () => {
             setGenError(msg);
             setIsGenerating(false);
         }
-    }, [jobProgress]);
+    }, [jobProgress, fetchMaterials]);
 
     const handleUploadSuccess = async () => {
         await fetchMaterials();
@@ -306,29 +383,85 @@ const SubjectDetail = () => {
         setChatError('');
     };
 
-    const handleGenerate = async (idOrEvent = null) => {
+    const handleGenerate = async (idOrOptionsOrEvent = null) => {
         setGenError('');
         
-        // Defensive: if called as an event handler, idOrEvent will be a synthetic event object.
-        // We only want to use it if it's a primitive string (a specific material ID).
-        const singleId = typeof idOrEvent === 'string' ? idOrEvent : null;
-        
+        let singleId = null;
+        let genOptions = undefined;
+
+        if (typeof idOrOptionsOrEvent === 'string') {
+            singleId = idOrOptionsOrEvent;
+        } else if (idOrOptionsOrEvent && typeof idOrOptionsOrEvent === 'object' && !idOrOptionsOrEvent.nativeEvent) {
+            genOptions = idOrOptionsOrEvent;
+        }
+
         const rawTargets = singleId ? [singleId] : selectedUploads;
         // FINAL GUARD: Ensure only non-empty strings are passed to the backend
         const targets = rawTargets
             .filter(t => t && typeof t === 'string' && t !== '[object Object]')
             .map(t => String(t));
 
-        if (targets.length === 0) {
+        if (genType !== 'mock_exam' && targets.length === 0) {
             setGenError('Select at least one document from the Source Files panel first.');
             return;
         }
         setIsGenerating(true);
         setGenResult('');
         
+        if (genType === 'flashcards' && genOptions?.count) {
+            setFlashcardsExpectedCount(genOptions.count);
+        }
+        
         try {
-            console.debug('[SubjectDetail] Triggering generation for sanitized targets:', targets, genType, id);
-            const res = await materialService.generateCombined(targets, genType, id);
+            if (genType === 'mock_exam') {
+                const diffMap = { Default: 'mixed', Hard: 'hard', Expert: 'hard' };
+                const topics = (genOptions?.topics || subject?.name || '')
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter(Boolean);
+                const selectedTypes = Array.isArray(genOptions?.examTypes) && genOptions.examTypes.length > 0
+                    ? genOptions.examTypes
+                    : ['single_choice', 'multiple_select', 'short_answer', 'problem', 'fill_blank', 'matching', 'scenario'];
+
+                const payload = {
+                    subject_id: normalizedId,
+                    numberOfQuestions: genOptions?.count || 10,
+                    difficulty: diffMap[genOptions?.difficulty] || 'mixed',
+                    topics: topics.length > 0 ? topics : [subject?.name || 'General'],
+                    types: selectedTypes,
+                    title: `${subject?.name || 'General'} Mock Exam`,
+                    timeLimit: genOptions?.timeLimit || 30,
+                };
+
+                const examRes = await examService.generate(payload);
+                const exam = examRes?.data?.data;
+                if (!exam?.id || !Array.isArray(exam.questions)) {
+                    throw new Error('Failed to generate exam');
+                }
+
+                const tabId = `exam-${exam.id}`;
+                setTabs(prev => {
+                    const withoutOldSession = prev.filter((t) => t.type !== 'exam_session');
+                    return [...withoutOldSession, {
+                        id: tabId,
+                        title: exam.title || 'Mock Exam',
+                        type: 'exam_session',
+                        material: {
+                            id: tabId,
+                            type: 'exam_session',
+                            ai_generated_content: exam,
+                        },
+                        pinned: false,
+                    }];
+                });
+                setActiveTabId(tabId);
+                setIsGenerating(false);
+                setGenResult('');
+                return;
+            }
+
+            console.debug('[SubjectDetail] Triggering generation for sanitized targets:', targets, genType, id, genOptions);
+            const res = await materialService.generateCombined(targets, genType, id, genOptions);
             
             if (!res?.data?.data) {
                 throw new Error('Malformed response from server: Missing data field.');
@@ -340,11 +473,58 @@ const SubjectDetail = () => {
             if (material_id) {
                 const safeMid = String(material_id);
                 fetchMaterials(); 
-                // Ensure we use the correct store action path
-                useMaterialStore.getState().actions.startPolling(safeMid);
                 
-                // Set the active tab to generator until it finishes polling
+                // Set the active tab to generator immediately
                 setActiveTabId('generator');
+
+                // Start streaming if it's a summary (best for text)
+                // We'll also stream for others to show "Thinking" progress
+                materialService.streamMaterial(
+                    material_id,
+                    (chunk) => {
+                        setGenResult(prev => (prev || '') + chunk);
+                        setIsGenerating(true); // Keep spinner/neural pulse active
+                    },
+                    () => {
+                        console.info(`[SubjectDetail] Stream completed for ${material_id}`);
+                        setIsGenerating(false);
+                        
+                        // Force a status sync with the backend to ensure Celery results are persisted to DB
+                        materialService.sync(material_id).then(() => {
+                            // Now fetch the updated materials list
+                            fetchMaterials().then(() => {
+                                const currentMaterials = useMaterialStore.getState().data.materials;
+                                const newMat = currentMaterials.find(m => String(m.id) === String(material_id));
+                                
+                                if (newMat) {
+                                    setTabs(prev => {
+                                        if (!prev.find(t => String(t.id) === String(newMat.id))) {
+                                            return [...prev, {
+                                                id: newMat.id,
+                                                title: newMat.title || newMat.type,
+                                                type: newMat.type,
+                                                material: newMat,
+                                                pinned: false
+                                            }];
+                                        }
+                                        return prev;
+                                    });
+                                    setActiveTabId(newMat.id);
+                                    // Clear the generation preview once opened in its own tab
+                                    setGenResult('');
+                                }
+                            });
+                        }).catch(err => {
+                            console.error('[SubjectDetail] Sync failed after stream:', err);
+                            fetchMaterials(); // Fallback fetch anyway
+                        });
+                    },
+                    (err) => {
+                        console.warn(`[SubjectDetail] Stream error for ${material_id}:`, err);
+                        // Fallback to polling if stream fails
+                        useMaterialStore.getState().actions.startPolling(safeMid);
+                    }
+                );
             } else {
                 const fallbackResult = res.data.data.result || res.data.data.content || '';
                 setGenResult(typeof fallbackResult === 'object' ? JSON.stringify(fallbackResult, null, 2) : String(fallbackResult));
@@ -363,12 +543,19 @@ const SubjectDetail = () => {
         }
     };
 
-    const toggleSelection = (mid) =>
-        setSelectedUploads(prev =>
-            prev.includes(mid) ? prev.filter(id => id !== mid) : [...prev, mid]
-        );
+    const toggleSelection = (mid) => {
+        setSelectedUploads(prev => {
+            const isAdding = !prev.includes(mid);
+            if (isAdding) {
+                setActiveTabId('generator');
+            }
+            return isAdding ? [...prev, mid] : prev.filter(id => id !== mid);
+        });
+    };
 
-    if (loading) {
+    const isExpanded = filePanelCollapsed && chatCollapsed;
+
+    if (loading && (!subject || isAnyBlocking)) {
         return (
             <div className="h-full flex flex-col animate-in fade-in duration-700">
                 <div className="h-20 border-b border-gray-100 bg-white/80 backdrop-blur-md px-8 flex items-center justify-between">
@@ -436,6 +623,7 @@ const SubjectDetail = () => {
                     genResult={genResult}
                     setGenResult={setGenResult}
                     genError={genError}
+                    isExpanded={isExpanded}
                 />
             );
         }
@@ -464,9 +652,10 @@ const SubjectDetail = () => {
                     return (
                         <div className="flex-1 h-full w-full bg-gray-100 flex flex-col">
                             <iframe 
-                                src={`${fileUrl}#view=FitH`} 
+                                src={`${fileUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=1`} 
                                 className="w-full flex-1 border-none"
                                 title={tab.title}
+                                sandbox="allow-scripts allow-same-origin"
                             />
                         </div>
                     );
@@ -484,8 +673,8 @@ const SubjectDetail = () => {
                 }
             } else if (hasContent) {
                 return (
-                    <div className="flex-1 h-full overflow-y-auto p-6 md:p-8 bg-[#FAFBFF]">
-                        <div className="max-w-4xl mx-auto bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-sm text-gray-800 leading-relaxed text-sm whitespace-pre-wrap font-mono">
+                    <div className={`mx-auto ${isExpanded ? 'max-w-6xl py-16' : 'max-w-4xl py-8 md:py-12'} px-6 transition-all duration-500`}>
+                        <div className="bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-sm text-gray-800 leading-relaxed text-sm whitespace-pre-wrap font-mono">
                             {tab.material.content}
                         </div>
                     </div>
@@ -506,47 +695,71 @@ const SubjectDetail = () => {
 
         let parsedContent = tab.material?.ai_generated_content || tab.material?.content || '';
         if (typeof parsedContent === 'string') {
-            try { parsedContent = JSON.parse(parsedContent); } catch(e) {}
+            try { parsedContent = JSON.parse(parsedContent); } catch {
+                // non-json content
+            }
         }
         if (parsedContent?.result) parsedContent = parsedContent.result;
         
         // Handle specialized rendering for structured content
         if (tab.type === 'quiz' || material.type === 'quiz') {
             return (
-                <div className="flex-1 h-full overflow-y-auto bg-[#FAFBFF]">
-                    <QuizView quizData={parsedContent} />
+                <div className="flex-1 h-full overflow-y-auto bg-transparent">
+                    <MaterialErrorBoundary type="quiz">
+                        <QuizView key={parsedContent?.id || 'quiz'} quizData={parsedContent} isExpanded={isExpanded} />
+                    </MaterialErrorBoundary>
                 </div>
             );
         }
 
         if (tab.type === 'flashcards' || material.type === 'flashcards') {
             return (
-                <div className="flex-1 h-full overflow-y-auto bg-[#FAFBFF]">
-                    <FlashcardsView flashcardsData={parsedContent} />
+                <div className="flex-1 h-full overflow-y-auto bg-transparent">
+                    <MaterialErrorBoundary type="flashcards">
+                        <FlashcardsView flashcardsData={parsedContent} isExpanded={isExpanded} />
+                    </MaterialErrorBoundary>
+                </div>
+            );
+        }
+
+        if (tab.type === 'exam_session') {
+            return (
+                <div className="flex-1 h-full overflow-y-auto bg-transparent">
+                    <MaterialErrorBoundary type="exam">
+                        <ExamView examData={tab.material?.ai_generated_content} isExpanded={isExpanded} />
+                    </MaterialErrorBoundary>
                 </div>
             );
         }
 
         if (tab.type === 'exam' || material.type === 'exam') {
             return (
-                <div className="flex-1 h-full overflow-y-auto bg-[#FAFBFF]">
-                    <ExamView examData={parsedContent} />
+                <div className="flex-1 h-full overflow-y-auto bg-transparent">
+                    <MaterialErrorBoundary type="exam">
+                        <ExamView key={parsedContent?.id || 'exam'} examData={parsedContent} isExpanded={isExpanded} />
+                    </MaterialErrorBoundary>
                 </div>
+            );
+        }
+
+        if (tab.type === 'summary' || material.type === 'summary') {
+            return (
+                <SummaryView summaryData={parsedContent} title={tab.title} isExpanded={isExpanded} />
             );
         }
 
         const displayContent = typeof parsedContent === 'object' ? JSON.stringify(parsedContent, null, 2) : String(parsedContent);
 
         return (
-            <div className="flex-1 h-full overflow-y-auto p-6 md:p-8 bg-[#FAFBFF]">
-                <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
+            <div className={`flex-1 h-full overflow-y-auto ${isExpanded ? 'p-12' : 'p-6 md:p-12'} bg-transparent transition-all duration-500`}>
+                <div className={`${isExpanded ? 'max-w-5xl space-y-10' : 'max-w-5xl space-y-8'} mx-auto animate-in fade-in duration-500 transition-all`}>
                     <div className="flex items-center gap-3 mb-2">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
-                            <Sparkles className="w-4 h-4 text-indigo-500" />
+                        <div className={`rounded-lg bg-indigo-50 flex items-center justify-center transition-all ${isExpanded ? 'w-10 h-10' : 'w-8 h-8'}`}>
+                            <Sparkles className={`${isExpanded ? 'w-5 h-5' : 'w-4 h-4'} text-indigo-500`} />
                         </div>
-                        <h3 className="text-lg font-black text-gray-900 tracking-tight capitalize">{tab.type.replace('_', ' ')} Insight</h3>
+                        <h3 className={`${isExpanded ? 'text-2xl' : 'text-lg'} font-black text-gray-900 tracking-tight capitalize transition-all`}>{tab.type.replace('_', ' ')} Insight</h3>
                     </div>
-                    <div className="bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-xl shadow-indigo-100/20 text-gray-800 leading-relaxed text-sm whitespace-pre-wrap relative overflow-hidden group">
+                    <div className={`bg-white border border-gray-100 rounded-[2.5rem] shadow-2xl shadow-indigo-100/20 text-gray-800 leading-relaxed transition-all duration-500 relative overflow-hidden group ${isExpanded ? 'p-12 text-base' : 'p-8 text-sm'}`}>
                         <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 rounded-bl-[4rem] group-hover:scale-110 transition-transform"></div>
                         {displayContent}
                     </div>
@@ -627,10 +840,10 @@ const SubjectDetail = () => {
                     />
                 }
                 middlePanel={
-                    <WorkspaceTabs
-                        tabs={tabs}
-                        setTabs={setTabs}
-                        activeTabId={activeTabId}
+                    <WorkspaceTabs 
+                        tabs={enhancedTabs} 
+                        setTabs={setTabs} 
+                        activeTabId={activeTabId} 
                         setActiveTabId={setActiveTabId}
                         renderTabContent={renderTabContent}
                     />

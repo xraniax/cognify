@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Sparkles, Layout, BookOpen, FileText, CheckCircle2, History, RotateCcw, BrainCircuit } from 'lucide-react';
 import Skeleton from '../Common/Skeleton';
+import SummaryView from './SummaryView';
 
 const MATERIAL_TYPES = ['flashcards', 'summary', 'quiz', 'mock_exam'];
 
@@ -14,8 +15,22 @@ const MaterialsPanel = ({
     genResult,
     setGenResult,
     genError,
+    isExpanded
 }) => {
-    const displayMessage = jobProgress?.message || 'Processing Knowledge...';
+    const [genOptions, setGenOptions] = useState({
+        count: 10,
+        difficulty: 'Default',
+        cardType: 'mixed',
+        topics: '',
+        examTypes: ['single_choice', 'multiple_select', 'short_answer', 'problem', 'fill_blank', 'matching', 'scenario'],
+        timeLimit: 30,
+    });
+
+    const hasOptions = ['flashcards', 'quiz', 'mock_exam'].includes(genType);
+    const requiresSources = genType !== 'mock_exam';
+    const canGenerate = !isGenerating && (!requiresSources || selectedCount > 0);
+    const displayMessage = jobProgress?.message || (hasOptions ? `Assembling ${genOptions.count} ${genType.replace('_', ' ')}...` : 'Processing Knowledge...');
+    
     return (
         <div className="panel-inner">
             <div className="panel-header border-b border-gray-100/50 bg-white/80 backdrop-blur-sm sticky top-0 z-10 transition-all">
@@ -64,11 +79,143 @@ const MaterialsPanel = ({
                         ))}
                     </div>
 
+                    {hasOptions && (
+                        <div className="bg-white/50 rounded-2xl p-4 mb-4 border border-indigo-50/50 space-y-4 animate-in slide-in-from-top-2 duration-300">
+                            <div>
+                                <div className="flex justify-between items-center mb-2">
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                                        {genType === 'flashcards' ? 'Number of Cards' : 'Number of Questions'}
+                                    </label>
+                                    <span className="text-xs font-black text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">{genOptions.count}</span>
+                                </div>
+                                <input 
+                                    type="range" 
+                                    min="1" 
+                                    max={20} 
+                                    step="1"
+                                    value={genOptions.count}
+                                    onChange={(e) => setGenOptions(prev => ({ ...prev, count: parseInt(e.target.value) }))}
+                                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                                />
+                                <div className="flex justify-between text-[8px] text-gray-400 font-bold mt-1 px-1">
+                                    <span>1</span>
+                                    <span>20</span>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-2">Difficulty Curve</label>
+                                <div className="flex bg-gray-100/80 rounded-xl p-1">
+                                    {['Default', 'Hard', 'Expert'].map(level => (
+                                        <button
+                                            key={level}
+                                            onClick={() => setGenOptions(prev => ({ ...prev, difficulty: level }))}
+                                            className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
+                                                genOptions.difficulty === level 
+                                                    ? 'bg-white text-indigo-600 shadow-sm' 
+                                                    : 'text-gray-400 hover:text-gray-600'
+                                            }`}
+                                        >
+                                            {level}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            {genType === 'flashcards' && (
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-2">Focus Type</label>
+                                    <div className="grid grid-cols-2 gap-1 bg-gray-100/80 rounded-xl p-1">
+                                        {['mixed', 'definition', 'Q&A', 'conceptual'].map(type => (
+                                            <button
+                                                key={type}
+                                                onClick={() => setGenOptions(prev => ({ ...prev, cardType: type }))}
+                                                className={`py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
+                                                    genOptions.cardType === type 
+                                                        ? 'bg-white text-indigo-600 shadow-sm' 
+                                                        : 'text-gray-400 hover:text-gray-600'
+                                                }`}
+                                            >
+                                                {type}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {genType === 'mock_exam' && (
+                                <>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-2">Topics (comma separated)</label>
+                                        <input
+                                            type="text"
+                                            value={genOptions.topics}
+                                            onChange={(e) => setGenOptions(prev => ({ ...prev, topics: e.target.value }))}
+                                            placeholder="OS, DB, Networks"
+                                            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-2">Question Types</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {[
+                                                { id: 'single_choice', label: 'Single Choice' },
+                                                { id: 'multiple_select', label: 'Multiple Select' },
+                                                { id: 'short_answer', label: 'Short Answer' },
+                                                { id: 'problem', label: 'Problem Solving' },
+                                                { id: 'fill_blank', label: 'Fill in the Gaps' },
+                                                { id: 'matching', label: 'Matching' },
+                                                { id: 'scenario', label: 'Scenario' },
+                                            ].map(({ id, label }) => {
+                                                const active = genOptions.examTypes.includes(id);
+                                                return (
+                                                    <button
+                                                        key={id}
+                                                        onClick={() => setGenOptions(prev => {
+                                                            const next = active
+                                                                ? prev.examTypes.filter((t) => t !== id)
+                                                                : [...prev.examTypes, id];
+                                                            return { ...prev, examTypes: next.length > 0 ? next : ['single_choice'] };
+                                                        })}
+                                                        className={`py-2 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${
+                                                            active
+                                                                ? 'bg-indigo-50 text-indigo-600 border-indigo-300'
+                                                                : 'bg-white text-gray-400 border-gray-200 hover:border-indigo-200'
+                                                        }`}
+                                                    >
+                                                        {label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <div className="flex justify-between items-center mb-2">
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Time Limit (minutes)</label>
+                                            <span className="text-xs font-black text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">{genOptions.timeLimit}</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="5"
+                                            max="180"
+                                            step="5"
+                                            value={genOptions.timeLimit}
+                                            onChange={(e) => setGenOptions(prev => ({ ...prev, timeLimit: parseInt(e.target.value, 10) }))}
+                                            className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                                        />
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
+
                     <button
-                        onClick={() => handleGenerate()}
-                        disabled={isGenerating || selectedCount === 0}
+                        onClick={() => handleGenerate(hasOptions ? genOptions : undefined)}
+                        disabled={!canGenerate}
                         className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 transition-all duration-500 font-black uppercase tracking-widest text-xs ${
-                            isGenerating || selectedCount === 0
+                            !canGenerate
                                 ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
                                 : 'btn-vibrant shadow-xl shadow-purple-200 hover:shadow-purple-300 -translate-y-0.5 hover:-translate-y-1'
                         }`}
@@ -96,20 +243,26 @@ const MaterialsPanel = ({
                     )}
 
                     {genResult ? (
-                        <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-                            <div className="flex items-center gap-3 mb-2">
-                                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
-                                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                        <div className="animate-in slide-in-from-bottom-4 duration-500">
+                            {genType === 'summary' ? (
+                                <SummaryView summaryData={genResult} title="Draft Summary" isExpanded={isExpanded} />
+                            ) : (
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                                            <Sparkles className="w-4 h-4 text-indigo-500" />
+                                        </div>
+                                        <h3 className="text-lg font-black text-gray-900 tracking-tight capitalize">{genType.replace('_', ' ')} Insight</h3>
+                                    </div>
+                                    <div className="bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-xl shadow-indigo-100/20 text-gray-800 leading-relaxed text-sm whitespace-pre-wrap relative overflow-hidden group">
+                                        <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 rounded-bl-[4rem] group-hover:scale-110 transition-transform"></div>
+                                        {genResult}
+                                    </div>
                                 </div>
-                                <h3 className="text-lg font-black text-gray-900 tracking-tight capitalize">{genType.replace('_', ' ')} Insight</h3>
-                            </div>
-                            <div className="bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-xl shadow-indigo-100/20 text-gray-800 leading-relaxed text-sm whitespace-pre-wrap relative overflow-hidden group">
-                                <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 rounded-bl-[4rem] group-hover:scale-110 transition-transform"></div>
-                                {genResult}
-                            </div>
+                            )}
                         </div>
                     ) : isGenerating ? (
-                        <div className="space-y-4">
+                        <div className="space-y-4 animate-neural p-8 border border-indigo-100/50 rounded-[2rem] bg-indigo-50/20 backdrop-blur-md shadow-2xl shadow-indigo-200/20">
                             <div className="flex items-center gap-3 mb-4">
                                 <Skeleton className="w-8 h-8 rounded-lg" />
                                 <Skeleton className="h-6 w-48 rounded-md" />
