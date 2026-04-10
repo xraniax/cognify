@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useMaterialStore } from '@/store/useMaterialStore';
 import { useUIStore } from '@/store/useUIStore';
 import { useAuthStore } from '@/store/useAuthStore';
-import { subjectService } from '@/features/subjects/services/SubjectService';
+import { MaterialService } from '@/services/MaterialService';
 import { PROCESSING, normalizeStatus } from '@/constants/statusConstants';
 import { Search, Calendar, BookOpen, ChevronRight, Clock, FileText, Trash2, LayoutGrid, List, Lock } from 'lucide-react';
 import { format, isToday, isYesterday, subDays, startOfDay } from 'date-fns';
@@ -34,7 +34,7 @@ const History = () => {
         if (!window.confirm('Are you sure you want to delete this material?')) return;
         
         try {
-            await subjectService.deleteMaterial(id);
+            await MaterialService.delete(id);
             await fetchMaterials();
             toast.success('Document removed');
         } catch {

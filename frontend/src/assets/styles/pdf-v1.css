@@ -1,0 +1,101 @@
+/* PDF Export Package v1.0 
+   Cognify Study Intelligence
+   -------------------------
+   This stylesheet is designed for maximum compatibility with legacy CSS parsers (like html2canvas).
+   It avoids modern CSS syntax (oklch, advanced variables) to prevent rendering crashes.
+*/
+
+body {
+    margin: 0 !important;
+    padding: 40px !important;
+    background: #ffffff !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+}
+
+.printable-summary-container {
+    width: 920px;
+    margin: 0 auto;
+    background: #ffffff;
+}
+
+.header-card {
+    background: #4f46e5; /* Fallback */
+    background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+    border-radius: 40px;
+    padding: 40px;
+    color: #ffffff !important;
+    margin-bottom: 30px;
+}
+
+.header-card h1 {
+    margin: 0;
+    font-size: 32px;
+    font-weight: 900;
+    line-height: 1.2;
+    color: #ffffff !important;
+}
+
+.content-card {
+    background: #ffffff !important;
+    border-radius: 40px;
+    padding: 40px;
+    border: 1px solid #e5e7eb;
+}
+
+h2 {
+    font-size: 24px;
+    font-weight: 900;
+    color: #111827 !important;
+    border-bottom: 2px solid #f3f4f6;
+    padding-bottom: 12px;
+    margin-top: 40px;
+}
+
+h3 {
+    font-size: 18px;
+    font-weight: 800;
+    color: #4f46e5 !important;
+    margin-top: 24px;
+}
+
+p {
+    font-size: 15px;
+    color: #374151 !important;
+    line-height: 1.6;
+    margin: 12px 0;
+}
+
+ul, ol {
+    padding-left: 20px;
+}
+
+li {
+    margin-bottom: 8px;
+    color: #374151 !important;
+    font-size: 14px;
+}
+
+/* Metadata / Secondary text */
+.text-indigo-100 { color: #e0e7ff !important; }
+.opacity-70 { opacity: 0.7 !important; }
+
+/* Sanitization layer: Explicitly hide interactive and problematic elements */
+button, 
+.no-export, 
+.lucide, 
+.lucide-icon,
+svg,
+.btn-download-pdf, 
+.back-link, 
+.stats-bar,
+.hover-target {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+/* Ensure images/canvases behave */
+img {
+    max-width: 100%;
+}

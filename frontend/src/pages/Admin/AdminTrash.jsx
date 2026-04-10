@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { subjectService } from '@/features/subjects/services/SubjectService';
+import { MaterialService } from '@/services/MaterialService';
 import { Trash2, RotateCcw, File as FileIcon, Search, AlertTriangle, Database } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CustomModal from '@/components/ui/CustomModal';
@@ -28,7 +28,7 @@ const AdminTrash = () => {
     const fetchTrash = async () => {
         setLoading(true);
         try {
-            const res = await subjectService.getTrash();
+            const res = await MaterialService.getTrash();
             setTrashItems(res.data.data);
         } catch (err) {
             toast.error('Failed to load trash items');
@@ -40,7 +40,7 @@ const AdminTrash = () => {
     const handleRestore = async (id, title) => {
         setIsActionLoading(true);
         try {
-            await subjectService.restoreMaterial(id);
+            await MaterialService.restore(id);
             toast.success(`"${title}" restored successfully`);
             fetchTrash();
         } catch (err) {

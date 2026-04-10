@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Sparkles, Layout, BookOpen, FileText, CheckCircle2, History, RotateCcw, BrainCircuit } from 'lucide-react';
 import Skeleton from '@/components/ui/Skeleton';
 import SummaryView from './SummaryView';
+import QuizView from './QuizView';
+import FlashcardsView from './FlashcardsView';
 
 const MATERIAL_TYPES = ['flashcards', 'summary', 'quiz', 'mock_exam'];
 
@@ -243,22 +245,65 @@ const MaterialsPanel = ({
 
                     {genResult ? (
                         <div className="animate-in slide-in-from-bottom-4 duration-500">
-                            {genType === 'summary' ? (
-                                <SummaryView summaryData={genResult} title="Draft Summary" isExpanded={isExpanded} />
-                            ) : (
-                                <div className="space-y-6">
-                                    <div className="flex items-center gap-3 mb-2">
-                                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
-                                            <Sparkles className="w-4 h-4 text-indigo-500" />
+                            {(() => {
+                                // Attempt to parse genResult if it's likely JSON
+                                let parsedResult = genResult;
+                                if (typeof genResult === 'string' && (genResult.trim().startsWith('{') || genResult.trim().startsWith('['))) {
+                                    try { parsedResult = JSON.parse(genResult); } catch (e) { /* fallback to raw string */ }
+                                }
+
+                                if (genType === 'summary') {
+                                    return <SummaryView summaryData={parsedResult} title="Draft Summary" isExpanded={isExpanded} />;
+                                }
+                                
+                                if (genType === 'quiz') {
+                                    return (
+                                        <div className="space-y-6">
+                                            <div className="flex items-center gap-3 mb-2 px-2">
+                                                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                                                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                                                </div>
+                                                <h3 className="text-lg font-black text-gray-900 tracking-tight capitalize">Quiz Preview</h3>
+                                            </div>
+                                            <div className="bg-white/50 border border-indigo-100/50 rounded-[2.5rem] overflow-hidden shadow-xl shadow-indigo-100/10">
+                                                <QuizView quizData={parsedResult} isExpanded={isExpanded} />
+                                            </div>
                                         </div>
-                                        <h3 className="text-lg font-black text-gray-900 tracking-tight capitalize">{genType.replace('_', ' ')} Insight</h3>
+                                    );
+                                }
+
+                                if (genType === 'flashcards') {
+                                    return (
+                                        <div className="space-y-6">
+                                            <div className="flex items-center gap-3 mb-2 px-2">
+                                                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                                                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                                                </div>
+                                                <h3 className="text-lg font-black text-gray-900 tracking-tight capitalize">Flashcard Preview</h3>
+                                            </div>
+                                            <div className="bg-white/50 border border-indigo-100/50 rounded-[2.5rem] overflow-hidden shadow-xl shadow-indigo-100/10">
+                                                <FlashcardsView flashcardsData={parsedResult} isExpanded={isExpanded} />
+                                            </div>
+                                        </div>
+                                    );
+                                }
+
+                                // Fallback for other types or raw strings
+                                return (
+                                    <div className="space-y-6">
+                                        <div className="flex items-center gap-3 mb-2 px-2">
+                                            <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                                                <Sparkles className="w-4 h-4 text-indigo-500" />
+                                            </div>
+                                            <h3 className="text-lg font-black text-gray-900 tracking-tight capitalize">{genType.replace('_', ' ')} Insight</h3>
+                                        </div>
+                                        <div className="bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-xl shadow-indigo-100/20 text-gray-800 leading-relaxed text-sm whitespace-pre-wrap relative overflow-hidden group">
+                                            <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 rounded-bl-[4rem] group-hover:scale-110 transition-transform"></div>
+                                            {typeof parsedResult === 'object' ? JSON.stringify(parsedResult, null, 2) : String(parsedResult)}
+                                        </div>
                                     </div>
-                                    <div className="bg-white border border-gray-100 rounded-[1.5rem] p-8 shadow-xl shadow-indigo-100/20 text-gray-800 leading-relaxed text-sm whitespace-pre-wrap relative overflow-hidden group">
-                                        <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 rounded-bl-[4rem] group-hover:scale-110 transition-transform"></div>
-                                        {genResult}
-                                    </div>
-                                </div>
-                            )}
+                                );
+                            })()}
                         </div>
                     ) : isGenerating ? (
                         <div className="space-y-4 animate-neural p-8 border border-indigo-100/50 rounded-[2rem] bg-indigo-50/20 backdrop-blur-md shadow-2xl shadow-indigo-200/20">

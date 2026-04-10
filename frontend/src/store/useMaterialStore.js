@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { subjectService } from '../features/subjects/services/SubjectService';
+import { devtools } from 'zustand/middleware';
+import { MaterialService } from '../services/MaterialService';
 import { COMPLETED, FAILED, PROCESSING, SUCCESS, normalizeStatus } from '../constants/statusConstants';
 import toast from 'react-hot-toast';
 import { useUIStore } from './useUIStore';
@@ -9,11 +10,12 @@ import { useAuthStore } from './useAuthStore';
 // AbortController aborts any in-flight sync request when the slot is cleared.
 const pollingIntervals = new Map();
 
-export const useMaterialStore = create((set, get) => ({
+export const useMaterialStore = create(devtools((set, get) => ({
     data: {
         materials: [],
         jobProgress: null, // { jobId, materialId, stage, progress, message, result }
-        isPublic: false
+        isPublic: false,
+        materialMetadata: {} // { [id]: { generation: {}, ui: {} } }
     },
     error: null,
     actions: {
@@ -21,7 +23,93 @@ export const useMaterialStore = create((set, get) => ({
             set((state) => ({
                 ...state,
                 data: { ...state.data, jobProgress: progress }
-            })),
+            }), false, 'materials/setJobProgress'),
+
+        setExpectedFlashcards: (materialId, count) =>
+            set((state) => ({
+                ...state,
+                data: {
+                    ...state.data,
+                    materialMetadata: {
+                        ...state.data.materialMetadata,
+                        [materialId]: {
+                            ...(state.data.materialMetadata[materialId] || { generation: {}, ui: {} }),
+                            generation: {
+                                ...(state.data.materialMetadata[materialId]?.generation || {}),
+                                expectedCount: count
+                            }
+                        }
+                    }
+                }
+            }), false, 'materials/setExpectedFlashcards'),
+
+        setDifficulty: (materialId, level) =>
+            set((state) => ({
+                ...state,
+                data: {
+                    ...state.data,
+                    materialMetadata: {
+                        ...state.data.materialMetadata,
+                        [materialId]: {
+                            ...(state.data.materialMetadata[materialId] || { generation: {}, ui: {} }),
+                            generation: {
+                                ...(state.data.materialMetadata[materialId]?.generation || {}),
+                                difficulty: level
+                            }
+                        }
+                    }
+                }
+            }), false, 'materials/setDifficulty'),
+
+        setMaterialUIState: (materialId, key, value) =>
+            set((state) => ({
+                ...state,
+                data: {
+                    ...state.data,
+                    materialMetadata: {
+                        ...state.data.materialMetadata,
+                        [materialId]: {
+                            ...(state.data.materialMetadata[materialId] || { generation: {}, ui: {} }),
+                            ui: {
+                                ...(state.data.materialMetadata[materialId]?.ui || {}),
+                                [key]: value
+                            }
+                        }
+                    }
+                }
+            }), false, 'materials/setMaterialUIState'),
+
+        clearMaterialMetadata: (materialId) =>
+            set((state) => {
+                const newMetadata = { ...state.data.materialMetadata };
+                delete newMetadata[materialId];
+                return {
+                    ...state,
+                    data: { ...state.data, materialMetadata: newMetadata }
+                };
+            }, false, 'materials/clearMaterialMetadata'),
+
+        clearAllMaterialMetadata: () =>
+            set((state) => ({
+                ...state,
+                data: { ...state.data, materialMetadata: {} }
+            }), false, 'materials/clearAllMaterialMetadata'),
+
+        getMaterialProgress: (materialId) => {
+            const material = get().data.materials.find(m => String(m.id) === String(materialId));
+            if (!material) return 0;
+            
+            // Base progress on status
+            if (material.status !== 'completed' && material.status !== 'success') return 0;
+            
+            // Check for derived completion data (e.g. flashcards mastered)
+            const metadata = get().data.materialMetadata[materialId];
+            const mastered = metadata?.ui?.masteredCount || 0;
+            const expected = metadata?.generation?.expectedCount || 10;
+            
+            if (mastered > 0) return Math.min(Math.round((mastered / expected) * 100), 100);
+            return 100; // default for completed
+        },
 
         updateMaterialOptimistically: (id, updates) =>
             set((state) => ({
@@ -48,7 +136,7 @@ export const useMaterialStore = create((set, get) => ({
             uiActions.setLoading('materials', true, 'Loading your materials...', false);
             set({ error: null });
             try {
-                const res = await subjectService.getHistory();
+                const res = await MaterialService.getHistory();
                 const materials = res.data.data || [];
                 set((state) => ({
                     ...state,
@@ -76,7 +164,7 @@ export const useMaterialStore = create((set, get) => ({
             set({ error: null });
 
             try {
-                const res = await subjectService.uploadMaterial(formData);
+                const res = await MaterialService.upload(formData);
                 const material = res.data.data;
                 const status = normalizeStatus(material.status);
 
@@ -131,7 +219,7 @@ export const useMaterialStore = create((set, get) => ({
                 return;
             }
             try {
-                await subjectService.cancel(materialId);
+                await MaterialService.cancel(materialId);
                 set((state) => ({
                     ...state,
                     data: { ...state.data, jobProgress: null }
@@ -181,7 +269,7 @@ export const useMaterialStore = create((set, get) => ({
                     const slot = pollingIntervals.get(materialId);
                     if (slot) slot.controller = tickController;
 
-                    const response = await subjectService.sync(materialId, tickController.signal);
+                    const response = await MaterialService.sync(materialId, tickController.signal);
                     if (!response?.data?.data) return;
 
                     const material = response.data.data;
@@ -264,4 +352,4 @@ export const useMaterialStore = create((set, get) => ({
             pollingIntervals.set(materialId, { intervalId, controller: tickController });
         }
     }
-}));
+})));

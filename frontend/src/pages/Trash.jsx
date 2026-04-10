@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { subjectService } from '@/features/subjects/services/SubjectService';
+import { MaterialService } from '@/services/MaterialService';
 import { Trash2, RotateCcw, File as FileIcon, ArrowLeft, LayoutDashboard } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
@@ -18,7 +18,7 @@ const Trash = () => {
     const fetchTrash = async () => {
         setLoading(true);
         try {
-            const res = await subjectService.getTrash();
+            const res = await MaterialService.getTrash();
             setTrashItems(res.data.data);
         } catch (err) {
             toast.error('Failed to load trash items');
@@ -30,7 +30,7 @@ const Trash = () => {
     const handleRestore = async (id, title) => {
         setIsActionLoading(true);
         try {
-            await subjectService.restoreMaterial(id);
+            await MaterialService.restore(id);
             toast.success(`"${title}" restored successfully`);
             fetchTrash();
         } catch (err) {

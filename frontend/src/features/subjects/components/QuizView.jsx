@@ -70,47 +70,82 @@ const ConfettiComponent = () => {
     return <Confetti width={dim.width} height={dim.height} className="!fixed !top-0 !left-0 !z-[9999] pointer-events-none" />;
 };
 // ---------------------------------------------------------------------------
-// Data normaliser
+// Data normaliser — handles every known backend shape & property names
 // ---------------------------------------------------------------------------
+const mapQuestion = (q) => {
+    const question = q.question || q.text || q.title || q.front || '';
+    const options = q.options || q.choices || q.answers || [];
+    
+    // Support multi-property mapping for correct answers
+    // 1. Value-based: correct_answer, answer, correctAnswer
+    // 2. Index-based: correctAnswers (array of indices), correctIndex
+    let correctAnswer = q.correct_answer || q.answer || q.correctAnswer || '';
+    
+    // If we have correctAnswers as an array of indices, map to the option value
+    if (Array.isArray(q.correctAnswers) && q.correctAnswers.length > 0 && options.length > 0) {
+        const idx = parseInt(q.correctAnswers[0], 10);
+        if (!isNaN(idx) && options[idx]) {
+            correctAnswer = options[idx];
+        }
+    } else if (typeof q.correctIndex === 'number' && options[q.correctIndex]) {
+        correctAnswer = options[q.correctIndex];
+    }
+
+    return {
+        id: q.id || Math.random().toString(36).substr(2, 9),
+        question: String(question).trim(),
+        options: Array.isArray(options) ? options.map(String) : [],
+        correct_answer: String(correctAnswer).trim(),
+        explanation: q.explanation || q.rationale || q.back || 'No explanation provided.'
+    };
+};
+
 const extractQuizQuestions = (data) => {
     if (!data) return [];
     
-    // If it's a string, try to parse it (sometimes data is double-stringified)
+    // 0. String handling
     if (typeof data === 'string') {
         try {
             const parsed = JSON.parse(data);
             return extractQuizQuestions(parsed);
         } catch {
+            // Attempt Regex scavenge if JSON is totally broken (from AI engine)
+            const qMatches = [...data.matchAll(/("question[^"]*"\s*:\s*"([^"]+)")/gi)];
+            if (qMatches.length > 0) {
+                console.warn("[QuizView] Salvaging questions via Regex from broken JSON string");
+                // This is a last resort, returns partial objects that mapQuestion will safe-guard
+                return qMatches.map(m => ({ question: m[2] }));
+            }
             return [];
         }
     }
 
-    // Already an array
-    if (Array.isArray(data)) return data;
+    // 1. Direct Array
+    if (Array.isArray(data)) return data.map(mapQuestion);
 
-    // Handle various field names
+    // 2. Contains standard properties
     const arrayField = 
         data.questions || 
         data.quiz || 
         data.flashcards || 
         data.cards || 
+        (data.result && (data.result.questions || data.result.quiz || data.result)) ||
         data.data || 
-        data.items || 
-        data.result?.questions || 
-        data.result;
+        data.items;
         
-    if (Array.isArray(arrayField)) return arrayField;
+    if (Array.isArray(arrayField)) return arrayField.map(mapQuestion);
 
-    // Dictionary support: if it's { "1": {...}, "2": {...} }
+    // 3. Dictionary support: if it's { "1": {...}, "2": {...} }
     if (typeof data === 'object' && !Array.isArray(data)) {
         const values = Object.values(data);
-        if (values.length > 0 && values.every(v => typeof v === 'object' && (v.question || v.front))) {
-            return values;
+        if (values.length > 0 && values.every(v => typeof v === 'object' && (v.question || v.text))) {
+            return values.map(mapQuestion);
         }
     }
 
-    // Deep nesting (common if results are stored in consistent envelopes)
+    // 4. Try recursively unpacking wrapper objects
     if (data.result) return extractQuizQuestions(data.result);
+    if (data.data) return extractQuizQuestions(data.data);
     
     return [];
 };

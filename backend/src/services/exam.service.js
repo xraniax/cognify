@@ -1,5 +1,8 @@
 import axios from 'axios';
 import { randomUUID } from 'crypto';
+import Material from '../models/material.model.js';
+import { COMPLETED } from '../constants/status.enum.js';
+import { query } from '../utils/config/db.js';
 
 const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://ollama_gpu:11434').replace(/\/$/, '');
 const OLLAMA_MODEL = process.env.OLLAMA_GENERATION_MODEL || 'qwen2:0.5b';
@@ -531,6 +534,32 @@ class ExamService {
                 questions: fullQuestions,
             },
         });
+
+        // --- NEW: Persist to Materials table so it appears in history ---
+        try {
+            await Material.create(
+                userId,
+                payload.subject_id,
+                exam.title,
+                '', // No text content for exams
+                'exam',
+                COMPLETED
+            );
+            // We need to store the structured exam data
+            // Since Material.create doesn't take ai_generated_content, we update it immediately
+            // Find the record we just created (simplest way without modifying Material.create)
+            const materialRecord = await query(
+                'SELECT id FROM materials WHERE user_id = $1 AND title = $2 AND type = $3 ORDER BY created_at DESC LIMIT 1',
+                [userId, exam.title, 'exam']
+            );
+            if (materialRecord.rows[0]) {
+                await Material.updateAIResult(materialRecord.rows[0].id, userId, exam);
+            }
+        } catch (dbErr) {
+            console.error('[ExamService] Failed to persist exam to history:', dbErr.message);
+            // Non-blocking: we still have the cache for the current session
+        }
+
         cleanupCache();
         return exam;
     }

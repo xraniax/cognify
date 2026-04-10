@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { subjectService } from '@/features/subjects/services/SubjectService';
+import { MaterialService } from '@/services/MaterialService';
 
 /**
  * useExamGeneration
@@ -39,7 +39,7 @@ export const useExamGeneration = ({
                 timeLimit: genOptions?.timeLimit || 30,
             };
 
-            const examRes = await subjectService.generateExam(payload);
+            const examRes = await MaterialService.generateExam(payload);
             const exam = examRes?.data?.data;
             
             if (!exam) {

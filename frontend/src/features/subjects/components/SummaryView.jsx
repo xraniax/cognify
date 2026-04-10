@@ -1,8 +1,9 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { BookOpen, Clock, Hash, Lightbulb, ChevronRight, AlignLeft, FileDown } from 'lucide-react';
-import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { toast } from 'react-hot-toast';
+import { ExportService } from '@/services/ExportService';
+import pdfStyles from '@/assets/styles/pdf-v1.css?inline';
 
 
 // ─── Inline Markdown Parser ───────────────────────────────────────────────────
@@ -136,86 +137,22 @@ const SummaryView = ({ summaryData, title, isExpanded = false }) => {
     const [isExporting, setIsExporting] = useState(false);
 
     const handleDownload = async () => {
-        if (!summaryRef.current || isExporting) return;
+        const element = summaryRef.current;
+        if (!element) return;
+        
         setIsExporting(true);
+        const safeTitle = displayTitle.replace(/[^a-z0-9]/gi, '_');
+        const fileName = `Cognify_Summary_${safeTitle}.pdf`;
 
         const downloadToast = toast.promise(
-            (async () => {
-                const element = summaryRef.current;
-                const safeTitle = displayTitle.replace(/[^a-z0-9]/gi, '_');
-                const fileName = `Cognify_Summary_${safeTitle}.pdf`;
-
-                // CLEAN-ROOM IFRAME ISOLATION
-                const iframe = document.createElement('iframe');
-                Object.assign(iframe.style, { position: 'absolute', top: '0', left: '0', width: '1000px', height: '0', visibility: 'hidden' });
-                document.body.appendChild(iframe);
-
-                const idoc = iframe.contentWindow.document;
-                idoc.open();
-                idoc.write(`
-                    <html>
-                    <head>
-                        <style>
-                            body { margin: 0; padding: 40px; background: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto; }
-                            .printable-summary-container { width: 920px; }
-                            .header-card { background: linear-gradient(135deg, #4f46e5, #7c3aed); border-radius: 40px; padding: 40px; color: white; margin-bottom: 30px; }
-                            .header-card h1 { margin: 0; font-size: 32px; font-weight: 900; line-height: 1.2; }
-                            .content-card { background: #fff; border-radius: 40px; padding: 40px; border: 1px solid #e5e7eb; }
-                            h2 { font-size: 24px; font-weight: 900; color: #111827; border-bottom: 2px solid #f3f4f6; padding-bottom: 12px; margin-top: 40px; }
-                            h3 { font-size: 18px; font-weight: 800; color: #4f46e5; margin-top: 24px; }
-                            p { font-size: 15px; color: #374151; line-height: 1.6; margin: 12px 0; }
-                            ul { padding-left: 20px; }
-                            li { margin-bottom: 8px; color: #374151; font-size: 14px; }
-                            .btn-download-pdf, .back-link, .stats-bar { display: none !important; }
-                        </style>
-                    </head>
-                    <body></body>
-                    </html>
-                `);
-                idoc.close();
-
-                const clone = element.cloneNode(true);
-                idoc.body.appendChild(clone);
-
-                // Wait for any rendering
-                await new Promise(r => setTimeout(r, 100));
-
-                try {
-                    const canvas = await html2canvas(idoc.body, {
-                        scale: 2,
-                        width: 1000,
-                        backgroundColor: '#ffffff',
-                        useCORS: true
-                    });
-
-                    const imgData = canvas.toDataURL('image/png');
-                    const pdf = new jsPDF('p', 'pt', 'a4');
-                    const pageWidth = pdf.internal.pageSize.getWidth();
-                    const pageHeight = pdf.internal.pageSize.getHeight();
-                    const imgHeightOnPDF = (canvas.height * pageWidth) / canvas.width;
-                    
-                    let heightLeft = imgHeightOnPDF;
-                    let position = 0;
-
-                    pdf.addImage(imgData, 'PNG', 0, position, pageWidth, imgHeightOnPDF, undefined, 'FAST');
-                    heightLeft -= pageHeight;
-                    while (heightLeft > 0) {
-                        position = heightLeft - imgHeightOnPDF;
-                        pdf.addPage();
-                        pdf.addImage(imgData, 'PNG', 0, position, pageWidth, imgHeightOnPDF, undefined, 'FAST');
-                        heightLeft -= pageHeight;
-                    }
-
-                    pdf.save(fileName);
-                    return fileName;
-                } finally {
-                    document.body.removeChild(iframe);
-                }
-            })(),
+            ExportService.exportToPDF(element, fileName, {
+                surgicalStyles: pdfStyles,
+                scale: 2
+            }),
             {
-                loading: 'Preparing PDF in Clean Room...',
-                success: (name) => `Downloaded: ${name}`,
-                error: (err) => `Error: ${err.message || 'Export failed'}`
+                loading: 'Architecting your PDF (Isolated Render)...',
+                success: (name) => `Strategy exported: ${name}`,
+                error: (err) => `Tactical error: ${err.message || 'Export failed'}`
             }
         );
 

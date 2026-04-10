@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useMaterialStore } from '@/store/useMaterialStore';
 
 function cn(...inputs) {
     return twMerge(clsx(inputs));
@@ -224,31 +225,40 @@ const extractCards = (data) => {
     return [];
 };
 
-// ── Strict Validation Layer ──
-const validateCards = (rawCards) => {
+// ── Validation Layer ──
+const validateCards = (rawCards, expectedCountFromStore) => {
     console.log("RAW PARSED CARDS:", rawCards);
     
-    // ENFORCE STRICT VALIDATION (Never trust LLM output)
+    // 1. Initial cleaning (remove empty)
     let cards = rawCards.filter(card => 
-        card.question && card.question.trim() !== "" &&
-        card.answer && card.answer.trim() !== ""
+        card.question && String(card.question).trim() !== "" &&
+        card.answer && String(card.answer).trim() !== ""
     );
+
+    // 2. Strict De-duplication (Case-insensitive question match)
+    const seen = new Set();
+    cards = cards.filter(card => {
+        const q = String(card.question).trim().toLowerCase();
+        if (seen.has(q)) {
+            console.warn(`[Flashcards] Purging duplicate question: ${q}`);
+            return false;
+        }
+        seen.add(q);
+        return true;
+    });
     
-    // Attempt local frontend healing if parsing somehow duplicated / over-generated
-    // UI acts as last line of defense. 
-    // If flashcardsExpectedCount is set by the session, it wins. 
-    // Otherwise use cards.length, and only fallback to 10 if everything is empty.
-    const expectedCount = flashcardsExpectedCount > 0 
-        ? flashcardsExpectedCount 
+    const expectedCount = expectedCountFromStore > 0 
+        ? expectedCountFromStore 
         : (cards.length > 0 ? cards.length : 10);
     
     if (cards.length > expectedCount) {
         cards = cards.slice(0, expectedCount);
     }
     
+    // 3. Padding (if too few)
     if (cards.length < expectedCount && cards.length > 0) {
         const missing = expectedCount - cards.length;
-        console.warn(`[Flashcards] Regenerating/Padding missing ${missing} cards locally to enforce N=${expectedCount}`);
+        console.warn(`[Flashcards] Padding missing ${missing} cards to enforce N=${expectedCount}`);
         const extra = [];
         for (let i = 0; i < missing; i++) {
             const baseCard = cards[i % cards.length];
@@ -261,13 +271,8 @@ const validateCards = (rawCards) => {
     }
     
     console.log("FINAL VALIDATED CARDS COUNT:", cards.length);
-    console.log("VALIDATED CARDS CONTENT:", cards);
     return cards;
 };
-
-// Global config trick to pass expected count from options to frontend easily for slicing
-let flashcardsExpectedCount = 0;
-export const setFlashcardsExpectedCount = (count) => { flashcardsExpectedCount = count; };
 
 // ---------------------------------------------------------------------------
 // Rating Config
@@ -303,12 +308,15 @@ const CardDot = ({ rating, isCurrent, onClick }) => {
 // Main Component
 // ---------------------------------------------------------------------------
 const FlashcardsView = ({ flashcardsData, isExpanded = false }) => {
+    const materialId = flashcardsData?.id || flashcardsData?.material_id;
+    const metadata = useMaterialStore(s => s.data.materialMetadata[materialId]);
+    const expectedCount = metadata?.generation?.expectedCount || 0;
+
     // ── SYNCHRONOUS card derivation (no state race conditions) ──
-    // Cards are computed directly from the prop — never async.
     const cards = useMemo(() => {
         const rawExtracted = extractCards(flashcardsData);
-        return validateCards(rawExtracted);
-    }, [flashcardsData]);
+        return validateCards(rawExtracted, expectedCount);
+    }, [flashcardsData, expectedCount]);
 
     // Pure session state — reset when flashcardsData identity changes
     const [currentIndex, setCurrentIndex] = useState(0);
@@ -346,6 +354,14 @@ const FlashcardsView = ({ flashcardsData, isExpanded = false }) => {
             setShuffleOrder(cards.map((_, i) => i));
         }
     }, [flashcardsData, cards]);
+    
+    // ── Reactive Progress Sensing ──
+    const setMaterialUIState = useMaterialStore(s => s.actions.setMaterialUIState);
+    useEffect(() => {
+        if (!materialId) return;
+        const easyCount = Object.values(ratings).filter(r => r === 'easy').length;
+        setMaterialUIState(materialId, 'masteredCount', easyCount);
+    }, [ratings, materialId, setMaterialUIState]);
 
     // Keep shuffleOrder in sync with cards length
     useEffect(() => {
@@ -860,23 +876,23 @@ const FlashcardsView = ({ flashcardsData, isExpanded = false }) => {
                     initial={{ x: direction * 50, opacity: 0 }}
                     animate={{ x: 0, opacity: 1 }}
                     exit={{ x: -direction * 50, opacity: 0 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 40 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 40, mass: 1 }}
                     className="mb-8 relative"
                     style={{ perspective: "2000px" }}
                 >
                     <motion.div
                         animate={{ 
                             rotateY: isRevealed ? 180 : 0,
-                            scale: isRevealed ? [1, 1.02, 1] : [1, 1.02, 1], // Subtle, faster pop
-                            z: isRevealed ? 10 : 0 // Less aggressive burst
+                            scale: isRevealed ? [1, 1.01, 1] : [1, 1.01, 1], 
+                            z: isRevealed ? 8 : 0 
                         }}
                         whileHover={{ scale: 1.01, y: -2 }}
                         whileTap={{ scale: 0.98 }}
                         transition={{ 
                             type: 'spring', 
-                            stiffness: 600, // Faster than default but smoother than 800
-                            damping: 45, // High damping to prevent jitter
-                            mass: 0.9
+                            stiffness: 700, 
+                            damping: 50, 
+                            mass: 0.7
                         }}
                         style={{ transformStyle: "preserve-3d" }}
                         className={`relative w-full ${isExpanded ? 'min-h-[580px]' : 'min-h-[480px]'} transition-all duration-300`}

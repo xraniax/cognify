@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { useSpeech } from '@/hooks/useSpeech';
-import { subjectService } from '@/features/subjects/services/SubjectService';
+import { MaterialService } from '@/services/MaterialService';
 
 /**
  * useWorkspaceChat
@@ -31,7 +31,7 @@ export const useWorkspaceChat = ({ uploads, selectedUploads }) => {
             const contextIds = selectedUploads.length > 0
                 ? selectedUploads
                 : uploads.map(m => m.id);
-            const res = await subjectService.chat(contextIds, userMsg.content);
+            const res = await MaterialService.chat(contextIds, userMsg.content);
             setChatMessages(prev => [...prev, { role: 'ai', content: res.data.data.result }]);
         } catch (err) {
             const msg = err.message || 'AI engine is unreachable. Please try again.';

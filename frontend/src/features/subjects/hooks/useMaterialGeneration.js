@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useMaterialStore } from '@/store/useMaterialStore';
-import { subjectService } from '@/features/subjects/services/SubjectService';
-import { setFlashcardsExpectedCount } from '@/features/subjects/components/FlashcardsView';
+import { MaterialService } from '@/services/MaterialService';
 
 /**
  * useMaterialGeneration
@@ -17,13 +16,19 @@ export const useMaterialGeneration = ({
     setActiveTabId,
 }) => {
     const fetchMaterials  = useMaterialStore(s => s.actions.fetchMaterials);
-    const startPolling    = useMaterialStore(s => s.actions.startPolling);
-    const clearAllPolling = useMaterialStore(s => s.actions.clearAllPolling);
+    const startPolling         = useMaterialStore(s => s.actions.startPolling);
+    const clearAllPolling      = useMaterialStore(s => s.actions.clearAllPolling);
+    const setMaterialMetadata = useMaterialStore(s => s.actions.setMaterialMetadata);
+    const setExpectedFlashcards = useMaterialStore(s => s.actions.setExpectedFlashcards);
     const jobProgress     = useMaterialStore(s => s.data.jobProgress);
 
     const [materialGenError, setMaterialGenError] = useState('');
     const [isGeneratingMaterial, setIsGeneratingMaterial] = useState(false);
     const [genResult, setGenResult] = useState('');
+    
+    // Enhancement Refs
+    const hasRenamedRef = useRef(false);
+    const activeMaterialIdRef = useRef(null);
 
     const streamControllerRef = useRef(null);
     const currentSubjectIdRef = useRef(normalizedId);
@@ -48,18 +53,24 @@ export const useMaterialGeneration = ({
             return;
         }
 
-        setIsGeneratingMaterial(true);
         setGenResult('');
+        hasRenamedRef.current = false;
+        activeMaterialIdRef.current = null;
         
-        if (genType === 'flashcards' && genOptions?.count) {
-            setFlashcardsExpectedCount(genOptions.count);
-        }
+        const isFlashGen = genType === 'flashcards' && genOptions?.count;
+        const requestedCount = genOptions?.count;
 
         try {
-            const res = await subjectService.generate(targets, genType, subjectId, genOptions);
+            const res = await MaterialService.generate(targets, genType, subjectId, genOptions);
             const { material_id } = res.data.data;
+            activeMaterialIdRef.current = material_id;
 
             if (material_id) {
+                // If this was a flashcard generation, associate the metadata with the new ID
+                if (isFlashGen) {
+                    setExpectedFlashcards(String(material_id), requestedCount);
+                }
+
                 fetchMaterials();
                 setActiveTabId('generator');
                 
@@ -67,19 +78,37 @@ export const useMaterialGeneration = ({
                 const controller = new AbortController();
                 streamControllerRef.current = controller;
 
-                subjectService.streamMaterial(
+                setIsGeneratingMaterial(true);
+                MaterialService.stream(
                     material_id, 
                     controller.signal,
                     chunk => { 
-                        setGenResult(prev => (prev || '') + chunk); 
-                        setIsGeneratingMaterial(true); 
+                        setGenResult(prev => {
+                            const next = (prev || '') + chunk;
+                            
+                            // Intelligent Title Derivation
+                            if (!hasRenamedRef.current && next.includes('#')) {
+                                const titleMatch = next.match(/#\s+([^\n#]+)/);
+                                if (titleMatch && titleMatch[1]) {
+                                    const derivedTitle = titleMatch[1].trim();
+                                    if (derivedTitle && derivedTitle.length > 3) {
+                                        console.log(`[MaterialGen] Intelligent title detected: "${derivedTitle}". Renaming...`);
+                                        MaterialService.rename(material_id, derivedTitle)
+                                            .then(() => fetchMaterials())
+                                            .catch(err => console.error("Rename failed", err));
+                                        hasRenamedRef.current = true;
+                                    }
+                                }
+                            }
+                            return next;
+                        }); 
                     },
                     () => {
                         streamControllerRef.current = null;
                         setIsGeneratingMaterial(false);
                         if (String(currentSubjectIdRef.current) !== normalizedId) return;
                         
-                        subjectService.sync(material_id, controller.signal).then(() => {
+                        MaterialService.sync(material_id, controller.signal).then(() => {
                             if (String(currentSubjectIdRef.current) !== normalizedId) return;
                             fetchMaterials().then(() => {
                                 const mat = useMaterialStore.getState().data.materials

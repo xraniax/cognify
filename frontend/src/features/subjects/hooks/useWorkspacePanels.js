@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useMaterialStore } from '@/store/useMaterialStore';
-import { subjectService } from '@/features/subjects/services/SubjectService';
+import { MaterialService } from '@/services/MaterialService';
 import toast from 'react-hot-toast';
 
 /**
@@ -10,6 +10,8 @@ import toast from 'react-hot-toast';
  */
 export const useWorkspacePanels = ({ subjectId, materials }) => {
     const fetchMaterials = useMaterialStore(s => s.actions.fetchMaterials);
+    const clearMaterialMetadata = useMaterialStore(s => s.actions.clearMaterialMetadata);
+    const clearAllMaterialMetadata = useMaterialStore(s => s.actions.clearAllMaterialMetadata);
 
     const savedTabsKey    = `cognify_tabs_${subjectId}`;
     const savedActiveKey  = `cognify_active_tab_${subjectId}`;
@@ -94,7 +96,7 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
             ));
             
             // send to backend
-            await subjectService.renameMaterial(materialId, newTitle.trim());
+            await MaterialService.rename(materialId, newTitle.trim());
             toast.success('Renamed successfully');
         } catch {
             // revert optimism by refetching
@@ -115,7 +117,8 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
             confirmText: 'Move to Trash',
             onConfirm: async () => {
                 try {
-                    await subjectService.deleteMaterial(materialId);
+                    await MaterialService.delete(materialId);
+                    clearMaterialMetadata(materialId);
                     await fetchMaterials();
                     setSelectedUploads(prev => prev.filter(id => id !== materialId));
                     toast.success('Document removed');
@@ -135,6 +138,14 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
     // ── Expose a stable tabs ref for cross-hook async reads ──────────────────
     const tabsRef = useRef([]);
     useEffect(() => { tabsRef.current = tabs; }, [tabs]);
+
+    // ── Lifecycle Cleanup ────────────────────────────────────────────────────────
+    useEffect(() => {
+        return () => {
+            // Optional: clear UI transient state on workspace unmount
+            clearAllMaterialMetadata(); 
+        };
+    }, [clearAllMaterialMetadata]);
 
     return {
         // Tabs
