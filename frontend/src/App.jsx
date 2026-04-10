@@ -15,6 +15,7 @@ import AdminFiles from '@/pages/Admin/AdminFiles';
 import AdminDashboard from '@/pages/Admin/AdminDashboard';
 import AdminLogs from '@/pages/Admin/AdminLogs';
 import AdminSettings from '@/pages/Admin/AdminSettings';
+import Trash from '@/pages/Trash';
 import AdminLayout from '@/components/Admin/AdminLayout';
 import SubjectDetail from '@/pages/SubjectDetail';
 import ForgotPassword from '@/pages/ForgotPassword';
@@ -90,6 +91,8 @@ const AppContent = () => {
           <Route path="/admin/files" element={<AdminRoute><AdminLayout><AdminFiles /></AdminLayout></AdminRoute>} />
           <Route path="/admin/logs" element={<AdminRoute><AdminLayout><AdminLogs /></AdminLayout></AdminRoute>} />
           <Route path="/admin/settings" element={<AdminRoute><AdminLayout><AdminSettings /></AdminLayout></AdminRoute>} />
+          <Route path="/admin/trash" element={<Navigate to="/trash" />} />
+          <Route path="/trash" element={<ProtectedRoute><Trash /></ProtectedRoute>} />
 
           <Route path="/welcome" element={<Welcome />} />
           <Route path="/" element={<Navigate to="/welcome" />} />

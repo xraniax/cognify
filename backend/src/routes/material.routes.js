@@ -13,6 +13,7 @@ const router = express.Router();
 router.use(protect);
 
 router.get('/settings', MaterialController.getSettings);
+router.get('/trash', MaterialController.getTrash);
 router.post('/upload', aiLimiter, documentUpload, validate(uploadMaterialSchema), MaterialController.upload);
 router.get('/history', MaterialController.getHistory);
 router.post('/chat-combined', aiLimiter, validate(chatCombinedSchema), MaterialController.chatCombined);
@@ -20,6 +21,7 @@ router.post('/generate-combined', aiLimiter, validate(generateCombinedSchema), M
 router.get('/:id/sync', MaterialController.syncStatus);
 router.get('/:id/stream', MaterialController.streamJob);
 router.post('/:id/cancel', MaterialController.cancelJob);
+router.post('/:id/restore', MaterialController.restore);
 router.patch('/:id', MaterialController.update);
 router.delete('/:id', MaterialController.delete);
 

@@ -158,7 +158,25 @@ class MaterialController {
 
         res.status(200).json({
             status: 'success',
-            message: 'Document deleted successfully'
+            message: 'Document moved to trash successfully'
+        });
+    });
+
+    static getTrash = asyncHandler(async (req, res) => {
+        const trash = await MaterialService.getTrash(req.user.id);
+        res.status(200).json({
+            status: 'success',
+            data: trash
+        });
+    });
+
+    static restore = asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        const restored = await MaterialService.restoreMaterial(id, req.user.id);
+        res.status(200).json({
+            status: 'success',
+            message: 'Document restored successfully',
+            data: restored
         });
     });
 

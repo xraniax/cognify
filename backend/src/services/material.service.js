@@ -429,15 +429,31 @@ class MaterialService {
     }
 
     /**
-     * Delete a material by ID.
+     * Delete a material by ID (Moves to Trash).
      * Enforces user_id for security.
      */
     static async deleteMaterial(materialId, userId) {
-
-        // Run garbage collection BEFORE deleting the material row, 
-        // to ensure the physical path lookup succeeds.
-        await MaterialService._garbageCollectFile(materialId);
+        // Removed garbage collection here since this is now a soft delete.
+        // Files are kept so they can be restored later.
         return await Material.delete(materialId, userId);
+    }
+
+    /**
+     * Find soft-deleted materials in the user's trash.
+     */
+    static async getTrash(userId) {
+        return await Material.findDeleted(userId);
+    }
+
+    /**
+     * Restore a material from the trash.
+     */
+    static async restoreMaterial(materialId, userId) {
+        const material = await Material.restore(materialId, userId);
+        if (!material) {
+            throw new Error('Material not found or not in trash');
+        }
+        return material;
     }
 }
 

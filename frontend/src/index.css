@@ -765,15 +765,17 @@
 }
 /* ─── Targeted PDF Export Styles ─────────────────────────── */
 @media print {
-  /* Hide everything by default */
-  html, body, #root, .workspace-container, aside, nav, header, 
+  /* Hide main UI elements */
+  .workspace-container, aside, nav, header, 
   .sidebar, .chat-panel, .materials-controls, .btn-download-pdf,
   .back-link, .modal-overlay, .neural-pulse, .stats-bar {
-    visibility: hidden !important;
-    height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
+    display: none !important;
+  }
+
+  html, body, #root {
+    height: auto !important;
     overflow: visible !important;
+    background: white !important;
   }
 
   /* Force display of the targeted printable container */

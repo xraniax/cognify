@@ -17,6 +17,8 @@ export const subjectService = {
         return api.post('/materials/upload', data, config);
     },
     getHistory: () => api.get('/materials/history'),
+    getTrash: () => api.get('/materials/trash'),
+    restoreMaterial: (id) => api.post(`/materials/${id}/restore`),
     cancel: (id) => api.post(`/materials/${id}/cancel`),
     getSettings: () => api.get('/materials/settings'),
 

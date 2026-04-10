@@ -36,8 +36,22 @@ const FilePanel = ({
     isPublic
 }) => {
     const user = useAuthStore((state) => state.data.user);
-    const [uploadsOpen, setUploadsOpen] = useState(true);
-    const [generatedOpen, setGeneratedOpen] = useState(true);
+    const [uploadsOpen, setUploadsOpen] = useState(() => {
+        const saved = localStorage.getItem('cognify_panel_uploads_open');
+        return saved !== null ? JSON.parse(saved) : false;
+    });
+    const [generatedOpen, setGeneratedOpen] = useState(() => {
+        const saved = localStorage.getItem('cognify_panel_generated_open');
+        return saved !== null ? JSON.parse(saved) : false;
+    });
+
+    useEffect(() => {
+        localStorage.setItem('cognify_panel_uploads_open', JSON.stringify(uploadsOpen));
+    }, [uploadsOpen]);
+
+    useEffect(() => {
+        localStorage.setItem('cognify_panel_generated_open', JSON.stringify(generatedOpen));
+    }, [generatedOpen]);
 
     const [editingId, setEditingId] = useState(null);
     const [editValue, setEditValue] = useState("");
@@ -337,7 +351,17 @@ const FilePanel = ({
                         )}
                     </AnimatePresence>
                 </div>
+            </div>
 
+            {/* System Trash Shortcut - Fixed at bottom */}
+            <div className="px-4 py-3 border-t border-gray-100 bg-gray-50/50 flex-shrink-0">
+                <button
+                    onClick={() => window.location.href = '/trash'}
+                    className="w-full py-3 px-4 flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 hover:text-red-500 hover:bg-red-50/50 rounded-xl transition-all duration-300 group"
+                >
+                    <Trash2 className="w-3.5 h-3.5 group-hover:animate-bounce transition-colors" />
+                    <span>View System Trash</span>
+                </button>
             </div>
         </div>
     );

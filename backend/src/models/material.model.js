@@ -22,7 +22,7 @@ class Material {
      */
     static async updateAIResult(materialId, userId, aiResult) {
         const result = await query(
-            'UPDATE materials SET ai_generated_content = $2, processed_at = NOW(), completed_at = NOW(), status = $4 WHERE id = $1 AND user_id = $3 RETURNING *',
+            'UPDATE materials SET ai_generated_content = $2, processed_at = NOW(), completed_at = NOW(), status = $4 WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL RETURNING *',
             [materialId, aiResult, userId, COMPLETED]
         );
         return result.rows[0];
@@ -33,7 +33,7 @@ class Material {
      */
     static async updateContent(materialId, userId, content) {
         const result = await query(
-            'UPDATE materials SET content = $2 WHERE id = $1 AND user_id = $3 RETURNING *',
+            'UPDATE materials SET content = $2 WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL RETURNING *',
             [materialId, content, userId]
         );
         return result.rows[0];
@@ -53,8 +53,8 @@ class Material {
         const completedAtSql = (normalizedStatus === COMPLETED || normalizedStatus === FAILED) ? ', completed_at = NOW()' : '';
 
         const sql = jobId 
-            ? `UPDATE materials SET status = $2, job_id = $4 ${startedAtSql} ${completedAtSql} WHERE id = $1 AND user_id = $3 RETURNING *`
-            : `UPDATE materials SET status = $2 ${startedAtSql} ${completedAtSql} WHERE id = $1 AND user_id = $3 RETURNING *`;
+            ? `UPDATE materials SET status = $2, job_id = $4 ${startedAtSql} ${completedAtSql} WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL RETURNING *`
+            : `UPDATE materials SET status = $2 ${startedAtSql} ${completedAtSql} WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL RETURNING *`;
         
         const params = jobId ? [materialId, normalizedStatus, userId, jobId] : [materialId, normalizedStatus, userId];
         const result = await query(sql, params);
@@ -70,7 +70,7 @@ class Material {
             SET status = $2, 
                 started_at = COALESCE($4, started_at), 
                 completed_at = COALESCE($5, completed_at)
-            WHERE id = $1 AND user_id = $3 
+            WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL
             RETURNING *`;
         const result = await query(sql, [materialId, status, userId, startedAt, completedAt]);
         return result.rows[0];
@@ -81,7 +81,7 @@ class Material {
      */
     static async recordFailure(materialId, userId, errorMessage) {
         const result = await query(
-            'UPDATE materials SET status = $4, error_message = $2, completed_at = NOW() WHERE id = $1 AND user_id = $3 RETURNING *',
+            'UPDATE materials SET status = $4, error_message = $2, completed_at = NOW() WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL RETURNING *',
             [materialId, errorMessage, userId, FAILED]
         );
         return result.rows[0];
@@ -98,7 +98,7 @@ class Material {
             FROM materials m
             LEFT JOIN subjects s ON m.subject_id = s.id
             LEFT JOIN files f ON f.material_id = m.id
-            WHERE m.user_id = $1 
+            WHERE m.user_id = $1 AND m.deleted_at IS NULL
             ORDER BY m.created_at DESC`,
             [userId]
         );
@@ -116,7 +116,7 @@ class Material {
             FROM materials m
             LEFT JOIN subjects s ON m.subject_id = s.id
             LEFT JOIN files f ON f.material_id = m.id
-            WHERE m.id = $1 AND m.user_id = $2`,
+            WHERE m.id = $1 AND m.user_id = $2 AND m.deleted_at IS NULL`,
             [id, userId]
         );
         return result.rows[0];
@@ -130,7 +130,7 @@ class Material {
             `SELECT m.*, f.path as file_path 
             FROM materials m 
             LEFT JOIN files f ON f.material_id = m.id 
-            WHERE m.subject_id = $1 AND m.user_id = $2 
+            WHERE m.subject_id = $1 AND m.user_id = $2 AND m.deleted_at IS NULL
             ORDER BY m.created_at DESC`,
             [subjectId, userId]
         );
@@ -148,7 +148,7 @@ class Material {
             `SELECT m.*, f.path as file_path 
             FROM materials m 
             LEFT JOIN files f ON f.material_id = m.id 
-            WHERE m.id = ANY($1) AND m.user_id = $2 
+            WHERE m.id = ANY($1) AND m.user_id = $2 AND m.deleted_at IS NULL
             ORDER BY m.created_at DESC`,
             [ids, userId]
         );
@@ -160,19 +160,49 @@ class Material {
      */
     static async findByTitle(userId, subjectId, title) {
         const result = await query(
-            'SELECT * FROM materials WHERE user_id = $1 AND subject_id = $2 AND LOWER(TRIM(title)) = LOWER(TRIM($3))',
+            'SELECT * FROM materials WHERE user_id = $1 AND subject_id = $2 AND LOWER(TRIM(title)) = LOWER(TRIM($3)) AND deleted_at IS NULL',
             [userId, subjectId, title]
         );
         return result.rows[0];
     }
 
     /**
-     * Remove a material.
+     * Delete a material (Soft Delete).
      * user_id enforced for IDOR protection — users can only delete their own materials.
      */
     static async delete(id, userId) {
-        const result = await query('DELETE FROM materials WHERE id = $1 AND user_id = $2 RETURNING *', [id, userId]);
+        const result = await query(
+            'UPDATE materials SET deleted_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING *', 
+            [id, userId]
+        );
         return result.rowCount > 0;
+    }
+
+    /**
+     * Restore a soft-deleted material.
+     */
+    static async restore(id, userId) {
+        const result = await query(
+            'UPDATE materials SET deleted_at = NULL WHERE id = $1 AND user_id = $2 RETURNING *', 
+            [id, userId]
+        );
+        return result.rowCount > 0;
+    }
+
+    /**
+     * Find all deleted materials for the user (Trash View).
+     */
+    static async findDeleted(userId) {
+        const result = await query(
+            `SELECT m.*, s.name as subject_name, f.path as file_path 
+             FROM materials m 
+             LEFT JOIN subjects s ON m.subject_id = s.id 
+             LEFT JOIN files f ON f.material_id = m.id 
+             WHERE m.user_id = $1 AND m.deleted_at IS NOT NULL 
+             ORDER BY m.deleted_at DESC`,
+            [userId]
+        );
+        return result.rows;
     }
 
     /**
@@ -196,7 +226,7 @@ class Material {
         if (fields.length === 0) return null;
 
         values.push(id, userId);
-        const sql = `UPDATE materials SET ${fields.join(', ')} WHERE id = $${paramIdx} AND user_id = $${paramIdx + 1} RETURNING *`;
+        const sql = `UPDATE materials SET ${fields.join(', ')} WHERE id = $${paramIdx} AND user_id = $${paramIdx + 1} AND deleted_at IS NULL RETURNING *`;
         const result = await query(sql, values);
         return result.rows[0];
     }

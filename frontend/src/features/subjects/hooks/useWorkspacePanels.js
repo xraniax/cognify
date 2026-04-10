@@ -109,10 +109,10 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
 
     const handleDeleteUpload = useCallback((materialId, materialName) => {
         setModalConfig({
-            title: 'Delete document?',
-            message: `Are you sure you want to delete "${materialName || 'this file'}"? This cannot be undone.`,
+            title: 'Move to Trash?',
+            message: `Are you sure you want to move "${materialName || 'this file'}" to the trash? It will be archived and can be recovered later.`,
             type: 'warning',
-            confirmText: 'Delete permanently',
+            confirmText: 'Move to Trash',
             onConfirm: async () => {
                 try {
                     await subjectService.deleteMaterial(materialId);
