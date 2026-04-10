@@ -26,10 +26,10 @@ const Register = () => {
         if (field === 'name') result = validateName(value);
         if (field === 'email') result = validateEmail(value);
         if (field === 'password') result = validatePassword(value);
-        
-        setFieldErrors(prev => ({ 
-            ...prev, 
-            [field]: result.valid ? '' : result.message 
+
+        setFieldErrors(prev => ({
+            ...prev,
+            [field]: result.valid ? '' : result.message
         }));
         return result.valid;
     };
@@ -48,7 +48,7 @@ const Register = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        
+
         // Final validation check for all fields
         const nameValid = runValidation('name', formData.name);
         const emailValid = runValidation('email', formData.email);

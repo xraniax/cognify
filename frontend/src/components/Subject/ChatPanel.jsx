@@ -69,11 +69,10 @@ const ChatPanel = ({
                                         <Bot className="w-4 h-4 text-indigo-500" />
                                     </div>
                                 )}
-                                <div className={`px-5 py-4 rounded-3xl shadow-xl leading-relaxed text-[13px] transition-all duration-300 ${
-                                    msg.role === 'user' 
-                                        ? 'bg-gradient-to-br from-indigo-600 to-purple-600 text-white rounded-br-none border border-indigo-400/20' 
-                                        : 'glass-panel text-gray-800 border-white/40 rounded-bl-none'
-                                }`}>
+                                <div className={`px-5 py-4 rounded-3xl shadow-xl leading-relaxed text-[13px] transition-all duration-300 ${msg.role === 'user'
+                                    ? 'bg-gradient-to-br from-indigo-600 to-purple-600 text-white rounded-br-none border border-indigo-400/20'
+                                    : 'glass-panel text-gray-800 border-white/40 rounded-bl-none'
+                                    }`}>
                                     <div className="whitespace-pre-wrap font-medium">{msg.content}</div>
                                     {msg.role === 'ai' && (
                                         <button

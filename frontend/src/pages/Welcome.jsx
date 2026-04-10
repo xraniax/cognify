@@ -21,7 +21,7 @@ const Welcome = () => {
                 <div className="absolute -bottom-32 left-1/2 -translate-x-1/2 w-96 h-96 bg-mint-200/40 rounded-full blur-3xl mix-blend-multiply opacity-50 animate-blob animation-delay-4000"></div>
 
                 <div className="relative z-10 max-w-4xl mx-auto space-y-8 flex flex-col items-center">
-                    <motion.div 
+                    <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         className="inline-flex items-center justify-center p-2 bg-purple-50 rounded-2xl border border-purple-100/50 mb-4 shadow-sm"
@@ -32,19 +32,19 @@ const Welcome = () => {
                         </div>
                     </motion.div>
 
-                    <motion.h1 
+                    <motion.h1
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.1 }}
                         className="text-6xl md:text-8xl font-black text-gray-900 tracking-tighter leading-[1.1]"
                     >
-                        Cultivate Your <br/>
+                        Cultivate Your <br />
                         <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-indigo-600 drop-shadow-sm">
                             Cognitive Garden
                         </span>
                     </motion.h1>
 
-                    <motion.p 
+                    <motion.p
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.2 }}
@@ -53,14 +53,14 @@ const Welcome = () => {
                         Transform scattered documents and lecture notes into active, intelligent study spaces. Experience retrieval-augmented tutoring tailored exactly to your curriculum.
                     </motion.p>
 
-                    <motion.div 
+                    <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.3 }}
                         className="flex flex-col sm:flex-row items-center gap-4 pt-8 w-full sm:w-auto"
                     >
-                        <Link 
-                            to="/dashboard" 
+                        <Link
+                            to="/dashboard"
                             className="btn-vibrant w-full sm:w-auto px-10 py-5 text-lg flex items-center justify-center gap-3 group relative overflow-hidden"
                         >
                             <span className="relative z-10 font-bold flex items-center gap-2">
@@ -68,18 +68,18 @@ const Welcome = () => {
                                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                             </span>
                         </Link>
-                        
+
                         {!user && (
                             <div className="flex items-center gap-4 w-full sm:w-auto justify-center">
-                                <Link 
-                                    to="/login" 
+                                <Link
+                                    to="/login"
                                     className="px-8 py-5 text-gray-500 hover:text-gray-900 font-bold text-lg hover:bg-gray-50 rounded-2xl transition-all"
                                 >
                                     Log In
                                 </Link>
                                 <span className="text-xs font-black text-gray-300 uppercase tracking-widest">or</span>
-                                <Link 
-                                    to="/dashboard" 
+                                <Link
+                                    to="/dashboard"
                                     className="text-sm font-bold text-indigo-500 hover:text-indigo-600 underline underline-offset-4 decoration-2"
                                 >
                                     Try without account

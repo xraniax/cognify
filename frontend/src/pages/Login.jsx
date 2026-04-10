@@ -39,10 +39,10 @@ const Login = () => {
         let result = { valid: true };
         if (field === 'email') result = validateEmail(value);
         if (field === 'password') result = validatePassword(value);
-        
-        setFieldErrors(prev => ({ 
-            ...prev, 
-            [field]: result.valid ? '' : result.message 
+
+        setFieldErrors(prev => ({
+            ...prev,
+            [field]: result.valid ? '' : result.message
         }));
         return result.valid;
     };
@@ -55,7 +55,7 @@ const Login = () => {
     const handleChange = (field, value) => {
         if (field === 'email') setEmail(value);
         if (field === 'password') setPassword(value);
-        
+
         if (touched[field]) {
             runValidation(field, value);
         }
@@ -63,7 +63,7 @@ const Login = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        
+
         // Final validation check for all fields
         const emailValid = runValidation('email', email);
         const passValid = runValidation('password', password);

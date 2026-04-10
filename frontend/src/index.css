@@ -10,6 +10,7 @@
 }
 
 @layer base {
+
   html,
   body,
   #root {
@@ -25,10 +26,23 @@
     @apply antialiased;
   }
 
-  h1 { font-size: 36px; font-weight: 700; }
-  h2 { font-size: 24px; font-weight: 600; }
-  p { font-size: 16px; }
-  small { font-size: 14px; }
+  h1 {
+    font-size: 36px;
+    font-weight: 700;
+  }
+
+  h2 {
+    font-size: 24px;
+    font-weight: 600;
+  }
+
+  p {
+    font-size: 16px;
+  }
+
+  small {
+    font-size: 14px;
+  }
 }
 
 @layer components {
@@ -37,10 +51,12 @@
     color: var(--text-dark);
     @apply font-semibold py-3 px-6 rounded-lg transition-all duration-200 shadow-sm border border-black/5 min-h-[44px] flex items-center justify-center;
   }
+
   .btn-primary:hover {
     @apply shadow-md transform scale-[1.02];
     filter: brightness(0.95);
   }
+
   .btn-primary:active {
     @apply scale-[0.98];
   }
@@ -48,6 +64,7 @@
   .btn-secondary {
     @apply bg-white/50 text-gray-700 font-semibold py-3 px-6 rounded-lg transition-all duration-200 border border-gray-200 min-h-[44px] flex items-center justify-center;
   }
+
   .btn-secondary:hover {
     @apply bg-white shadow-sm;
   }
@@ -57,6 +74,7 @@
     color: var(--text-dark);
     @apply font-semibold py-3 px-6 rounded-lg transition-all duration-200 shadow-sm min-h-[44px] flex items-center justify-center;
   }
+
   .btn-mint:hover {
     @apply shadow-md scale-[1.02];
     filter: brightness(0.98);
@@ -65,6 +83,7 @@
   .btn-vibrant {
     @apply bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-black py-4 px-8 rounded-2xl transition-all duration-300 shadow-xl shadow-purple-200/50 border border-purple-400/20 active:scale-95 min-h-[52px];
   }
+
   .btn-vibrant:hover {
     @apply shadow-purple-300 scale-[1.02] -translate-y-0.5;
     filter: brightness(1.1);
@@ -73,6 +92,7 @@
   .input-field {
     @apply bg-white/80 border border-gray-200 rounded-lg px-4 py-3 w-full transition-all duration-200 outline-none min-h-[44px];
   }
+
   .input-field:focus {
     @apply border-purple-300 ring-4 ring-purple-100;
     background-color: white;
@@ -81,6 +101,7 @@
   .card-minimal {
     @apply bg-white border border-gray-100 rounded-2xl p-6 transition-all duration-300 shadow-sm;
   }
+
   .card-minimal:hover {
     @apply shadow-xl transform scale-[1.01] border-purple-100;
   }
@@ -130,7 +151,7 @@
   --glass-border: rgba(255, 255, 255, 0.3);
   --glass-blur: blur(12px);
   --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.08);
-  
+
   --transition-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
   --transition-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -152,14 +173,35 @@
 
 /* ─── Generation Micro-animations ────────────────────────── */
 @keyframes neural-pulse {
-  0% { transform: scale(1); filter: brightness(1) blur(0px); opacity: 0.8; }
-  50% { transform: scale(1.02); filter: brightness(1.2) blur(1px); opacity: 1; }
-  100% { transform: scale(1); filter: brightness(1) blur(0px); opacity: 0.8; }
+  0% {
+    transform: scale(1);
+    filter: brightness(1) blur(0px);
+    opacity: 0.8;
+  }
+
+  50% {
+    transform: scale(1.02);
+    filter: brightness(1.2) blur(1px);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(1);
+    filter: brightness(1) blur(0px);
+    opacity: 0.8;
+  }
 }
 
 @keyframes neural-glow {
-  0%, 100% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.1); }
-  50% { box-shadow: 0 0 40px rgba(168, 85, 247, 0.3); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.1);
+  }
+
+  50% {
+    box-shadow: 0 0 40px rgba(168, 85, 247, 0.3);
+  }
 }
 
 .animate-neural {
@@ -195,8 +237,15 @@
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .anim-pulse {
@@ -214,8 +263,15 @@
 }
 
 @keyframes skeletonPulse {
-  0%, 100% { background-color: rgba(229, 231, 235, 0.4); }
-  50% { background-color: rgba(229, 231, 235, 0.8); }
+
+  0%,
+  100% {
+    background-color: rgba(229, 231, 235, 0.4);
+  }
+
+  50% {
+    background-color: rgba(229, 231, 235, 0.8);
+  }
 }
 
 .anim-skeleton {
@@ -285,6 +341,7 @@
     transform: translateY(1rem);
     opacity: 0;
   }
+
   to {
     transform: translateY(0);
     opacity: 1;
@@ -705,4 +762,70 @@
 .custom-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: rgba(99, 102, 241, 0.1) transparent;
+}
+/* ─── Targeted PDF Export Styles ─────────────────────────── */
+@media print {
+  /* Hide everything by default */
+  html, body, #root, .workspace-container, aside, nav, header, 
+  .sidebar, .chat-panel, .materials-controls, .btn-download-pdf,
+  .back-link, .modal-overlay, .neural-pulse, .stats-bar {
+    visibility: hidden !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Force display of the targeted printable container */
+  .printable-summary {
+    visibility: visible !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 2.5rem !important;
+    background: white !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  /* Reset decorative elements for professional PDF look */
+  .printable-summary * {
+    visibility: visible !important;
+    box-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+    overflow: visible !important;
+  }
+
+  /* Ensure background colors/gradients are preserved if possible */
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background: white !important;
+  }
+
+  /* Style headers and content for clean A4 printing */
+  .printable-summary h1 {
+    font-size: 32pt !important;
+    color: #111827 !important;
+    margin-bottom: 24pt !important;
+  }
+
+  .printable-summary h2 {
+    font-size: 24pt !important;
+    margin-top: 24pt !important;
+  }
+
+  .printable-summary p {
+    font-size: 12pt !important;
+    line-height: 1.6 !important;
+  }
+  
+  @page {
+    margin: 1.5cm;
+    size: auto;
+  }
 }

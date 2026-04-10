@@ -116,7 +116,7 @@ class MaterialController {
     static streamJob = asyncHandler(async (req, res) => {
         const { id } = req.params;
         const material = await MaterialService.checkJobStatus(req.user.id, id);
-        
+
         if (!material || !material.job_id) {
             res.status(404);
             throw new Error('Streaming not available for this material');

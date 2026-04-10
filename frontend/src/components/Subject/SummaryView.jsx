@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { BookOpen, Clock, Hash, Lightbulb, ChevronRight, AlignLeft } from 'lucide-react';
+import { BookOpen, Clock, Hash, Lightbulb, ChevronRight, AlignLeft, FileDown } from 'lucide-react';
 
 // ─── Inline Markdown Parser ───────────────────────────────────────────────────
 // Converts **bold**, *italic*, `code` within a text string into React elements.
@@ -209,6 +209,10 @@ const SummaryView = ({ summaryData, title, isExpanded = false }) => {
         return { wordCount: words, readingMins: mins, sectionCount: sections };
     }, [rawText, blocks]);
 
+    const handleDownload = () => {
+        window.print();
+    };
+
     if (!rawText.trim()) {
         return (
             <div className="flex-1 h-full flex items-center justify-center text-gray-300">
@@ -224,10 +228,10 @@ const SummaryView = ({ summaryData, title, isExpanded = false }) => {
 
     return (
         <div className="flex-1 h-full overflow-y-auto bg-transparent transition-all duration-500">
-            <div className={`${isExpanded ? 'max-w-5xl px-12 py-16' : 'max-w-4xl px-8 py-10'} mx-auto space-y-0 animate-in fade-in duration-500 transition-all`}>
+            <div className={`${isExpanded ? 'max-w-5xl px-12 py-16' : 'max-w-4xl px-8 py-10'} mx-auto space-y-0 animate-in fade-in duration-500 transition-all printable-summary`}>
 
                 {/* ── Header Card ── */}
-                <div className={`relative rounded-[2.5rem] overflow-hidden bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-600 ${isExpanded ? 'p-12 mb-10' : 'p-8 mb-6'} shadow-2xl shadow-indigo-200/40 transition-all duration-500`}>
+                <div className={`relative rounded-[2.5rem] overflow-hidden bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-600 ${isExpanded ? 'p-12 mb-10' : 'p-8 mb-6'} shadow-2xl shadow-indigo-200/40 transition-all duration-500 header-card`}>
                     {/* decorative blobs */}
                     <div className="absolute top-0 right-0 w-48 h-48 bg-white/5 rounded-full -translate-y-12 translate-x-12 pointer-events-none" />
                     <div className="absolute bottom-0 left-0 w-32 h-32 bg-white/5 rounded-full translate-y-8 -translate-x-8 pointer-events-none" />
@@ -242,28 +246,38 @@ const SummaryView = ({ summaryData, title, isExpanded = false }) => {
                         <h1 className={`${isExpanded ? 'text-3xl md:text-5xl' : 'text-xl md:text-2xl'} font-black text-white leading-tight tracking-tight mb-6 transition-all duration-500`}>
                             {displayTitle}
                         </h1>
-                        {/* Stats */}
-                        <div className="flex items-center gap-4 flex-wrap">
-                            <div className="flex items-center gap-1.5 text-xs text-white/70">
-                                <AlignLeft className="w-3 h-3" />
-                                <span><strong className="text-white font-bold">{stats.wordCount.toLocaleString()}</strong> words</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-white/70">
-                                <Clock className="w-3 h-3" />
-                                <span><strong className="text-white font-bold">{stats.readingMins}</strong> min read</span>
-                            </div>
-                            {stats.sectionCount > 0 && (
-                                <div className="flex items-center gap-1.5 text-xs text-white/70">
-                                    <Hash className="w-3 h-3" />
-                                    <span><strong className="text-white font-bold">{stats.sectionCount}</strong> sections</span>
+                        {/* Stats & Actions */}
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                            <div className="flex items-center gap-4 flex-wrap stats-bar text-white/70">
+                                <div className="flex items-center gap-1.5 text-xs">
+                                    <AlignLeft className="w-3 h-3" />
+                                    <span><strong className="text-white font-bold">{stats.wordCount.toLocaleString()}</strong> words</span>
                                 </div>
-                            )}
+                                <div className="flex items-center gap-1.5 text-xs">
+                                    <Clock className="w-3 h-3" />
+                                    <span><strong className="text-white font-bold">{stats.readingMins}</strong> min read</span>
+                                </div>
+                                {stats.sectionCount > 0 && (
+                                    <div className="flex items-center gap-1.5 text-xs">
+                                        <Hash className="w-3 h-3" />
+                                        <span><strong className="text-white font-bold">{stats.sectionCount}</strong> sections</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <button
+                                onClick={handleDownload}
+                                className="group btn-download-pdf flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white text-white hover:text-indigo-600 rounded-xl border border-white/20 hover:border-white transition-all duration-300 text-xs font-bold backdrop-blur-md active:scale-95"
+                            >
+                                <FileDown className="w-3.5 h-3.5 group-hover:bounce transition-transform duration-300" />
+                                Download PDF
+                            </button>
                         </div>
                     </div>
                 </div>
 
                 {/* ── Content ── */}
-                <div className={`${isExpanded ? 'px-12 py-10' : 'px-8 py-8'} bg-white border border-gray-100 rounded-[2.5rem] shadow-2xl shadow-indigo-50/50 transition-all duration-500`}>
+                <div className={`${isExpanded ? 'px-12 py-10' : 'px-8 py-8'} bg-white border border-gray-100 rounded-[2.5rem] shadow-2xl shadow-indigo-50/50 transition-all duration-500 content-card`}>
                     {contentBlocks.map((block, idx) => (
                         <BlockRenderer key={idx} block={block} idx={idx} isExpanded={isExpanded} />
                     ))}

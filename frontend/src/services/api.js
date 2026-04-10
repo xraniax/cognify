@@ -73,9 +73,9 @@ export const materialService = {
     streamMaterial: (id, onChunk, onComplete, onError) => {
         const token = localStorage.getItem('token');
         const url = `${API_URL}/materials/${id}/stream`;
-        
+
         const controller = new AbortController();
-        
+
         fetch(url, {
             headers: { 'Authorization': `Bearer ${token}` },
             signal: controller.signal
@@ -89,15 +89,15 @@ export const materialService = {
                         onComplete();
                         return;
                     }
-                    
+
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
-                    
+
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             const jsonStr = line.replace('data: ', '').trim();
                             if (!jsonStr) continue;
-                            
+
                             try {
                                 const data = JSON.parse(jsonStr);
                                 if (data.chunk) onChunk(data.chunk);
@@ -145,23 +145,23 @@ export const subjectService = {
 
 export const adminService = {
     getUsers: () => api.get('/admin/users'),
-    updateUserStatus: (userId, status, reason = '') => 
+    updateUserStatus: (userId, status, reason = '') =>
         api.patch(`/admin/users/${userId}/status`, { status, reason }),
-    updateUserRole: (userId, role) => 
+    updateUserRole: (userId, role) =>
         api.patch(`/admin/users/${userId}/role`, { role }),
     updateUserStorageLimit: (userId, limitBytes) =>
         api.patch(`/admin/users/${userId}/storage-limit`, { limitBytes }),
     deleteUser: (id) => api.delete(`/admin/users/${id}`),
-    
+
     // File Management
     getFiles: (params) => api.get('/admin/files', { params }),
     deleteFile: (id) => api.delete(`/admin/files/${id}`),
-    
+
     // Settings Management
     getSettings: () => api.get('/admin/settings'),
     updateSettings: (settings) => api.patch('/admin/settings', settings),
     cleanupStorage: () => api.post('/admin/storage/cleanup'),
-    
+
     getLogs: () => api.get('/admin/logs')
 };
 

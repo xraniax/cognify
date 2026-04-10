@@ -10,7 +10,7 @@ const LoadingOverlay = ({ visible, message = 'Loading...', blocking = true }) =>
                     initial={{ opacity: 0, y: blocking ? 0 : -20 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: blocking ? 0 : -20 }}
-                    className={blocking 
+                    className={blocking
                         ? "fixed inset-0 z-[9999] flex items-center justify-center bg-white/60 backdrop-blur-md"
                         : "fixed top-4 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none"
                     }
@@ -22,8 +22,8 @@ const LoadingOverlay = ({ visible, message = 'Loading...', blocking = true }) =>
                                 <Loader2 className="w-16 h-16 text-indigo-600 animate-spin absolute inset-0" />
                             </div>
                             <div className="flex flex-col items-center gap-2 text-center">
-                                 <h3 className="text-xl font-black text-gray-900 tracking-tight">{message}</h3>
-                                 <p className="text-sm font-medium text-gray-400">Please wait while we handle this...</p>
+                                <h3 className="text-xl font-black text-gray-900 tracking-tight">{message}</h3>
+                                <p className="text-sm font-medium text-gray-400">Please wait while we handle this...</p>
                             </div>
                         </div>
                     ) : (

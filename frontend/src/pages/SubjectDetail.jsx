@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
 import { materialService, examService, BASE_URL } from '../services/api';
 import { useSpeech } from '../hooks/useSpeech';
-import { 
-    PanelLeft, 
-    PanelRight, 
-    Upload, 
-    BookOpen, 
-    Lock, 
-    Sparkles, 
+import {
+    PanelLeft,
+    PanelRight,
+    Upload,
+    BookOpen,
+    Lock,
+    Sparkles,
     XCircle,
     ChevronRight,
     FileText,
@@ -69,7 +69,7 @@ class MaterialErrorBoundary extends React.Component {
                     </div>
                     <h3 className="text-lg font-bold text-rose-700 mb-2">Failed to render material</h3>
                     <p className="text-sm text-rose-600 mb-4">There was an error processing this {this.props.type || 'content'}.</p>
-                    <button 
+                    <button
                         onClick={() => this.setState({ hasError: false, error: null })}
                         className="px-4 py-2 bg-rose-500 text-white rounded-lg font-bold hover:bg-rose-600 transition-colors"
                     >
@@ -93,7 +93,7 @@ const SubjectDetail = () => {
     const location = useLocation();
     const normalizedId = String(id);
     const redirectedMaterialId = location.state?.openMaterialId;
-    
+
     const subjects = useSubjectStore((state) => state.data.subjects);
     const fetchSubjects = useSubjectStore((state) => state.actions.fetchSubjects);
     const materials = useMaterialStore((state) => state.data.materials);
@@ -109,7 +109,7 @@ const SubjectDetail = () => {
     const isAnyBlocking = materialsLoadingState?.blocking || subjectsLoadingState?.blocking;
 
     const subject = subjects.find((s) => String(s.id) === normalizedId);
-    
+
     // Derived state for document list
     const uploads = useMemo(() => {
         return (materials || []).filter((m) => {
@@ -133,9 +133,9 @@ const SubjectDetail = () => {
     const [isThinking, setIsThinking] = useState(false);
     const [chatCollapsed, setChatCollapsed] = useState(false);
     const [filePanelCollapsed, setFilePanelCollapsed] = useState(false);
-    
+
     const jobProgress = useMaterialStore((state) => state.data.jobProgress);
-    
+
     // Generation state
     const [genError, setGenError] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
@@ -167,6 +167,12 @@ const SubjectDetail = () => {
 
     const chatEndRef = useRef(null);
     const { speak, listen, isListening, cancel } = useSpeech();
+    const currentSubjectIdRef = useRef(normalizedId);
+
+    // Sync ref with current normalizedId for async guards
+    useEffect(() => {
+        currentSubjectIdRef.current = normalizedId;
+    }, [normalizedId]);
 
     // Persistence Sync
     useEffect(() => {
@@ -188,49 +194,86 @@ const SubjectDetail = () => {
         }
     }, [activeTabId, savedActiveTabKey]);
 
+    // --- Workspace Isolation & Subject Switch Handling ---
+    useEffect(() => {
+        // Reset and re-hydrate state when switching subjects
+        const savedTabs = localStorage.getItem(savedTabsKey);
+        const baseTab = { id: 'generator', title: 'Study Intelligence', type: 'generator', pinned: true };
+        
+        if (savedTabs) {
+            try {
+                const parsed = JSON.parse(savedTabs);
+                const otherTabs = parsed.filter(t => t.id !== 'generator');
+                setTabs([baseTab, ...otherTabs]);
+            } catch {
+                setTabs([baseTab]);
+            }
+        } else {
+            setTabs([baseTab]);
+        }
+
+        const savedActive = localStorage.getItem(savedActiveTabKey);
+        setActiveTabId(savedActive || 'generator');
+
+        // Clear transient workspace data
+        setChatMessages([]);
+        setSelectedUploads([]);
+        setGenResult('');
+        setGenError('');
+        setChatError('');
+        
+    }, [id, savedTabsKey, savedActiveTabKey]);
+
     useEffect(() => {
         const init = async () => {
             try {
                 await Promise.all([fetchSubjects(), fetchMaterials()]);
                 setWorkspacePanel('content');
-                
+
                 // Handle redirected material selection
                 if (redirectedMaterialId) {
                     const mid = redirectedMaterialId;
                     const currentMaterials = useMaterialStore.getState().data.materials;
                     const redirectedMaterial = currentMaterials.find(m => m.id === mid);
-                    
-                    if (redirectedMaterial && redirectedMaterial.type !== 'upload') {
-                        // Open generated insight in a tab
-                        setTabs(prev => {
-                            if (!prev.find(t => String(t.id) === String(mid))) {
-                                return [...prev, {
-                                    id: mid,
-                                    title: redirectedMaterial.title || redirectedMaterial.type,
-                                    type: redirectedMaterial.type,
-                                    material: redirectedMaterial,
-                                    pinned: false
-                                }];
+
+                    if (redirectedMaterial) {
+                        const matSubjectId = redirectedMaterial.subject_id || (redirectedMaterial.subject && redirectedMaterial.subject.id);
+                        
+                        // Strict Subject Affinity Check + Zombie Guard
+                        if (String(matSubjectId) === String(normalizedId) && String(matSubjectId) === String(currentSubjectIdRef.current)) {
+                            if (redirectedMaterial.type !== 'upload') {
+                                // Open generated insight in a tab
+                                setTabs(prev => {
+                                    if (!prev.find(t => String(t.id) === String(mid))) {
+                                        return [...prev, {
+                                            id: mid,
+                                            title: redirectedMaterial.title || redirectedMaterial.type,
+                                            type: redirectedMaterial.type,
+                                            material: redirectedMaterial,
+                                            pinned: false
+                                        }];
+                                    }
+                                    return prev;
+                                });
+                                setActiveTabId(mid);
+                            } else {
+                                // Open source document in a tab
+                                setTabs(prev => {
+                                    if (!prev.find(t => String(t.id) === String(mid))) {
+                                        return [...prev, {
+                                            id: mid,
+                                            title: redirectedMaterial.title,
+                                            type: 'upload',
+                                            material: redirectedMaterial,
+                                            pinned: false
+                                        }];
+                                    }
+                                    return prev;
+                                });
+                                setActiveTabId(mid);
+                                setSelectedUploads([mid]);
                             }
-                            return prev;
-                        });
-                        setActiveTabId(mid);
-                    } else if (redirectedMaterial && redirectedMaterial.type === 'upload') {
-                        // Open source document in a tab
-                        setTabs(prev => {
-                            if (!prev.find(t => String(t.id) === String(mid))) {
-                                return [...prev, {
-                                    id: mid,
-                                    title: redirectedMaterial.title,
-                                    type: 'upload',
-                                    material: redirectedMaterial,
-                                    pinned: false
-                                }];
-                            }
-                            return prev;
-                        });
-                        setActiveTabId(mid);
-                        setSelectedUploads([mid]);
+                        }
                     }
                 }
             } catch {
@@ -246,25 +289,32 @@ const SubjectDetail = () => {
 
     useEffect(() => {
         const handleOpenMaterial = (e) => {
-            const { id } = e.detail;
+            const { id: matId } = e.detail;
             const currentMaterials = useMaterialStore.getState().data.materials;
-            const material = currentMaterials.find(m => String(m.id) === String(id));
-            
+            const material = currentMaterials.find(m => String(m.id) === String(matId));
+
             if (material) {
-                setTabs(prev => {
-                    if (!prev.find(t => String(t.id) === String(id))) {
-                        return [...prev, {
-                            id,
-                            title: material.title || material.type,
-                            type: material.type,
-                            material,
-                            pinned: false
-                        }];
-                    }
-                    return prev;
-                });
-                setActiveTabId(id);
-                setWorkspacePanel('content');
+                const matSubjectId = material.subject_id || (material.subject && material.subject.id);
+                
+                // Strict Subject Affinity Check + Zombie Guard
+                if (String(matSubjectId) === String(normalizedId) && String(matSubjectId) === String(currentSubjectIdRef.current)) {
+                    setTabs(prev => {
+                        if (!prev.find(t => String(t.id) === String(matId))) {
+                            return [...prev, {
+                                id: matId,
+                                title: material.title || material.type,
+                                type: material.type,
+                                material,
+                                pinned: false
+                            }];
+                        }
+                        return prev;
+                    });
+                    setActiveTabId(matId);
+                    setWorkspacePanel('content');
+                } else {
+                    console.debug(`[SubjectDetail] Cross-subject open blocked for material ${matId}`);
+                }
             }
         };
 
@@ -283,39 +333,44 @@ const SubjectDetail = () => {
         if (jobProgress.result) {
             const rawResult = jobProgress.result;
             const resultStr = typeof rawResult === 'object' ? JSON.stringify(rawResult, null, 2) : String(rawResult);
-            
+
             if (resultStr.includes('cyclic') || resultStr.includes('circular')) {
                 setGenError('Internal Technical Error: A circular data structure was detected in the AI output.');
                 setIsGenerating(false);
             } else {
                 setGenResult(resultStr);
                 setIsGenerating(false);
-                
+
                 // After success, wait briefly, then automatically open the new material in a tab
                 // Let fetchMaterials catch up so the material is available in store
                 setTimeout(async () => {
                     await fetchMaterials();
-                    
+
                     // Use the specific material ID we tracked during generation
                     const currentMaterials = useMaterialStore.getState().data.materials;
-                    const newMatId = jobProgress.materialId; 
+                    const newMatId = jobProgress.materialId;
                     const newMat = currentMaterials.find(m => String(m.id) === String(newMatId));
-                    
+
                     if (newMat) {
-                        setTabs(prev => {
-                            if (!prev.find(t => String(t.id) === String(newMat.id))) {
-                                return [...prev, {
-                                    id: newMat.id,
-                                    title: newMat.title || newMat.type,
-                                    type: newMat.type,
-                                    material: newMat,
-                                    pinned: false
-                                }];
-                            }
-                            return prev;
-                        });
-                        setActiveTabId(newMat.id);
-                        setGenResult('');
+                        const matSubjectId = newMat.subject_id || (newMat.subject && newMat.subject.id);
+                        
+                        // Strict Subject Affinity Check + Zombie Guard
+                        if (String(matSubjectId) === String(normalizedId) && String(matSubjectId) === String(currentSubjectIdRef.current)) {
+                            setTabs(prev => {
+                                if (!prev.find(t => String(t.id) === String(newMat.id))) {
+                                    return [...prev, {
+                                        id: newMat.id,
+                                        title: newMat.title || newMat.type,
+                                        type: newMat.type,
+                                        material: newMat,
+                                        pinned: false
+                                    }];
+                                }
+                                return prev;
+                            });
+                            setActiveTabId(newMat.id);
+                            setGenResult('');
+                        }
                     }
                 }, 1500);
             }
@@ -385,7 +440,7 @@ const SubjectDetail = () => {
 
     const handleGenerate = async (idOrOptionsOrEvent = null) => {
         setGenError('');
-        
+
         let singleId = null;
         let genOptions = undefined;
 
@@ -407,11 +462,11 @@ const SubjectDetail = () => {
         }
         setIsGenerating(true);
         setGenResult('');
-        
+
         if (genType === 'flashcards' && genOptions?.count) {
             setFlashcardsExpectedCount(genOptions.count);
         }
-        
+
         try {
             if (genType === 'mock_exam') {
                 const diffMap = { Default: 'mixed', Hard: 'hard', Expert: 'hard' };
@@ -462,7 +517,7 @@ const SubjectDetail = () => {
 
             console.debug('[SubjectDetail] Triggering generation for sanitized targets:', targets, genType, id, genOptions);
             const res = await materialService.generateCombined(targets, genType, id, genOptions);
-            
+
             if (!res?.data?.data) {
                 throw new Error('Malformed response from server: Missing data field.');
             }
@@ -472,8 +527,8 @@ const SubjectDetail = () => {
 
             if (material_id) {
                 const safeMid = String(material_id);
-                fetchMaterials(); 
-                
+                fetchMaterials();
+
                 // Set the active tab to generator immediately
                 setActiveTabId('generator');
 
@@ -488,30 +543,39 @@ const SubjectDetail = () => {
                     () => {
                         console.info(`[SubjectDetail] Stream completed for ${material_id}`);
                         setIsGenerating(false);
-                        
+
                         // Force a status sync with the backend to ensure Celery results are persisted to DB
                         materialService.sync(material_id).then(() => {
+                            // Check if we are still on the same subject before proceeding
+                            if (String(currentSubjectIdRef.current) !== String(normalizedId)) {
+                                console.debug('[SubjectDetail] Stream sync completed but subject changed. Aborting tab addition.');
+                                return;
+                            }
+
                             // Now fetch the updated materials list
                             fetchMaterials().then(() => {
                                 const currentMaterials = useMaterialStore.getState().data.materials;
                                 const newMat = currentMaterials.find(m => String(m.id) === String(material_id));
-                                
+
                                 if (newMat) {
-                                    setTabs(prev => {
-                                        if (!prev.find(t => String(t.id) === String(newMat.id))) {
-                                            return [...prev, {
-                                                id: newMat.id,
-                                                title: newMat.title || newMat.type,
-                                                type: newMat.type,
-                                                material: newMat,
-                                                pinned: false
-                                            }];
-                                        }
-                                        return prev;
-                                    });
-                                    setActiveTabId(newMat.id);
-                                    // Clear the generation preview once opened in its own tab
-                                    setGenResult('');
+                                    const matSubId = newMat.subject_id || (newMat.subject && newMat.subject.id);
+                                    if (String(matSubId) === String(currentSubjectIdRef.current)) {
+                                        setTabs(prev => {
+                                            if (!prev.find(t => String(t.id) === String(newMat.id))) {
+                                                return [...prev, {
+                                                    id: newMat.id,
+                                                    title: newMat.title || newMat.type,
+                                                    type: newMat.type,
+                                                    material: newMat,
+                                                    pinned: false
+                                                }];
+                                            }
+                                            return prev;
+                                        });
+                                        setActiveTabId(newMat.id);
+                                        // Clear the generation preview once opened in its own tab
+                                        setGenResult('');
+                                    }
                                 }
                             });
                         }).catch(err => {
@@ -532,12 +596,12 @@ const SubjectDetail = () => {
             }
         } catch (err) {
             console.error('[SubjectDetail] handleGenerate Error:', err);
-            
+
             let displayError = err.message || 'Generation failed. Please try again.';
             if (displayError.toLowerCase().includes('cyclic') || displayError.toLowerCase().includes('circular')) {
                 displayError = 'Internal Technical Error: A circular reference was detected. Please refresh the page and try again.';
             }
-            
+
             setGenError(displayError);
             setIsGenerating(false);
         }
@@ -633,7 +697,7 @@ const SubjectDetail = () => {
 
         // Ensure we have the material object (fallback to store if missing from persisted tab)
         const material = tab.material || (materials || []).find(m => String(m.id) === String(tabId));
-        
+
         if (!material) {
             return (
                 <div className="flex-1 flex items-center justify-center p-12">
@@ -645,14 +709,14 @@ const SubjectDetail = () => {
         if (tab.type === 'upload') {
             const hasFile = !!tab.material?.file_path;
             const hasContent = !!tab.material?.content;
-            
+
             if (hasFile) {
                 const fileUrl = `${BASE_URL}/${tab.material.file_path}`;
                 if (tab.material.file_path.toLowerCase().endsWith('.pdf')) {
                     return (
                         <div className="flex-1 h-full w-full bg-gray-100 flex flex-col">
-                            <iframe 
-                                src={`${fileUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=1`} 
+                            <iframe
+                                src={`${fileUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=1`}
                                 className="w-full flex-1 border-none"
                                 title={tab.title}
                                 sandbox="allow-scripts allow-same-origin"
@@ -700,7 +764,7 @@ const SubjectDetail = () => {
             }
         }
         if (parsedContent?.result) parsedContent = parsedContent.result;
-        
+
         // Handle specialized rendering for structured content
         if (tab.type === 'quiz' || material.type === 'quiz') {
             return (
@@ -773,8 +837,8 @@ const SubjectDetail = () => {
             {/* Page Header - Compact Optimization */}
             <div className="px-6 md:px-8 py-2 md:py-3 border-b border-purple-100/50 bg-white/80 backdrop-blur-md flex items-center justify-between sticky top-0 z-20">
                 <div className="flex items-center gap-4 md:gap-6">
-                    <Link 
-                        to="/dashboard" 
+                    <Link
+                        to="/dashboard"
                         className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 transition-all group"
                         title="Back to Garden"
                     >
@@ -812,8 +876,8 @@ const SubjectDetail = () => {
                             <PanelRight className="w-4 h-4" />
                         </button>
                     </div>
-                    
-                    <button 
+
+                    <button
                         onClick={() => requireAuth(() => setShowUploadModal(true))}
                         className="btn-primary py-2 px-4 md:px-6 text-xs md:text-sm whitespace-nowrap hidden md:block"
                     >
@@ -840,10 +904,10 @@ const SubjectDetail = () => {
                     />
                 }
                 middlePanel={
-                    <WorkspaceTabs 
-                        tabs={enhancedTabs} 
-                        setTabs={setTabs} 
-                        activeTabId={activeTabId} 
+                    <WorkspaceTabs
+                        tabs={enhancedTabs}
+                        setTabs={setTabs}
+                        activeTabId={activeTabId}
                         setActiveTabId={setActiveTabId}
                         renderTabContent={renderTabContent}
                     />
@@ -868,8 +932,8 @@ const SubjectDetail = () => {
             />
 
             <MobilePanelSwitcher />
-            <FloatingActionButton 
-                onClick={() => requireAuth(() => setShowUploadModal(true))} 
+            <FloatingActionButton
+                onClick={() => requireAuth(() => setShowUploadModal(true))}
                 icon={(isPublic && !user) ? Lock : Upload}
                 label="Grow Space"
             />

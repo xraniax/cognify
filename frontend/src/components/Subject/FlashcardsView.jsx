@@ -879,7 +879,7 @@ const FlashcardsView = ({ flashcardsData, isExpanded = false }) => {
                             mass: 0.9
                         }}
                         style={{ transformStyle: "preserve-3d" }}
-                        className={`relative w-full ${isExpanded ? 'min-h-[400px]' : 'min-h-[300px]'} transition-all duration-300`}
+                        className={`relative w-full ${isExpanded ? 'min-h-[580px]' : 'min-h-[480px]'} transition-all duration-300`}
                     >
                         {/* Front Side */}
                         <div
@@ -896,28 +896,33 @@ const FlashcardsView = ({ flashcardsData, isExpanded = false }) => {
                                 <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-500/5 rounded-bl-[10rem] pointer-events-none" />
                                 <div className="absolute inset-0 bg-white/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none mix-blend-overlay" />
                                 
+                                {/* Header HUD */}
+                                <div className="absolute top-0 left-0 right-0 pt-8 pb-12 flex flex-col items-center z-20 pointer-events-none bg-gradient-to-b from-white via-white/90 to-transparent">
+                                    <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300 shadow-sm flex-shrink-0 pointer-events-auto">
+                                        <BrainCircuit className="w-5 h-5 text-indigo-500" />
+                                    </div>
+                                    <span className="inline-block text-[9px] font-black uppercase tracking-widest text-indigo-500 bg-indigo-50/80 px-3 py-1 rounded-full border border-indigo-100/50 flex-shrink-0 pointer-events-auto">Question</span>
+                                </div>
+
                                 <div className="absolute inset-0 overflow-y-auto custom-scrollbar">
-                                    <div className="min-h-full w-full flex flex-col items-center text-center px-10 pt-16 pb-28 relative z-10">
-                                        <div className="my-auto w-full flex flex-col items-center">
-                                            <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 shadow-sm flex-shrink-0">
-                                                <BrainCircuit className="w-6 h-6 text-indigo-500" />
-                                            </div>
-                                            <span className="inline-block text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-8 bg-indigo-50/80 px-4 py-1.5 rounded-full border border-indigo-100/50 flex-shrink-0">Question</span>
-                                            <h3 className={cn(
-                                                "font-black text-gray-900 leading-tight tracking-tight px-4 transition-all duration-300",
-                                                isExpanded ? 'text-4xl' : 'text-2xl md:text-3xl',
-                                                card?.question?.length > 100 && (isExpanded ? 'text-2xl' : 'text-xl'),
-                                                card?.question?.length > 200 && (isExpanded ? 'text-xl' : 'text-lg')
-                                            )}>
-                                                {card?.question}
-                                            </h3>
-                                            <div className="mt-14 flex items-center justify-center gap-2.5 px-6 py-2.5 bg-gray-50/50 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-gray-400 group-hover:text-indigo-600 group-hover:bg-indigo-50 transition-all border border-transparent group-hover:border-indigo-100 flex-shrink-0">
-                                                <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
-                                                <span>Press Space or Click to Flip</span>
-                                            </div>
-                                            {/* Extra safe space for rounded corners */}
-                                            <div className="h-4 flex-shrink-0" />
-                                        </div>
+                                    <div className="min-h-full w-full flex flex-col items-center justify-center text-center px-10 pt-28 pb-32 relative z-10">
+                                        <h3 className={cn(
+                                            "font-black text-gray-900 leading-tight tracking-tight px-4 transition-all duration-300",
+                                            isExpanded ? 'text-4xl' : 'text-2xl md:text-3xl',
+                                            card?.question?.length > 60 && (isExpanded ? 'text-3xl' : 'text-2xl md:text-2xl'),
+                                            card?.question?.length > 120 && (isExpanded ? 'text-2xl' : 'text-xl md:text-xl'),
+                                            card?.question?.length > 200 && (isExpanded ? 'text-xl' : 'text-lg')
+                                        )}>
+                                            {card?.question}
+                                        </h3>
+                                    </div>
+                                </div>
+
+                                {/* Footer HUD */}
+                                <div className="absolute bottom-0 left-0 right-0 pb-10 pt-16 flex justify-center z-20 pointer-events-none bg-gradient-to-t from-white via-white/90 to-transparent">
+                                    <div className="flex items-center justify-center gap-2.5 px-6 py-2.5 bg-gray-50/50 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-gray-400 group-hover:text-indigo-600 group-hover:bg-indigo-50 transition-all border border-transparent group-hover:border-indigo-100 pointer-events-auto shadow-sm backdrop-blur-sm">
+                                        <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
+                                        <span>Press Space or Click to Flip</span>
                                     </div>
                                 </div>
                             </div>
@@ -937,27 +942,33 @@ const FlashcardsView = ({ flashcardsData, isExpanded = false }) => {
                                 <div className="absolute inset-0 bg-gradient-to-br from-emerald-50/40 via-white to-teal-50/20 pointer-events-none" />
                                 <div className="absolute bottom-0 left-0 w-48 h-48 bg-emerald-500/5 rounded-tr-[10rem] pointer-events-none" />
                                 
-                                {/* Scrollable Content Wrapper */}
+                                {/* Header HUD */}
+                                <div className="absolute top-0 left-0 right-0 pt-8 pb-12 flex flex-col items-center z-20 pointer-events-none bg-gradient-to-b from-white via-white/90 to-transparent">
+                                    <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300 shadow-sm flex-shrink-0 pointer-events-auto">
+                                        <Sparkles className="w-5 h-5 text-emerald-500" />
+                                    </div>
+                                    <span className="inline-block text-[9px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50/80 px-3 py-1 rounded-full border border-emerald-100/50 flex-shrink-0 pointer-events-auto">Answer</span>
+                                </div>
+
                                 <div className="absolute inset-0 overflow-y-auto custom-scrollbar">
-                                    <div className="min-h-full w-full flex flex-col items-center text-center px-10 pt-16 pb-28 relative z-10">
-                                        <div className="my-auto w-full flex flex-col items-center">
-                                            <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 shadow-sm flex-shrink-0">
-                                                <Sparkles className="w-6 h-6 text-emerald-500" />
-                                            </div>
-                                            <span className="inline-block text-[10px] font-black uppercase tracking-widest text-emerald-600 mb-8 bg-emerald-50/80 px-4 py-1.5 rounded-full border border-emerald-100/50 flex-shrink-0">Answer</span>
-                                            <p className={cn(
-                                                "font-black text-gray-800 leading-relaxed px-4 transition-all duration-300",
-                                                isExpanded ? 'text-2xl md:text-3xl' : 'text-lg md:text-2xl',
-                                                card?.answer?.length > 150 && (isExpanded ? 'text-xl' : 'text-lg'),
-                                                card?.answer?.length > 300 && (isExpanded ? 'text-lg' : 'text-base')
-                                            )}>
-                                                {card?.answer}
-                                            </p>
-                                            <div className="mt-12 flex items-center justify-center gap-2.5 px-6 py-2.5 bg-gray-50/50 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-gray-400 group-hover:text-emerald-600 group-hover:bg-emerald-50 transition-all border border-transparent group-hover:border-emerald-100 flex-shrink-0">
-                                                <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
-                                                <span>Click to Flip Back</span>
-                                            </div>
-                                        </div>
+                                    <div className="min-h-full w-full flex flex-col items-center justify-center text-center px-10 pt-28 pb-32 relative z-10">
+                                        <p className={cn(
+                                            "font-black text-gray-800 leading-relaxed px-4 transition-all duration-300",
+                                            isExpanded ? 'text-2xl md:text-3xl' : 'text-lg md:text-2xl',
+                                            card?.answer?.length > 100 && (isExpanded ? 'text-xl md:text-2xl' : 'text-base md:text-xl'),
+                                            card?.answer?.length > 220 && (isExpanded ? 'text-lg md:text-xl' : 'text-base md:text-lg'),
+                                            card?.answer?.length > 350 && (isExpanded ? 'text-base' : 'text-sm')
+                                        )}>
+                                            {card?.answer}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Footer HUD */}
+                                <div className="absolute bottom-0 left-0 right-0 pb-10 pt-16 flex justify-center z-20 pointer-events-none bg-gradient-to-t from-white via-white/90 to-transparent">
+                                    <div className="flex items-center justify-center gap-2.5 px-6 py-2.5 bg-gray-50/50 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-gray-400 group-hover:text-emerald-600 group-hover:bg-emerald-50 transition-all border border-transparent group-hover:border-emerald-100 pointer-events-auto shadow-sm backdrop-blur-sm">
+                                        <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
+                                        <span>Click to Flip Back</span>
                                     </div>
                                 </div>
                             </div>

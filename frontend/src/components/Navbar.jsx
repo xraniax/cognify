@@ -26,7 +26,7 @@ const Navbar = () => {
             <div className="max-w-7xl mx-auto flex justify-between items-center">
                 <Link to="/" className="text-2xl font-black tracking-tight hover:opacity-80 transition-opacity flex items-center gap-2 group">
                     <span className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-100 to-indigo-50 flex items-center justify-center group-hover:from-purple-500 group-hover:to-indigo-500 transition-all duration-500">
-                         <div className="w-3.5 h-3.5 rounded-full bg-purple-500 group-hover:bg-white transition-colors duration-500"></div>
+                        <div className="w-3.5 h-3.5 rounded-full bg-purple-500 group-hover:bg-white transition-colors duration-500"></div>
                     </span>
                     <span className="text-gray-900 bg-clip-text text-transparent bg-gradient-to-r from-gray-900 to-gray-600">Cognify</span>
                 </Link>
@@ -68,7 +68,7 @@ const Navbar = () => {
                 </nav>
 
                 {/* Mobile Hamburger Toggle */}
-                <button 
+                <button
                     onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
                     className="md:hidden p-2 text-gray-500 hover:bg-gray-50 rounded-xl transition-all"
                 >
@@ -96,7 +96,7 @@ const Navbar = () => {
                         >
                             <div className="flex justify-between items-center mb-12">
                                 <span className="text-xl font-black tracking-tight">Menu</span>
-                                <button 
+                                <button
                                     onClick={() => setIsMobileMenuOpen(false)}
                                     className="p-2 bg-gray-50 rounded-xl text-gray-400"
                                 >

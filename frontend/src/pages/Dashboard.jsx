@@ -37,7 +37,7 @@ const Dashboard = () => {
     const [isAdding, setIsAdding] = useState(false);
 
     useEffect(() => {
-        fetchSubjects().catch(() => {});
+        fetchSubjects().catch(() => { });
     }, [fetchSubjects, user]);
 
     // Client-side filtering and sorting
@@ -190,14 +190,14 @@ const Dashboard = () => {
                     >
                         <X className="w-5 h-5" />
                     </button>
-                    
+
                     <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
                         <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
                             <Plus className="w-4 h-4 text-purple-600" />
                         </div>
                         Create New Study Space
                     </h3>
-                    
+
                     <form onSubmit={handleCreateSubject} className="flex flex-col sm:flex-row gap-4 relative z-10">
                         <div className="flex-grow">
                             <input
@@ -205,8 +205,8 @@ const Dashboard = () => {
                                 className={`input-field h-14 text-lg ${errorVisible ? 'border-red-300 ring-2 ring-red-50' : ''}`}
                                 placeholder="Enter subject name (e.g. Molecular Biology)"
                                 value={newSubjectName}
-                                onChange={(e) => { 
-                                    setNewSubjectName(e.target.value); 
+                                onChange={(e) => {
+                                    setNewSubjectName(e.target.value);
                                     if (isTouched) runValidation(e.target.value);
                                     if (uiError) clearUIError('createSubject');
                                 }}
@@ -316,7 +316,7 @@ const Dashboard = () => {
                     <button onClick={fetchSubjects} className="btn-primary bg-red-500 border-red-500 hover:bg-red-600">Reconnect to Backend</button>
                 </div>
             ) : subjects.length === 0 ? (
-                <motion.div 
+                <motion.div
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     className="p-20 border-2 border-dashed border-gray-200 bg-white/50 text-center rounded-[2rem] flex flex-col items-center"
@@ -328,8 +328,8 @@ const Dashboard = () => {
                         {(isPublic && !user) ? 'Welcome to Cognify' : 'A clean slate awaits'}
                     </h3>
                     <p className="mb-10 text-gray-500 font-medium text-lg max-w-sm">
-                        {(isPublic && !user) 
-                            ? 'Log in to create your first space and start organizing your knowledge.' 
+                        {(isPublic && !user)
+                            ? 'Log in to create your first space and start organizing your knowledge.'
                             : 'Create your first subject to start organizing your knowledge with AI power.'}
                     </p>
                     {(isPublic && !user) ? (
@@ -339,7 +339,7 @@ const Dashboard = () => {
                     )}
                 </motion.div>
             ) : (
-                <motion.div 
+                <motion.div
                     initial="hidden"
                     animate="show"
                     variants={{
@@ -368,7 +368,7 @@ const Dashboard = () => {
                     ) : (
                         <>
                             {filteredAndSortedSubjects.map((subject) => (
-                                <motion.div 
+                                <motion.div
                                     key={subject.id}
                                     initial="hidden"
                                     animate="show"
@@ -427,7 +427,7 @@ const Dashboard = () => {
                                         <div className="flex items-center text-[10px] font-black text-gray-400 uppercase tracking-widest gap-2">
                                             <div className="w-1.5 h-1.5 rounded-full bg-gray-200"></div>
                                             <span>
-                                                {subject.lastActivityAt || subject.last_activity_at 
+                                                {subject.lastActivityAt || subject.last_activity_at
                                                     ? formatDistanceToNow(new Date(subject.lastActivityAt || subject.last_activity_at), { addSuffix: true })
                                                     : 'New Space'}
                                             </span>
@@ -469,7 +469,7 @@ const Dashboard = () => {
                 {...modalConfig}
             />
 
-            <FloatingActionButton 
+            <FloatingActionButton
                 onClick={() => requireAuth(() => {
                     setIsAdding(true);
                     window.scrollTo({ top: 0, behavior: 'smooth' });

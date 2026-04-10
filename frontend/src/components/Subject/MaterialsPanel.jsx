@@ -30,7 +30,7 @@ const MaterialsPanel = ({
     const requiresSources = genType !== 'mock_exam';
     const canGenerate = !isGenerating && (!requiresSources || selectedCount > 0);
     const displayMessage = jobProgress?.message || (hasOptions ? `Assembling ${genOptions.count} ${genType.replace('_', ' ')}...` : 'Processing Knowledge...');
-    
+
     return (
         <div className="panel-inner">
             <div className="panel-header border-b border-gray-100/50 bg-white/80 backdrop-blur-sm sticky top-0 z-10 transition-all">
@@ -64,11 +64,10 @@ const MaterialsPanel = ({
                             <button
                                 key={type}
                                 onClick={() => setGenType(type)}
-                                className={`flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 border-2 ${
-                                    genType === type 
-                                        ? 'bg-white border-indigo-500 text-indigo-600 shadow-lg shadow-indigo-100' 
+                                className={`flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 border-2 ${genType === type
+                                        ? 'bg-white border-indigo-500 text-indigo-600 shadow-lg shadow-indigo-100'
                                         : 'bg-white border-gray-100 text-gray-400 hover:border-indigo-200 hover:text-indigo-400'
-                                }`}
+                                    }`}
                             >
                                 {type === 'summary' && <FileText className="w-3 h-3" />}
                                 {type === 'flashcards' && <Layout className="w-3 h-3" />}
@@ -88,10 +87,10 @@ const MaterialsPanel = ({
                                     </label>
                                     <span className="text-xs font-black text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">{genOptions.count}</span>
                                 </div>
-                                <input 
-                                    type="range" 
-                                    min="1" 
-                                    max={20} 
+                                <input
+                                    type="range"
+                                    min="1"
+                                    max={20}
                                     step="1"
                                     value={genOptions.count}
                                     onChange={(e) => setGenOptions(prev => ({ ...prev, count: parseInt(e.target.value) }))}
@@ -102,7 +101,7 @@ const MaterialsPanel = ({
                                     <span>20</span>
                                 </div>
                             </div>
-                            
+
                             <div>
                                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-2">Difficulty Curve</label>
                                 <div className="grid grid-cols-3 gap-1 bg-gray-100/80 rounded-xl p-1">
@@ -110,18 +109,17 @@ const MaterialsPanel = ({
                                         <button
                                             key={curve}
                                             onClick={() => setGenOptions(prev => ({ ...prev, difficulty: curve }))}
-                                            className={`py-1.5 text-[8px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                                                genOptions.difficulty === curve 
-                                                    ? 'bg-white text-indigo-600 shadow-sm' 
+                                            className={`py-1.5 text-[8px] font-black uppercase tracking-wider rounded-lg transition-all ${genOptions.difficulty === curve
+                                                    ? 'bg-white text-indigo-600 shadow-sm'
                                                     : 'text-gray-400 hover:text-gray-600 hover:bg-white/40'
-                                            }`}
+                                                }`}
                                         >
                                             {curve}
                                         </button>
                                     ))}
                                 </div>
                             </div>
-                            
+
                             {genType === 'flashcards' && (
                                 <div>
                                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-2">Focus Type</label>
@@ -130,11 +128,10 @@ const MaterialsPanel = ({
                                             <button
                                                 key={type}
                                                 onClick={() => setGenOptions(prev => ({ ...prev, cardType: type }))}
-                                                className={`py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${
-                                                    genOptions.cardType === type 
-                                                        ? 'bg-white text-indigo-600 shadow-sm' 
+                                                className={`py-1.5 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all ${genOptions.cardType === type
+                                                        ? 'bg-white text-indigo-600 shadow-sm'
                                                         : 'text-gray-400 hover:text-gray-600'
-                                                }`}
+                                                    }`}
                                             >
                                                 {type}
                                             </button>
@@ -178,16 +175,14 @@ const MaterialsPanel = ({
                                                                 : [...prev.examTypes, id];
                                                             return { ...prev, examTypes: next.length > 0 ? next : ['single_choice'] };
                                                         })}
-                                                        className={`w-full flex items-center justify-between py-2.5 px-4 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${
-                                                            active
+                                                        className={`w-full flex items-center justify-between py-2.5 px-4 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${active
                                                                 ? 'bg-indigo-50 text-indigo-600 border-indigo-200 shadow-sm'
                                                                 : 'bg-white text-gray-400 border-gray-100 hover:border-indigo-100'
-                                                        }`}
+                                                            }`}
                                                     >
                                                         <span>{label}</span>
-                                                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${
-                                                            active ? 'bg-indigo-500 border-indigo-500' : 'border-gray-200'
-                                                        }`}>
+                                                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${active ? 'bg-indigo-500 border-indigo-500' : 'border-gray-200'
+                                                            }`}>
                                                             {active && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
                                                         </div>
                                                     </button>
@@ -219,11 +214,10 @@ const MaterialsPanel = ({
                     <button
                         onClick={() => handleGenerate(hasOptions ? genOptions : undefined)}
                         disabled={!canGenerate}
-                        className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 transition-all duration-500 font-black uppercase tracking-widest text-xs ${
-                            !canGenerate
+                        className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 transition-all duration-500 font-black uppercase tracking-widest text-xs ${!canGenerate
                                 ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
                                 : 'btn-vibrant shadow-xl shadow-purple-200 hover:shadow-purple-300 -translate-y-0.5 hover:-translate-y-1'
-                        }`}
+                            }`}
                     >
                         {isGenerating ? (
                             <>
