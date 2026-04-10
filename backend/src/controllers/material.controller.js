@@ -162,6 +162,18 @@ class MaterialController {
         });
     });
 
+    static update = asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        const updates = req.body;
+        
+        const updated = await MaterialService.updateMaterial(req.user.id, id, updates);
+        
+        res.status(200).json({
+            status: 'success',
+            data: updated
+        });
+    });
+
     static getSettings = asyncHandler(async (req, res) => {
         const controls = await SettingsService.getStorageControls();
         res.status(200).json({ status: 'success', data: controls });

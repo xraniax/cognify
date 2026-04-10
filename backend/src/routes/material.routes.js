@@ -20,6 +20,7 @@ router.post('/generate-combined', aiLimiter, validate(generateCombinedSchema), M
 router.get('/:id/sync', MaterialController.syncStatus);
 router.get('/:id/stream', MaterialController.streamJob);
 router.post('/:id/cancel', MaterialController.cancelJob);
+router.patch('/:id', MaterialController.update);
 router.delete('/:id', MaterialController.delete);
 
 export default router;

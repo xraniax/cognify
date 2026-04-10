@@ -93,6 +93,7 @@ const SubjectDetail = () => {
         setShowUploadModal,
         handleUploadSuccess,
         handleDeleteUpload,
+        handleRenameMaterial,
         chatMessages,
         currentQuestion,
         setCurrentQuestion,
@@ -394,6 +395,7 @@ const SubjectDetail = () => {
                         selectedMaterials={selectedUploads}
                         toggleSelection={toggleSelection}
                         onDelete={handleDeleteUpload}
+                        onRename={handleRenameMaterial}
                         onGenerate={handleGenerate}
                         onOpenUpload={() => requireAuth(() => setShowUploadModal(true))}
                         onCollapse={() => setFilePanelCollapsed(true)}

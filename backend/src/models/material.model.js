@@ -174,6 +174,33 @@ class Material {
         const result = await query('DELETE FROM materials WHERE id = $1 AND user_id = $2 RETURNING *', [id, userId]);
         return result.rowCount > 0;
     }
+
+    /**
+     * Update material metadata (e.g., title).
+     * Enforces user_id for security.
+     */
+    static async updateById(id, userId, updates) {
+        const allowedFields = ['title'];
+        const fields = [];
+        const values = [];
+        let paramIdx = 1;
+
+        for (const [key, value] of Object.entries(updates)) {
+            if (allowedFields.includes(key)) {
+                fields.push(`${key} = $${paramIdx}`);
+                values.push(value);
+                paramIdx++;
+            }
+        }
+
+        if (fields.length === 0) return null;
+
+        values.push(id, userId);
+        const sql = `UPDATE materials SET ${fields.join(', ')} WHERE id = $${paramIdx} AND user_id = $${paramIdx + 1} RETURNING *`;
+        const result = await query(sql, values);
+        return result.rows[0];
+    }
 }
 
 export default Material;
+

@@ -1,7 +1,12 @@
 import api from '@/services/api';
+import { resetAuthFailureGuard } from '@/utils/authFailureHandler';
 
 export const authService = {
-    login: (email, password) => api.post('/auth/login', { email, password }),
+    login: async (email, password) => {
+        const response = await api.post('/auth/login', { email, password });
+        resetAuthFailureGuard();
+        return response;
+    },
     register: (userData) => api.post('/auth/register', userData),
     getMe: () => api.get('/auth/me'),
     forgotPassword: (email) => api.post('/auth/forgot-password', { email }),

@@ -407,10 +407,33 @@ class MaterialService {
     }
 
     /**
+     * Update material metadata (e.g. rename title).
+     */
+    static async updateMaterial(userId, materialId, updates) {
+        if (!updates || !updates.title || updates.title.trim() === '') {
+            throw new Error('Valid title is required for renaming');
+        }
+
+        const material = await Material.findById(materialId, userId);
+        if (!material) {
+            const error = new Error('Material not found');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        const updated = await Material.updateById(materialId, userId, {
+            title: updates.title.trim()
+        });
+
+        return updated;
+    }
+
+    /**
      * Delete a material by ID.
      * Enforces user_id for security.
      */
     static async deleteMaterial(materialId, userId) {
+
         // Run garbage collection BEFORE deleting the material row, 
         // to ensure the physical path lookup succeeds.
         await MaterialService._garbageCollectFile(materialId);

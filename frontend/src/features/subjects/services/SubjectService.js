@@ -11,6 +11,7 @@ export const subjectService = {
     // Subject Materials (Documents)
     getMaterials: (subjectId) => api.get('/materials/history', { params: { subjectId } }),
     deleteMaterial: (id) => api.delete(`/materials/${id}`),
+    renameMaterial: (id, title) => api.patch(`/materials/${id}`, { title }),
     uploadMaterial: (data) => {
         const config = data instanceof FormData ? { headers: { 'Content-Type': 'multipart/form-data' } } : {};
         return api.post('/materials/upload', data, config);
@@ -19,65 +20,81 @@ export const subjectService = {
     cancel: (id) => api.post(`/materials/${id}/cancel`),
     getSettings: () => api.get('/materials/settings'),
 
-
     // AI Interactions
     chat: (materialIds, question) => api.post('/materials/chat-combined', { materialIds, question }),
-    generate: (materialIds, taskType, subjectId, genOptions) => api.post('/materials/generate-combined', { materialIds, taskType, subjectId, genOptions }),
-    sync: (id) => api.get(`/materials/${id}/sync`),
-    streamMaterial: (id, onChunk, onComplete, onError) => {
+    generate: (materialIds, taskType, subjectId, genOptions) =>
+        api.post('/materials/generate-combined', { materialIds, taskType, subjectId, genOptions }),
+    sync: (id, signal) => api.get(`/materials/${id}/sync`, { signal }),
+
+    /**
+     * streamMaterial — pure cancellable async primitive.
+     *
+     * Contract:
+     *   - Caller owns the AbortController and passes its signal.
+     *   - Service has NO internal state, NO cancel return value.
+     *   - AbortController.abort() is the single cancellation mechanism.
+     *   - onChunk / onComplete / onError will NOT fire after abort.
+     *
+     * @param {string}      id         Material ID
+     * @param {AbortSignal} signal     Caller-owned AbortSignal
+     * @param {Function}    onChunk    Called per streamed text chunk
+     * @param {Function}    onComplete Called once when stream ends naturally
+     * @param {Function}    onError    Called on non-abort errors
+     */
+    streamMaterial: async (id, signal, onChunk, onComplete, onError) => {
         const token = localStorage.getItem('token');
         const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
         const url = `${API_URL}/materials/${id}/stream`;
 
-        const controller = new AbortController();
+        try {
+            const response = await fetch(url, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal, // AbortSignal directly from the hook's AbortController
+            });
 
-        fetch(url, {
-            headers: { 'Authorization': `Bearer ${token}` },
-            signal: controller.signal
-        }).then(response => {
-            const reader = response.body.getReader();
+            // Validate HTTP status before touching the body
+            if (!response.ok) {
+                onError(new Error(`Stream failed with status ${response.status}`));
+                return;
+            }
+
             const decoder = new TextDecoder();
 
-            function process() {
-                reader.read().then(({ done, value }) => {
-                    if (done) {
-                        onComplete();
-                        return;
-                    }
+            for await (const rawChunk of response.body) {
+                // for-await will throw AbortError when signal fires —
+                // this explicit check exits the inner loop immediately
+                // without waiting for the next async iteration boundary.
+                if (signal.aborted) return;
 
-                    const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split('\n');
+                const text = decoder.decode(rawChunk, { stream: true });
+                for (const line of text.split('\n')) {
+                    if (signal.aborted) return;
+                    if (!line.startsWith('data: ')) continue;
 
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const jsonStr = line.replace('data: ', '').trim();
-                            if (!jsonStr) continue;
+                    const jsonStr = line.slice(6).trim();
+                    if (!jsonStr) continue;
 
-                            try {
-                                const data = JSON.parse(jsonStr);
-                                if (data.chunk) onChunk(data.chunk);
-                                if (data.is_final) {
-                                    onComplete();
-                                    controller.abort();
-                                    return;
-                                }
-                            } catch (e) {
-                                // Handle partial JSON
-                            }
+                    try {
+                        const parsed = JSON.parse(jsonStr);
+                        if (parsed.chunk) onChunk(parsed.chunk);
+                        if (parsed.is_final) {
+                            onComplete();
+                            return;
                         }
+                    } catch {
+                        // Partial JSON or keep-alive frame — skip silently
                     }
-                    process();
-                }).catch(err => {
-                    if (err.name !== 'AbortError') onError(err);
-                });
+                }
             }
-            process();
-        }).catch(err => {
-            if (err.name !== 'AbortError') onError(err);
-        });
 
-        return () => controller.abort();
+            // Body exhausted cleanly (server closed without sending is_final)
+            onComplete();
+        } catch (err) {
+            if (err.name === 'AbortError') return; // Intentional cancel — no callback
+            onError(err);
+        }
     },
+
     // Exams
     generateExam: (payload) => api.post('/exams/generate', payload),
     saveAttempt: (payload) => api.post('/exams/attempts/save', payload),

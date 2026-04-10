@@ -5,6 +5,8 @@ import toast from 'react-hot-toast';
 import { useUIStore } from './useUIStore';
 import { useAuthStore } from './useAuthStore';
 
+// Each entry: { intervalId: number, controller: AbortController }
+// AbortController aborts any in-flight sync request when the slot is cleared.
 const pollingIntervals = new Map();
 
 export const useMaterialStore = create((set, get) => ({
@@ -19,6 +21,15 @@ export const useMaterialStore = create((set, get) => ({
             set((state) => ({
                 ...state,
                 data: { ...state.data, jobProgress: progress }
+            })),
+
+        updateMaterialOptimistically: (id, updates) =>
+            set((state) => ({
+                ...state,
+                data: { 
+                    ...state.data, 
+                    materials: state.data.materials.map(m => m.id === id ? { ...m, ...updates } : m)
+                }
             })),
 
         clearJobProgress: () =>
@@ -97,16 +108,18 @@ export const useMaterialStore = create((set, get) => ({
         },
 
         clearPolling: (materialId) => {
-            const intervalId = pollingIntervals.get(materialId);
-            if (intervalId) {
-                clearInterval(intervalId);
+            const slot = pollingIntervals.get(materialId);
+            if (slot) {
+                slot.controller.abort();   // abort in-flight sync request
+                clearInterval(slot.intervalId);
                 pollingIntervals.delete(materialId);
             }
         },
 
         clearAllPolling: () => {
-            for (const intervalId of pollingIntervals.values()) {
-                clearInterval(intervalId);
+            for (const slot of pollingIntervals.values()) {
+                slot.controller.abort();   // abort every in-flight request
+                clearInterval(slot.intervalId);
             }
             pollingIntervals.clear();
         },
@@ -129,11 +142,16 @@ export const useMaterialStore = create((set, get) => ({
             }
         },
 
-        startPolling: async (materialId) => {
+        startPolling: (materialId) => {
             if (pollingIntervals.has(materialId)) return;
 
             const startTime = Date.now();
-            const MAX_POLLING_MS = 600000; // 10 minutes timeout
+            const MAX_POLLING_MS = 600_000; // 10 minutes
+
+            // Each tick creates its own AbortController so we can abort the
+            // in-flight request the moment clearPolling / clearAllPolling is called.
+            // The slot's controller is replaced per-tick; clearing aborts the latest one.
+            let tickController = new AbortController();
 
             const intervalId = setInterval(async () => {
                 if (Date.now() - startTime > MAX_POLLING_MS) {
@@ -154,7 +172,16 @@ export const useMaterialStore = create((set, get) => ({
                 }
 
                 try {
-                    const response = await subjectService.sync(materialId);
+                    // Abort the previous tick's request (if still running) and
+                    // issue a fresh AbortController for this tick.
+                    tickController.abort();
+                    tickController = new AbortController();
+
+                    // Update the stored controller so clearPolling always aborts the latest request.
+                    const slot = pollingIntervals.get(materialId);
+                    if (slot) slot.controller = tickController;
+
+                    const response = await subjectService.sync(materialId, tickController.signal);
                     if (!response?.data?.data) return;
 
                     const material = response.data.data;
@@ -223,15 +250,18 @@ export const useMaterialStore = create((set, get) => ({
                         }));
                     }
                 } catch (err) {
+                    if (err.name === 'AbortError') return; // intentional cancel — silent
                     console.error('[MaterialStore] Polling loop error:', err);
-                    const msg = err.message === 'cyclic object value' 
-                        ? 'Circular data error during sync' 
+                    const msg = err.message === 'cyclic object value'
+                        ? 'Circular data error during sync'
                         : (err.message || 'Polling error');
                     set({ error: msg });
                 }
             }, 3000);
-            pollingIntervals.set(materialId, intervalId);
-            return intervalId;
+
+            // Store the slot with the initial controller so clearPolling can
+            // abort the current in-flight request at any time
+            pollingIntervals.set(materialId, { intervalId, controller: tickController });
         }
     }
 }));
