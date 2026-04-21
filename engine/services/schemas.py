@@ -48,7 +48,7 @@ class RetrieveRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
 
 class GenerateRequest(BaseModel):
-    subject_id: UUID
+    subject_id: Optional[UUID] = None
     topic: Optional[str] = None
     material_type: Literal["summary", "quiz", "flashcards", "exam"]
     top_k: int = Field(default=5, ge=1, le=50)
@@ -58,6 +58,7 @@ class GenerateRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     subject_id: UUID
+    context: Optional[str] = None
     question: str
     top_k: int = Field(default=5, ge=1, le=50)
     language: str = Field(default="en")
@@ -66,20 +67,8 @@ class ChatRequest(BaseModel):
 # --- Structured Output Models ---
 
 class ExamQuestion(BaseModel):
-    id: int
-    type: Literal["single_choice", "multiple_select", "short_answer", "fill_blank", "matching", "problem", "scenario"] = "single_choice"
     question: str
-    options: Optional[List[str]] = None
     answer_space: str = "__________"
-    difficulty: Optional[str] = "Normal"
-    topic: Optional[str] = "General"
-    
-    # Matching type specifics
-    pairs: Optional[List[dict]] = None # [{left: "...", right: "..."}]
-    rightOptions: Optional[List[str]] = None
-    
-    # Fill in the blank specifics
-    blankAnswers: Optional[List[str]] = None
 
 class ExamAnswerSheetItem(BaseModel):
     question_id: int
@@ -94,11 +83,9 @@ class ExamOutput(BaseModel):
 class QuizQuestion(BaseModel):
     id: int
     question: str
-    options: List[str]
+    options: Optional[List[str]] = None
     correct_answer: str
     explanation: str
-    difficulty: Optional[str] = "Normal"
-    topic: Optional[str] = "General"
 
 class QuizOutput(BaseModel):
     type: Literal["quiz"] = "quiz"
@@ -132,32 +119,3 @@ class QuizResultItem(BaseModel):
 class QuizEvaluateResponse(BaseModel):
     type: Literal["quiz_result"] = "quiz_result"
     results: List[QuizResultItem]
-
-class EvaluateAnswerRequest(BaseModel):
-    question: str
-    correct_answer: str
-    user_answer: str
-
-class EvaluateAnswerResponse(BaseModel):
-    is_correct: bool
-    is_almost: bool
-    explanation: str
-    score: float # 0.0 to 1.0
-
-# --- Debug Models ---
-
-class DebugChunkRequest(BaseModel):
-    text: str = Field(..., min_length=1)
-    max_chunk_chars: int = Field(default=1500, ge=50, le=32000)
-    chunk_overlap: int = Field(default=200, ge=0, le=8000)
-
-class DebugStoreRequest(BaseModel):
-    subject_id: UUID
-    text: str = Field(..., min_length=1)
-
-class DebugGenerateRequest(BaseModel):
-    subject_id: UUID
-    material_type: Literal["summary", "quiz", "flashcards", "exam"]
-    topic: Optional[str] = None
-    top_k: int = Field(default=5, ge=1, le=50)
-    language: str = Field(default="en")

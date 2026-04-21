@@ -61,6 +61,88 @@ export const useMaterialGeneration = ({
         const requestedCount = genOptions?.count;
 
         try {
+            streamControllerRef.current?.abort();
+            const controller = new AbortController();
+            streamControllerRef.current = controller;
+
+            setIsGeneratingMaterial(true);
+            const streamResponse = await MaterialService.generateStream(
+                targets,
+                genType,
+                subjectId,
+                genOptions,
+                controller.signal
+            );
+
+            if (!streamResponse.body) {
+                throw new Error('Streaming response body is unavailable.');
+            }
+
+            const reader = streamResponse.body.getReader();
+            const decoder = new TextDecoder();
+            let sseBuffer = '';
+            let streamDone = false;
+
+            while (!streamDone) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                sseBuffer += decoder.decode(value, { stream: true });
+                const events = sseBuffer.split('\n\n');
+                sseBuffer = events.pop() || '';
+
+                for (const eventBlock of events) {
+                    const lines = eventBlock.split('\n');
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data:')) {
+                            continue;
+                        }
+
+                        const payloadText = trimmed.slice(5).trim();
+                        if (!payloadText) {
+                            continue;
+                        }
+
+                        let parsed;
+                        try {
+                            parsed = JSON.parse(payloadText);
+                        } catch {
+                            continue;
+                        }
+
+                        if (parsed.type === 'error') {
+                            throw new Error(parsed.message || 'Streaming error');
+                        }
+
+                        if (parsed.type === 'delta' && typeof parsed.data === 'string') {
+                            setGenResult(prev => (prev || '') + parsed.data);
+                        }
+
+                        // Backward compatibility for older payloads.
+                        if (parsed.delta) {
+                            setGenResult(prev => (prev || '') + String(parsed.delta));
+                        }
+
+                        if ((parsed.type === 'final' && parsed.done === true) || parsed.done === true) {
+                            streamDone = true;
+                            break;
+                        }
+                    }
+                    if (streamDone) break;
+                }
+            }
+
+            streamControllerRef.current = null;
+            setIsGeneratingMaterial(false);
+            return;
+        } catch (streamErr) {
+            console.warn('[MaterialGen] Streaming path failed, falling back to async job flow:', streamErr?.message || streamErr);
+            streamControllerRef.current = null;
+            setIsGeneratingMaterial(false);
+        }
+
+        try {
             const res = await MaterialService.generate(targets, genType, subjectId, genOptions);
             const { material_id } = res.data.data;
             activeMaterialIdRef.current = material_id;

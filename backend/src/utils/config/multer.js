@@ -4,8 +4,8 @@ import SettingsService from '../../services/settings.service.js';
 
 import fs from 'fs';
 
-// Initialize the storage path (defaults to 'uploads' for local dev, can be '/shared_nfs/uploads' in prod)
-const destPath = process.env.PDF_STORAGE_PATH || 'uploads';
+// Use shared upload path in containers; local dev can override via PDF_STORAGE_PATH.
+const destPath = process.env.PDF_STORAGE_PATH || '/app/data/uploads';
 // Ensure the directory exists (crucial for freshly mounted NFS volumes or fresh clones)
 fs.mkdirSync(destPath, { recursive: true });
 

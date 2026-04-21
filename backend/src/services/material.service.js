@@ -1,6 +1,6 @@
-import axios from 'axios';
 import fs from 'fs';
 import FormData from 'form-data';
+import engineClient from './engine.client.js';
 import Material from '../models/material.model.js';
 import Subject from '../models/subject.model.js';
 import File from '../models/file.model.js';
@@ -106,11 +106,9 @@ class MaterialService {
             }
 
             // Send directly to Python Engine's process-document route
-            const engineUrl = process.env.ENGINE_URL || 'http://engine:8000';
-            const endpoint = `${engineUrl}/process-document`;
             const aiResponse = await ((process.env.NODE_ENV === 'test' && global.__mockAxiosPost)
-                ? global.__mockAxiosPost(endpoint, formData, { headers: formData.getHeaders(), timeout: 30000 })
-                : axios.post(endpoint, formData, {
+                ? global.__mockAxiosPost('/process-document', formData, { headers: formData.getHeaders(), timeout: 30000 })
+                : engineClient.post('/process-document', formData, {
                     headers: {
                         ...formData.getHeaders()
                     },
@@ -132,6 +130,9 @@ class MaterialService {
             }
             return documentRecord ? await Material.findById(documentRecord.id, userId) : null;
         }
+    }
+    static async getMaterialById(userId, materialId) {
+        return await Material.findById(materialId, userId);
     }
 
     /**
@@ -173,7 +174,7 @@ class MaterialService {
         // 3. Sync with Celery if job_id exists
         if (material.job_id) {
             try {
-                const response = await axios.get(`${process.env.ENGINE_URL}/job/${material.job_id}`);
+                const response = await engineClient.get(`/job/${material.job_id}`);
                 const { status, result, error } = response.data;
                 const engineStatus = normalizeStatus(status);
 
@@ -187,19 +188,33 @@ class MaterialService {
                             processed_at: new Date().toISOString()
                         };
 
-                        if (result.content) {
-                            // Text-based material (e.g., summary)
-                            await query(
-                                'UPDATE materials SET content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
-                                [materialId, result.content, COMPLETED, updateData.completed_at, updateData.processed_at, userId]
-                            );
-                        } else if (result.ai_generated_content) {
-                            // Structured material (e.g., quiz, flashcards)
-                            await query(
-                                'UPDATE materials SET ai_generated_content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
-                                [materialId, JSON.stringify(result.ai_generated_content), COMPLETED, updateData.completed_at, updateData.processed_at, userId]
-                            );
+                        try {
+                            if (!result.ai_generated_content) {
+                                const hasLegacyContentField = Object.prototype.hasOwnProperty.call(result, 'content');
+                                const validationMessage = hasLegacyContentField
+                                    ? "Invalid engine response: legacy field 'content' is deprecated. Expected ai_generated_content."
+                                    : 'Invalid engine response: missing ai_generated_content.';
+
+                                console.error('[MaterialService] Invalid generation result payload:', {
+                                    materialId,
+                                    userId,
+                                    jobId: material.job_id,
+                                    validationMessage,
+                                    result
+                                });
+
+                                throw new Error(validationMessage);
+                            }
+                        } catch (validationError) {
+                            await Material.recordFailure(materialId, userId, validationError.message);
+                            await MaterialService._garbageCollectFile(materialId);
+                            return await Material.findById(materialId, userId);
                         }
+
+                        await query(
+                            'UPDATE materials SET ai_generated_content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
+                            [materialId, JSON.stringify(result.ai_generated_content), COMPLETED, updateData.completed_at, updateData.processed_at, userId]
+                        );
                     } else {
                         // Standard document processing result (task_ocr/task_chunk/task_embed)
                         const extractedText = result.extracted_text || material.content;
@@ -253,7 +268,6 @@ class MaterialService {
         const subjectId = sourceDocuments[0].subject_id;
 
         try {
-            const endpoint = `${process.env.ENGINE_URL}/chat`;
             const payload = {
                 subject_id: subjectId,
                 question: question,
@@ -263,8 +277,8 @@ class MaterialService {
             const options = { timeout: 30000 };
 
             const aiResponse = process.env.NODE_ENV === 'test' && global.__mockAxiosPost
-                ? await global.__mockAxiosPost(endpoint, payload, options)
-                : await axios.post(endpoint, payload, options);
+                ? await global.__mockAxiosPost('/chat', payload, options)
+                : await engineClient.post('/chat', payload, options);
 
             const result = aiResponse.data;
 
@@ -312,7 +326,6 @@ class MaterialService {
         const materialType = typeMap[taskType] || 'summary';
 
         try {
-            const endpoint = `${process.env.ENGINE_URL}/generate`;
             const payload = {
                 subject_id: finalSubjectId,
                 material_type: materialType,
@@ -323,8 +336,8 @@ class MaterialService {
             };
             const options = { timeout: 300000 }; // 5 minutes for generation
             const aiResponse = await ((process.env.NODE_ENV === 'test' && global.__mockAxiosPost)
-                ? global.__mockAxiosPost(endpoint, payload, options)
-                : axios.post(endpoint, payload, options));
+                ? global.__mockAxiosPost('/generate', payload, options)
+                : engineClient.post('/generate', payload, options));
 
             const result = aiResponse.data;
 
@@ -358,11 +371,88 @@ class MaterialService {
                 material_id: materialRecord.id
             };
         } catch (error) {
-            console.error('[MaterialService] Engine Generate Error:', error.message);
+            const engineStatus = error?.response?.status;
+            const engineBody = error?.response?.data;
+            console.error('[MaterialService] Engine Generate Error:', {
+                message: error.message,
+                code: error.code,
+                status: engineStatus,
+                response: engineBody
+            });
+
+            const engineMessage =
+                engineBody?.message ||
+                engineBody?.detail ||
+                engineBody?.details ||
+                (typeof engineBody === 'string' ? engineBody : null);
             const isTimeout = error.code === 'ECONNABORTED' || error.message.includes('timeout');
-            const enhancedError = new Error(isTimeout ? 'AI engine took too long to generate content.' : 'AI engine generation failed.');
+            const enhancedError = new Error(
+                isTimeout
+                    ? 'AI engine took too long to generate content.'
+                    : `AI engine generation failed${engineStatus ? ` (HTTP ${engineStatus})` : ''}${engineMessage ? `: ${engineMessage}` : '.'}`
+            );
             enhancedError.statusCode = 503;
             enhancedError.code = isTimeout ? 'ENGINE_TIMEOUT' : 'ENGINE_UNAVAILABLE';
+            throw enhancedError;
+        }
+    }
+
+    static async generateStream(userId, materialIds, taskType, subjectId = null, genOptions = {}) {
+        const sourceDocuments = await Material.findByIds(materialIds, userId);
+        if (sourceDocuments.length === 0 && !subjectId) {
+            const err = new Error('No source documents selected for context.');
+            err.statusCode = 400;
+            throw err;
+        }
+
+        const finalSubjectId = subjectId || (sourceDocuments.length > 0 ? sourceDocuments[0].subject_id : null);
+        if (!finalSubjectId) {
+            const err = new Error('No subject context available for generation.');
+            err.statusCode = 400;
+            throw err;
+        }
+
+        const typeMap = {
+            summary: 'summary',
+            quiz: 'quiz',
+            flashcards: 'flashcards',
+            mock_exam: 'exam'
+        };
+        const materialType = typeMap[taskType] || 'summary';
+
+        const payload = {
+            subject_id: finalSubjectId,
+            material_type: materialType,
+            topic: genOptions?.topic || null,
+            language: genOptions?.language || 'en',
+            top_k: 10,
+            user_id: userId,
+            options: genOptions
+        };
+
+        try {
+            const aiResponse = await engineClient.post('/generate/stream', payload, {
+                responseType: 'stream',
+                timeout: 0,
+                headers: {
+                    Accept: 'text/event-stream'
+                }
+            });
+
+            return aiResponse;
+        } catch (error) {
+            const engineStatus = error?.response?.status;
+            const engineBody = error?.response?.data;
+            console.error('[MaterialService] Engine Generate Stream Error:', {
+                message: error.message,
+                code: error.code,
+                status: engineStatus,
+                response: engineBody
+            });
+
+            const enhancedError = new Error('AI generation stream is currently unavailable.');
+            enhancedError.statusCode = 503;
+            enhancedError.code = 'ENGINE_UNAVAILABLE';
             throw enhancedError;
         }
     }
@@ -394,7 +484,7 @@ class MaterialService {
 
         try {
             // Forward cancellation to Python engine
-            await axios.post(`${process.env.ENGINE_URL}/job/cancel`, { job_id: material.job_id }, { timeout: 5000 });
+            await engineClient.post('/job/cancel', { job_id: material.job_id }, { timeout: 5000 });
 
             // Revert material status to IDLE or just keep it as is?
             // Usually, we mark it as FAILED with a 'Cancelled by user' message.

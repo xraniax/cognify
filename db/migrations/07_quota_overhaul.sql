@@ -5,7 +5,7 @@
 UPDATE users SET status = UPPER(status);
 
 -- 2. Add material_id to files
-ALTER TABLE files ADD COLUMN material_id UUID;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS material_id UUID;
 
 -- 3. Link existing files to materials (best effort)
 -- Files were created before materials, so we match by user/subject.
@@ -19,7 +19,20 @@ WHERE f.user_id = m.user_id
 -- 4. Add constraints
 -- We don't enforce NOT NULL yet to allow migration of old decoupled data if necessary,
 -- but all NEW files must have a material_id.
-ALTER TABLE files ADD CONSTRAINT files_material_id_fkey FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'files_material_id_fkey'
+  ) THEN
+    ALTER TABLE files
+    ADD CONSTRAINT files_material_id_fkey
+    FOREIGN KEY (material_id)
+    REFERENCES materials(id)
+    ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- 5. Harden User Status
 DO $$ 

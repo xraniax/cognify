@@ -1,11 +1,18 @@
-import app from './app.js';
 import validateEnv from './utils/validateEnv.js';
-// Middlewares
 
 validateEnv();
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(` Cognify Backend running on port ${PORT}`);
+const startServer = async () => {
+  const { default: app } = await import('./app.js');
+
+  app.listen(PORT, () => {
+    console.log(` Cognify Backend running on port ${PORT}`);
+  });
+};
+
+startServer().catch((error) => {
+  console.error('❌ Failed to start backend server:', error);
+  process.exit(1);
 });

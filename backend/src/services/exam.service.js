@@ -1,13 +1,10 @@
-import axios from 'axios';
 import { randomUUID } from 'crypto';
+import engineClient from './engine.client.js';
 import Material from '../models/material.model.js';
 import { COMPLETED } from '../constants/status.enum.js';
 import { query } from '../utils/config/db.js';
 
-const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://ollama_gpu:11434').replace(/\/$/, '');
-const OLLAMA_MODEL = process.env.OLLAMA_GENERATION_MODEL || 'qwen2:0.5b';
-const OLLAMA_GENERATE_URL = `${OLLAMA_BASE_URL}/api/generate`;
-const ENGINE_URL = (process.env.ENGINE_URL || 'http://engine:8000').replace(/\/$/, '');
+const EXAM_ENGINE_SUBJECT_ID = '00000000-0000-0000-0000-000000000000';
 
 const EXAM_CACHE_TTL_MS = 1000 * 60 * 60 * 2;
 const EXAM_CACHE_LIMIT = 500;
@@ -393,20 +390,19 @@ ${blocked}`.trim();
 };
 
 const askModel = async (systemInstruction, userPrompt) => {
-    const response = await axios.post(
-        `${OLLAMA_BASE_URL}/api/chat`,
+    const response = await engineClient.post(
+        '/chat',
         {
-            model: OLLAMA_MODEL,
-            messages: [
-                { role: 'system', content: systemInstruction },
-                { role: 'user', content: userPrompt }
-            ],
-            stream: false,
-            options: { temperature: 0.4, num_predict: 1500 },
+            // Engine currently validates subject_id on chat requests even when context is provided.
+            subject_id: EXAM_ENGINE_SUBJECT_ID,
+            context: systemInstruction,
+            question: userPrompt,
+            top_k: 1,
+            language: 'en',
         },
         { timeout: 180000 }
     );
-    return response?.data?.message?.content || '';
+    return response?.data?.result || response?.data?.response || '';
 };
 
 const getDifficultyForProgress = (currentCount, targetTotal, curve) => {
@@ -441,7 +437,7 @@ class ExamService {
         // --- NEW: RAG Retrieval Stage ---
         let context = '';
         try {
-            const retrieveRes = await axios.post(`${ENGINE_URL}/retrieve`, {
+            const retrieveRes = await engineClient.post('/retrieve', {
                 subject_id: payload.subject_id,
                 topic: fallbackTopic,
                 top_k: 3,
@@ -607,18 +603,28 @@ class ExamService {
                     isCorrect = false;
                 } else {
                     try {
-                        const engineUrl = process.env.ENGINE_URL || 'http://engine:8000';
-                        const evalRes = await axios.post(`${engineUrl}/evaluate-answer`, {
-                            question: question.question,
-                            correct_answer: referenceAnswer,
-                            user_answer: userInput
+                        const evalRes = await engineClient.post('/evaluate-quiz', {
+                            questions: [
+                                {
+                                    id: 1,
+                                    question: question.question,
+                                    options: null,
+                                    correct_answer: referenceAnswer,
+                                    explanation: question.explanation || 'Refer to context.'
+                                }
+                            ],
+                            submissions: [
+                                {
+                                    question_id: 1,
+                                    user_answer: userInput
+                                }
+                            ]
                         }, { timeout: 10000 });
-                        
-                        const evalData = evalRes.data;
-                        // Use a threshold for correctness if the AI is too conservative with the boolean
-                        isCorrect = evalData.is_correct || (evalData.score >= 0.85);
-                        isAlmost = evalData.is_almost || (evalData.score >= 0.5 && evalData.score < 0.85);
-                        aiExplanation = evalData.explanation;
+
+                        const resultItem = evalRes?.data?.results?.[0];
+                        isCorrect = resultItem?.status === 'correct';
+                        isAlmost = false;
+                        aiExplanation = resultItem?.explanation || null;
                     } catch (err) {
                         console.error('[ExamService] Semantic evaluation failed, falling back to string match:', err.message);
                         // FALLBACK: Simple string match

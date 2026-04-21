@@ -7,6 +7,8 @@ import validate from '../middlewares/validate.middleware.js';
 import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema } from '../middlewares/auth.validator.js';
 
 const router = express.Router();
+const googleOAuthEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+const githubOAuthEnabled = Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
 
 router.post('/register', validate(registerSchema), AuthController.register);
 router.post('/login', authLimiter, validate(loginSchema), AuthController.login);
@@ -16,29 +18,65 @@ router.post('/reset-password', authLimiter, validate(resetPasswordSchema), AuthC
 router.get('/me', protect, AuthController.getMe);
 
 // --- Google OAuth ---
-router.get('/google',
-  passport.authenticate('google', { scope: ['profile', 'email'] })
-);
+if (googleOAuthEnabled) {
+  router.get('/google',
+    passport.authenticate('google', { scope: ['profile', 'email'] })
+  );
 
-router.get('/google/callback',
-  passport.authenticate('google', { 
-    failureRedirect: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=auth_failed`,
-    session: false 
-  }),
-  AuthController.socialAuthCallback
-);
+  router.get('/google/callback',
+    passport.authenticate('google', {
+      failureRedirect: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=auth_failed`,
+      session: false
+    }),
+    AuthController.socialAuthCallback
+  );
+} else {
+  router.get('/google', (_req, res) => {
+    res.status(503).json({
+      status: 'error',
+      code: 'OAUTH_GOOGLE_DISABLED',
+      message: 'Google OAuth is not configured for this environment.'
+    });
+  });
+
+  router.get('/google/callback', (_req, res) => {
+    res.status(503).json({
+      status: 'error',
+      code: 'OAUTH_GOOGLE_DISABLED',
+      message: 'Google OAuth is not configured for this environment.'
+    });
+  });
+}
 
 // --- GitHub OAuth ---
-router.get('/github',
-  passport.authenticate('github', { scope: ['user:email'] })
-);
+if (githubOAuthEnabled) {
+  router.get('/github',
+    passport.authenticate('github', { scope: ['user:email'] })
+  );
 
-router.get('/github/callback',
-  passport.authenticate('github', {
-    failureRedirect: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=auth_failed`,
-    session: false
-  }),
-  AuthController.socialAuthCallback
-);
+  router.get('/github/callback',
+    passport.authenticate('github', {
+      failureRedirect: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=auth_failed`,
+      session: false
+    }),
+    AuthController.socialAuthCallback
+  );
+} else {
+  router.get('/github', (_req, res) => {
+    res.status(503).json({
+      status: 'error',
+      code: 'OAUTH_GITHUB_DISABLED',
+      message: 'GitHub OAuth is not configured for this environment.'
+    });
+  });
+
+  router.get('/github/callback', (_req, res) => {
+    res.status(503).json({
+      status: 'error',
+      code: 'OAUTH_GITHUB_DISABLED',
+      message: 'GitHub OAuth is not configured for this environment.'
+    });
+  });
+}
 
 export default router;
