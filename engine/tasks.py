@@ -3,7 +3,12 @@ import sys
 import logging
 import time
 from uuid import UUID
+from typing import Optional, Dict, Any, List, Union
 from utils.logging import get_job_logger
+
+# Define global logger for top-level tasks and initialization
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 # Ensure project root is in path for Celery workers
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -48,8 +53,8 @@ def task_record_failure(request, exc, traceback, document_id, user_id=None):
     autoretry_for=(Exception,),
     retry_backoff=True,
     max_retries=3,
-    soft_time_limit=300,
-    time_limit=360,
+    soft_time_limit=600,
+    time_limit=900,
 )
 def task_ocr(self, file_path, document_id, subject_id, user_id=None):
     """Step 1: Extract raw text from the PDF file.
@@ -189,8 +194,8 @@ def task_embed(self, data):
     autoretry_for=(Exception,),
     retry_backoff=True,
     max_retries=3,
-    soft_time_limit=60,
-    time_limit=90
+    soft_time_limit=180,
+    time_limit=210
 )
 def task_store(self, data):
     """
@@ -245,19 +250,69 @@ def task_store(self, data):
     }
 
 
+CURRENT_CONFIG_VERSION = 1
+
+def initialize_workspace_config(subject_id: str, existing_opts: Optional[dict] = None) -> dict:
+    """
+    Mandatory Workspace Entry Point. 
+    Eradicates drift via strict versioning and 'Heal-and-Alert' logic.
+    """
+    opts = existing_opts or {}
+    corrections = []
+    
+    # 1. Version Check
+    version = opts.get("config_version", 0)
+    if version < CURRENT_CONFIG_VERSION:
+        corrections.append(f"version_upgrade({version}->{CURRENT_CONFIG_VERSION})")
+    
+    # 2. Build configuration with default-or-repair logic
+    config = {
+        "difficulty": opts.get("difficulty", "intermediate"),
+        "count": opts.get("count", opts.get("numberOfQuestions", 10)),
+        "types": opts.get("types", opts.get("examTypes", [])),
+        "timeout": opts.get("timeout", 300),
+        "strict_fallback_immunity": True,
+        "config_version": CURRENT_CONFIG_VERSION
+    }
+    
+    # 3. Detect and repair specific corruptions
+    if not isinstance(config["types"], list) or len(config["types"]) == 0:
+        config["types"] = ["single_choice", "multiple_select", "short_answer"]
+        corrections.append("defaulted_missing_exam_types")
+        
+    if not isinstance(config["count"], int) or config["count"] <= 0:
+        config["count"] = 10
+        corrections.append(f"repaired_invalid_count({opts.get('count')})")
+
+    # 4. Observability: Heal-and-Alert (No silent masking)
+    if corrections:
+        logger.warning(
+            f"[CONFIG AUDIT] Workspace {subject_id} was misconfigured or outdated. "
+            f"Repairs made: {', '.join(corrections)}. "
+            "Please audit upstream write path in Node.js backend."
+        )
+    else:
+        logger.info(f"[CONFIG VALID] Workspace {subject_id} passed initialization (v{CURRENT_CONFIG_VERSION})")
+        
+    return config
+
 @celery_app.task(
     bind=True,
     name="tasks.task_generate",
     autoretry_for=(Exception,),
-    retry_backoff=True,
-    max_retries=3,
-    soft_time_limit=300,
-    time_limit=360
+    retry_backoff=60,  # Wait 60s before first retry
+    retry_jitter=True,
+    max_retries=2,     # Limit to 2 retries (3 total attempts)
+    soft_time_limit=600,
+    time_limit=900
 )
-def task_generate(self, subject_id, material_type, topic=None, language="en", top_k=10, user_id=None, options=None):
+def task_generate(self, subject_id, material_type, topic=None, language="en", top_k=10, user_id=None, generation_options=None, **kwargs):
     """
     Step 5: Generate study materials (Summary/Quiz/Flashcards/Exam) asynchronously.
     """
+    # 0. Compatibility Shim: Unify 'options' and 'generation_options'
+    generation_options = generation_options or kwargs.get("options")
+
     job_id = self.request.id
     log = get_job_logger(job_id, "tasks.generate")
     log.info(f"STEP: GENERATION STARTED for subject={subject_id}, type={material_type} (Attempt {self.request.retries + 1})")
@@ -287,74 +342,91 @@ def task_generate(self, subject_id, material_type, topic=None, language="en", to
                 log.error(f"DIAGNOSTIC: Subject {subject_id} exists in engine DB: {exists}")
                 raise ValueError(f"No content found for subject {subject_id}. Please ensure documents are uploaded and processed.")
 
-        # 1. Retrieve context
-        chunks = retrieve_chunks_by_topic(db, subject_id, topic, top_k, job_id=job_id)
+        # 2. Extract policy directly from generation_options
+        from services.policies import GenerationPolicy
+        
+        if not generation_options:
+            raise ValueError("generation_options must be provided for generation.")
+            
+        try:
+            policy = GenerationPolicy(**generation_options)
+            log.info(f"[WORKSPACE CHECK] Validated generation policy configuration.")
+            log.info(f"[TRACE] Full generation_options dict: {generation_options}")
+            log.info(f"[TRACE] policy.total_count after parse is: {policy.total_count}")
+        except Exception as e:
+            raise ValueError(f"Failed to load GenerationPolicy from generation_options: {e}")
+
+        # 1. Retrieve context (optimized for task type)
+        # Dynamically scale top_k to guarantee sufficient context for large target counts
+        target_count = policy.total_count if policy else 10
+        dynamic_top_k = max(top_k, 20, target_count * 2)
+        log.info(f"[TRACE] Retrieval requested top_k={top_k}, scaled dynamically to dynamic_top_k={dynamic_top_k} to satisfy total_count={target_count}")
+
+        chunks = retrieve_chunks_by_topic(db, subject_id, topic, dynamic_top_k, job_id=job_id, task_type=material_type)
         chunk_texts = [c.content for c in chunks if c.content]
+        
+        log.info(f"[TRACE] Actually retrieved {len(chunk_texts)} chunks from vector database for subject_id={subject_id}")
         
         if not chunk_texts:
             log.warning(f"STEP: GENERATION FAILED - No content for subject {subject_id}")
             return {"status": "FAILED", "error": "No content available for this subject"}
 
-        # 2. Generate material
-        opts = options or {}
-        log.info(f"STEP: GENERATING {opts.get('count', 'requested')} FLASHCARDS ({opts.get('difficulty', 'Default')})...")
-        material = generate_study_material(chunk_texts, material_type, topic, language, job_id=job_id, stream=True, options=options)
-        
-        # 3. Handle Streaming Response
-        full_text = ""
-        r = redis.from_url(os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
-        channel = f"job:{job_id}:stream"
+        # 3. Generate material
+        import asyncio
+        from services.generation import OLLAMA_GENERATION_TIMEOUT
+        log.info(f"STEP: GENERATING {material_type} PARALLEL (GPS v1.1)...")
 
-        if hasattr(material, 'iter_lines'):
-            log.info(f"STEP: GENERATION Streaming to Redis channel: {channel}")
-            for line in material.iter_lines():
-                if line:
-                    chunk_data = json.loads(line)
-                    chunk_text = chunk_data.get("response", "")
-                    full_text += chunk_text
-                    
-                    # Publish chunk to Redis
-                    r.publish(channel, json.dumps({
-                        "chunk": chunk_text,
-                        "is_final": chunk_data.get("done", False)
-                    }))
-            
-            # Final validation/parsing if it was supposed to be JSON
-            if material_type != "summary":
-                # For JSON types, we need to parse the full text at the end to ensure validity
-                # This re-uses the logic from generate_study_material but on the full_text we built
-                from services.generation import generate_study_material as gsm_sync
-                # We call it sync now with the full_text (we might need a "parse_only" helper but let's see)
-                # Actually, let's just use the full_text for summaries, 
-                # and for JSON, we might want to re-run the validation logic.
-                pass 
-                
-            material = full_text
+        # Call the async version of generate_study_material
+        material = asyncio.run(generate_study_material(
+            chunk_texts, 
+            material_type, 
+            topic, 
+            language, 
+            timeout=generation_options.get("timeout", OLLAMA_GENERATION_TIMEOUT),
+            job_id=job_id, 
+            options=generation_options,
+            policy=policy
+        ))
+        
+        # 3. Handle Result
+        ai_generated_content = material if isinstance(material, dict) else None
+        final_material_text = json.dumps(material) if isinstance(material, dict) else str(material)
+        
+        # SSE Broadcast for UI progress
+        try:
+            r = redis.from_url(os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
+            channel = f"job:{job_id}:stream"
+            r.publish(channel, json.dumps({
+                "status": "completed",
+                "telemetry": material.get("metadata", {}).get("telemetry") if isinstance(material, dict) else None,
+                "is_final": True
+            }))
+        except Exception as e:
+            log.warning(f"[REDIS] Failed to broadcast job completion for {job_id}: {e}")
 
         duration = time.perf_counter() - start_time
-        log.info(f"STEP: GENERATION SUCCESS (duration: {duration:.2f}s)")
+        log.info(f"[GENERATION] [SUCCESS] duration={duration:.2f}s type={material_type} job={job_id}")
         
-        # If it was JSON, we might need to parse it now if it wasn't summary
-        ai_generated_content = None
-        if material_type != "summary":
-            try:
-                # Basic cleanup
-                clean_text = material.strip()
-                if "```json" in clean_text:
-                    clean_text = clean_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in clean_text:
-                    clean_text = clean_text.split("```")[1].split("```")[0].strip()
-                
-                ai_generated_content = json.loads(clean_text)
-            except:
-                log.error("Failed to parse streamed JSON content at the end.")
-                ai_generated_content = {"error": "Invalid JSON", "raw": material}
+        # 3. Handle Result: Promote nested 'content' to top-level for frontend compatibility
+        ai_generated_content = material if isinstance(material, dict) else {}
+        
+        # Promote nested 'content' to top-level for frontend compatibility
+        top_level_content = ai_generated_content.get("content")
+        
+        # [DIAGNOSTIC] Log structure to verify the fix
+        log.info(f"[DEBUG_GEN] type={material_type} top_level={type(top_level_content).__name__}")
+        if isinstance(top_level_content, dict):
+            log.info(f"[DEBUG_GEN] keys={list(top_level_content.keys())}")
+            
+        final_content_text = top_level_content
 
+        log.info(f"[GENERATION] [SUCCESS] duration={time.perf_counter() - start_time:.2f}s type={material_type} job={job_id}")
+        
         return {
             "status": "SUCCESS",
             "subject_id": subject_id,
             "material_type": material_type,
-            "content": material if material_type == "summary" else None,
+            "content": final_content_text,
             "ai_generated_content": ai_generated_content
         }
     except Exception as e:

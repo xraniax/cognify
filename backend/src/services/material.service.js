@@ -8,6 +8,7 @@ import User from '../models/user.model.js';
 import SubjectService from './subject.service.js';
 import SettingsService from './settings.service.js';
 import QuotaService from './quota.service.js';
+import FallbackGenerationService from './fallback_generation.service.js';
 import { query } from '../utils/config/db.js';
 import {
     COMPLETED,
@@ -114,7 +115,7 @@ class MaterialService {
                     headers: {
                         ...formData.getHeaders()
                     },
-                    timeout: 30000
+                    timeout: 300000
                 }));
 
             const { job_id } = aiResponse.data;
@@ -156,7 +157,8 @@ class MaterialService {
             return material;
         }
 
-        // 2. Watchdog: check if job is stuck in PROCESSING for too long (> 10 mins)
+        // 2. Watchdog: check if job is stuck in PROCESSING for too long (> 3 mins)
+        // Note: Engine is now capped at ~2.5 min total (90s initial + 2×30s completion).
         if (normalizeStatus(material.status) === PROCESSING && material.started_at) {
             const startedAt = new Date(material.started_at);
             const now = new Date();
@@ -187,17 +189,23 @@ class MaterialService {
                             processed_at: new Date().toISOString()
                         };
 
-                        if (result.content) {
-                            // Text-based material (e.g., summary)
+                        const contentStr = result.content ? (typeof result.content === 'object' ? JSON.stringify(result.content) : result.content) : null;
+                        const aiContentStr = result.ai_generated_content ? (typeof result.ai_generated_content === 'string' ? result.ai_generated_content : JSON.stringify(result.ai_generated_content)) : null;
+
+                        if (result.content && result.ai_generated_content) {
+                            await query(
+                                'UPDATE materials SET content = $2, ai_generated_content = $3, status = $4, completed_at = $5, processed_at = $6 WHERE id = $1 AND user_id = $7',
+                                [materialId, contentStr, aiContentStr, COMPLETED, updateData.completed_at, updateData.processed_at, userId]
+                            );
+                        } else if (result.content) {
                             await query(
                                 'UPDATE materials SET content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
-                                [materialId, result.content, COMPLETED, updateData.completed_at, updateData.processed_at, userId]
+                                [materialId, contentStr, COMPLETED, updateData.completed_at, updateData.processed_at, userId]
                             );
                         } else if (result.ai_generated_content) {
-                            // Structured material (e.g., quiz, flashcards)
                             await query(
                                 'UPDATE materials SET ai_generated_content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
-                                [materialId, JSON.stringify(result.ai_generated_content), COMPLETED, updateData.completed_at, updateData.processed_at, userId]
+                                [materialId, aiContentStr, COMPLETED, updateData.completed_at, updateData.processed_at, userId]
                             );
                         }
                     } else {
@@ -260,7 +268,7 @@ class MaterialService {
                 top_k: 8, // Increase context for better chat
                 user_id: userId
             };
-            const options = { timeout: 30000 };
+            const options = { timeout: 300000 };
 
             const aiResponse = process.env.NODE_ENV === 'test' && global.__mockAxiosPost
                 ? await global.__mockAxiosPost(endpoint, payload, options)
@@ -295,12 +303,20 @@ class MaterialService {
     /**
      * AI Generation grounded in a subject's knowledge base.
      */
-    static async generateWithContext(userId, materialIds, taskType, subjectId = null, genOptions = {}) {
-        const sourceDocuments = await Material.findByIds(materialIds, userId);
+    static async generateWithContext(userId, subjectId, materialIds, taskType, genOptions = {}) {
+        // Guard: sanitize materialIds to only valid UUID strings (prevents SQL malformed array literal errors)
+        const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const safeIds = (Array.isArray(materialIds) ? materialIds : [])
+            .filter(id => typeof id === 'string' && UUID_PATTERN.test(id));
+
+        const sourceDocuments = await Material.findByIds(safeIds, userId);
         if (sourceDocuments.length === 0 && !subjectId) return { result: "No source documents selected for context." };
 
         const finalSubjectId = subjectId || (sourceDocuments.length > 0 ? sourceDocuments[0].subject_id : null);
         if (!finalSubjectId) return { result: "No subject context available for generation." };
+
+        // 1. Build Shared Generation Plan (GPS)
+        const gps = this._buildGPS(taskType, genOptions);
 
         // Map backend task types to engine material types
         const typeMap = {
@@ -311,60 +327,145 @@ class MaterialService {
         };
         const materialType = typeMap[taskType] || 'summary';
 
+        // 2. Resolve Title (Unique Naming)
+        const displayType = materialType.charAt(0).toUpperCase() + materialType.slice(1);
+        const subject = await Subject.findById(finalSubjectId, userId);
+        const subjectName = subject ? subject.name : 'Unknown Subject';
+        let contextTitle = sourceDocuments.length === 1 ? sourceDocuments[0].title : (sourceDocuments.length > 1 ? 'Multiple Sources' : subjectName);
+        const baseTitle = `${displayType} of ${contextTitle}`;
+        const finalTitle = await this._resolveUniqueTitle(userId, finalSubjectId, baseTitle);
+
+        // 3. Create placeholder record
+        const materialRecord = await Material.create(
+            userId,
+            finalSubjectId,
+            finalTitle,
+            '',
+            materialType,
+            PENDING_JOB
+        );
+
+        const enginePayload = {
+            subject_id: finalSubjectId,
+            material_type: materialType,
+            chunks: sourceDocuments.map(d => d.content),
+            topic: genOptions.topic,
+            language: genOptions.language || 'en',
+            generation_options: gps
+        };
+
+        // 4. Health Watchdog & Dual-Path Routing
         try {
-            const endpoint = `${process.env.ENGINE_URL}/generate`;
-            const payload = {
-                subject_id: finalSubjectId,
-                material_type: materialType,
-                top_k: 10, // More context for study material generation
-                user_id: userId,
-                options: genOptions
+            console.log(`[MaterialService] Routing to Primary Path (Python Engine) for Material ${materialRecord.id}`);
+            
+            // Health Watchdog: Short timeout for triggers
+            const response = await axios.post(`${process.env.ENGINE_URL}/generate`, enginePayload, {
+                timeout: 300000 // 5m Watchdog
+            });
 
-            };
-            const options = { timeout: 300000 }; // 5 minutes for generation
-            const aiResponse = await ((process.env.NODE_ENV === 'test' && global.__mockAxiosPost)
-                ? global.__mockAxiosPost(endpoint, payload, options)
-                : axios.post(endpoint, payload, options));
-
-            const result = aiResponse.data;
-
-            // 3. Create a placeholder material record in the DB
-            const subject = await Subject.findById(finalSubjectId, userId);
-            const subjectName = subject ? subject.name : 'Unknown Subject';
-            const displayType = materialType.charAt(0).toUpperCase() + materialType.slice(1);
-            let contextTitle = subjectName;
-            if (sourceDocuments.length === 1) {
-                contextTitle = sourceDocuments[0].title;
-            } else if (sourceDocuments.length > 1) {
-                contextTitle = 'Multiple Sources';
-            }
-            const title = `${displayType} of ${contextTitle}`;
-
-            const materialRecord = await Material.create(
-                userId,
-                finalSubjectId,
-                title,
-                '', // empty content initially
-                materialType,
-                PROCESSING,
-                result.job_id
-            );
-
-            console.info(`[MaterialService] Generation job tracked: ${result.job_id} for material: ${materialRecord.id}`);
-
+            const result = response.data;
+            await Material.updateStatus(materialRecord.id, userId, PROCESSING, result.job_id);
+            
             return {
-                status: result.status,
+                status: 'accepted',
                 job_id: result.job_id,
                 material_id: materialRecord.id
             };
+
         } catch (error) {
-            console.error('[MaterialService] Engine Generate Error:', error.message);
-            const isTimeout = error.code === 'ECONNABORTED' || error.message.includes('timeout');
-            const enhancedError = new Error(isTimeout ? 'AI engine took too long to generate content.' : 'AI engine generation failed.');
-            enhancedError.statusCode = 503;
-            enhancedError.code = isTimeout ? 'ENGINE_TIMEOUT' : 'ENGINE_UNAVAILABLE';
-            throw enhancedError;
+            console.error(`[MaterialService] Primary Path Failed: ${error.message}. Triggering Fallback Path.`);
+            
+            // 5. Fallback Path (Synchronous Node.js + Ollama)
+            try {
+                const context = enginePayload.chunks.join('\n\n');
+                const fallbackResult = await FallbackGenerationService.generateSync(
+                    userId, 
+                    materialRecord.id, 
+                    materialType, 
+                    gps, 
+                    context
+                );
+                
+                return {
+                    status: 'success',
+                    material_id: materialRecord.id,
+                    is_fallback: true
+                };
+            } catch (fallbackError) {
+                console.error(`[MaterialService] Critical Failure: Both paths failed.`, fallbackError);
+                await Material.recordFailure(materialRecord.id, userId, `All generation paths failed: ${fallbackError.message}`);
+                throw fallbackError;
+            }
         }
+    }
+
+    /**
+     * Builds the Shared Generation Policy (GPS) based on UI preferences.
+     */
+    static _buildGPS(taskType, options) {
+        const difficultyMap = {
+            'Intro': 'introductory',
+            'Inter': 'intermediate',
+            'Adv': 'advanced'
+        };
+
+        const gps = {
+            total_count: Math.max(1, parseInt(options.count) || 5),
+            difficulty: difficultyMap[options.difficulty] || 'intermediate',
+            distribution: [],
+            config_version: 1 // Match engine's CURRENT_CONFIG_VERSION
+        };
+
+        if (taskType === 'mock_exam') {
+            const rawTypes = options.examTypes || ['single_choice', 'multiple_select', 'short_answer'];
+            const types = (Array.isArray(rawTypes) && rawTypes.length > 0) ? rawTypes : ['single_choice', 'multiple_select', 'short_answer'];
+            
+            const countPerType = Math.floor(gps.total_count / types.length);
+            
+            const typeMapping = {
+                'single_choice': 'mcq',
+                'multiple_select': 'mcq',
+                'short_answer': 'essay',
+                'problem': 'essay',
+                'scenario': 'essay',
+                'fill_blank': 'fill_blank',
+                'matching': 'matching'
+            };
+
+            gps.distribution = types.map((type, idx) => ({
+                type: typeMapping[type] || 'mcq',
+                count: (idx === types.length - 1) 
+                    ? gps.total_count - (countPerType * (types.length - 1)) 
+                    : countPerType
+            }));
+        } else {
+            // Mapping for other types to Engine-supported Question types
+            const typeMapping = {
+                'quiz': 'mcq',
+                'flashcards': 'mcq',
+                'mock_exam': 'mcq',
+                'summary': 'mcq' // Summary distribution is ignored but type must be valid
+            };
+            const engineType = typeMapping[taskType] || 'mcq';
+            gps.distribution = [{ type: engineType, percentage: 100 }];
+        }
+
+        return gps;
+    }
+
+    /**
+     * Ensure title uniqueness within a subject.
+     */
+    static async _resolveUniqueTitle(userId, subjectId, baseTitle) {
+        let uniqueTitle = baseTitle;
+        let counter = 1;
+        
+        while (await Material.findByTitle(userId, subjectId, uniqueTitle)) {
+            uniqueTitle = `${baseTitle} (${counter})`;
+            counter++;
+        }
+        
+        return uniqueTitle;
     }
     /**
      * Internal helper to physically delete associated files from disk and DB.
@@ -454,6 +555,29 @@ class MaterialService {
             throw new Error('Material not found or not in trash');
         }
         return material;
+    }
+
+    /**
+     * Permanently delete a single trashed material and its associated file.
+     */
+    static async permanentDeleteMaterial(materialId, userId) {
+        await MaterialService._garbageCollectFile(materialId);
+        const deleted = await Material.permanentDelete(materialId, userId);
+        if (!deleted) {
+            throw new Error('Material not found or not in trash');
+        }
+        return true;
+    }
+
+    /**
+     * Permanently delete all trashed materials for a user and their files.
+     */
+    static async emptyTrash(userId) {
+        // Collect file info before deletion so we can clean up disk
+        const trashItems = await Material.findDeleted(userId);
+        await Promise.all(trashItems.map(m => MaterialService._garbageCollectFile(m.id)));
+        const deleted = await Material.emptyTrash(userId);
+        return deleted.length;
     }
 }
 

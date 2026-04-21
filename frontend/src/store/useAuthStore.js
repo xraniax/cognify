@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { authService } from '@/features/auth/services/AuthService';
+import { profileService } from '@/features/user/services/ProfileService';
 import { useUIStore } from './useUIStore';
 import toast from 'react-hot-toast';
 
@@ -114,6 +115,28 @@ export const useAuthStore = create((set, get) => ({
                 error: null,
                 data: { ...state.data, user: null, isInitialized: true }
             }));
+        },
+
+        deleteAccount: async () => {
+            const uiActions = useUIStore.getState().actions;
+            uiActions.setLoading('auth', true, 'Permanently deleting account...', true);
+            try {
+                await profileService.deleteProfile();
+                localStorage.removeItem('token');
+                set((state) => ({
+                    ...state,
+                    error: null,
+                    data: { ...state.data, user: null, isInitialized: true }
+                }));
+                toast.success('Your account has been deleted.');
+                return true;
+            } catch (err) {
+                const message = err.message || 'Failed to delete account';
+                toast.error(message);
+                throw err;
+            } finally {
+                uiActions.setLoading('auth', false);
+            }
         }
     }
 }));

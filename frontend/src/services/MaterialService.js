@@ -21,12 +21,14 @@ export const MaterialService = {
     rename: (id, title) => api.patch(`/materials/${id}`, { title }),
     delete: (id) => api.delete(`/materials/${id}`),
     restore: (id) => api.post(`/materials/${id}/restore`),
+    permanentDelete: (id) => api.delete(`/materials/${id}/permanent`),
+    emptyTrash: () => api.delete('/materials/trash'),
     cancel: (id) => api.post(`/materials/${id}/cancel`),
 
     // AI Generation & Streaming
     generate: (materialIds, taskType, subjectId, genOptions) =>
         api.post('/materials/generate-combined', { materialIds, taskType, subjectId, genOptions }),
-    
+
     sync: (id, signal) => api.get(`/materials/${id}/sync`, { signal }),
 
     chat: (materialIds, question) => api.post('/materials/chat-combined', { materialIds, question }),

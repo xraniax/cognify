@@ -4,6 +4,11 @@ from uuid import UUID
 from sqlalchemy import select
 import time
 from utils.logging import get_job_logger
+import os
+
+# CONFIGURATION FLAGS
+QUIZ_TOP_K = int(os.getenv("QUIZ_TOP_K", "10"))
+ENABLE_RERANKING_PER_TASK = os.getenv("ENABLE_RERANKING_PER_TASK", "true").lower() == "true"
 try:
     from models import Chunk, Document
 except ImportError:
@@ -22,7 +27,8 @@ def retrieve_chunks_by_topic(
     topic: Optional[str] = None,
     top_k: int = 5,
     job_id: Optional[str] = None,
-    rerank: bool = True
+    rerank: bool = True,
+    task_type: Optional[str] = None
 ) -> List[Chunk]:
     """
     Retrieve the top_k most relevant chunks for a given topic within a subject.
@@ -32,8 +38,14 @@ def retrieve_chunks_by_topic(
     1. Bi-Encoder (Vector search) for high recall.
     2. Cross-Encoder (Reranker) for high precision.
     """
+    # OPTIMIZATION: Disable reranking for quiz generation to save CPU/Latency
+    effective_rerank = rerank
+    if task_type == "quiz" or not ENABLE_RERANKING_PER_TASK:
+        effective_rerank = False
+        top_k = QUIZ_TOP_K if task_type == "quiz" else top_k
+        
     log = get_job_logger(job_id, "engine-retrieval")
-    log.info(f"STEP: RETRIEVAL STARTED for subject {subject_id}, topic='{topic}', rerank={rerank}")
+    log.info(f"STEP: RETRIEVAL STARTED for subject {subject_id}, topic='{topic}', rerank={effective_rerank} task={task_type}")
     start_time = time.perf_counter()
 
     # if no topic, just return all chunks for the subject
@@ -47,7 +59,7 @@ def retrieve_chunks_by_topic(
 
     # --- Stage 1: Vector Search (Recall) ---
     # Retrieve more candidates than top_k if we are going to rerank
-    recall_k = top_k * 3 if rerank else top_k
+    recall_k = top_k * 3 if effective_rerank else top_k
     
     # 1️⃣ embed the topic
     topic_embedding = embed_step([topic], job_id=job_id)[0]
@@ -70,7 +82,7 @@ def retrieve_chunks_by_topic(
         return []
 
     # --- Stage 2: Reranking (Precision) ---
-    if rerank and len(candidates) > 1:
+    if effective_rerank and len(candidates) > 1:
         log.info(f"STEP: RERANKING {len(candidates)} candidates for query: '{topic}'")
         contents = [c.content for c in candidates if c.content]
         

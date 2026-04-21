@@ -12,22 +12,23 @@ const Welcome = () => {
     }
 
     return (
-        <div className="min-h-[calc(100vh-80px)] flex flex-col bg-[#FFF8F0]/30 animate-in fade-in duration-700">
+        <div className="min-h-[calc(100vh-80px)] flex flex-col bg-gradient-to-br from-indigo-50 via-white to-pink-50 animate-in fade-in duration-700">
             {/* Hero Section */}
-            <main className="flex-1 flex flex-col items-center justify-center text-center px-6 pt-16 pb-24 relative overflow-hidden">
-                {/* Decorative background elements */}
-                <div className="absolute top-1/4 -left-32 w-96 h-96 bg-purple-200/40 rounded-full blur-3xl mix-blend-multiply opacity-50 animate-blob"></div>
-                <div className="absolute top-1/4 -right-32 w-96 h-96 bg-indigo-200/40 rounded-full blur-3xl mix-blend-multiply opacity-50 animate-blob animation-delay-2000"></div>
-                <div className="absolute -bottom-32 left-1/2 -translate-x-1/2 w-96 h-96 bg-mint-200/40 rounded-full blur-3xl mix-blend-multiply opacity-50 animate-blob animation-delay-4000"></div>
+            <main className="flex-1 flex flex-col items-center justify-center text-center px-6 pt-16 pb-24 relative">
+                {/* Decorative background elements — overflow clipped independently */}
+                <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                    <div className="absolute top-1/4 -left-32 w-96 h-96 bg-purple-400 rounded-full mix-blend-multiply blur-[128px] opacity-40 animate-neural"></div>
+                    <div className="absolute top-1/4 -right-32 w-96 h-96 bg-pink-400 rounded-full mix-blend-multiply blur-[128px] opacity-40 animate-neural" style={{ animationDelay: '2s' }}></div>
+                </div>
 
                 <div className="relative z-10 max-w-4xl mx-auto space-y-8 flex flex-col items-center">
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="inline-flex items-center justify-center p-2 bg-purple-50 rounded-2xl border border-purple-100/50 mb-4 shadow-sm"
+                        className="inline-flex items-center justify-center p-1 rounded-full mb-6 bg-white/80 backdrop-blur-md border-2 shadow-sm border-purple-100 hover:border-purple-300 hover:shadow-purple-100 transition-all duration-300"
                     >
-                        <div className="flex items-center gap-2 px-3 py-1 bg-white rounded-xl shadow-sm text-purple-600 font-bold text-xs uppercase tracking-widest">
-                            <Sparkles className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-2 px-4 py-1.5 font-black text-[10px] uppercase tracking-[0.2em] text-[var(--c-primary)]">
+                            <Sparkles className="w-4 h-4 text-pink-500 animate-pulse" />
                             <span>AI-Powered E-Learning</span>
                         </div>
                     </motion.div>
@@ -36,11 +37,14 @@ const Welcome = () => {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.1 }}
-                        className="text-6xl md:text-8xl font-black text-gray-900 tracking-tighter leading-[1.1]"
+                        className="text-6xl md:text-8xl font-black tracking-tight leading-[1.1] text-indigo-950"
                     >
                         Cultivate Your <br />
-                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-indigo-600 drop-shadow-sm">
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-500 to-pink-500 relative inline-block">
                             Cognitive Garden
+                            <svg className="absolute w-full h-4 -bottom-2 left-0 text-pink-400 opacity-60" viewBox="0 0 100 20" preserveAspectRatio="none">
+                                <path d="M0 10 Q 50 20 100 10" fill="transparent" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+                            </svg>
                         </span>
                     </motion.h1>
 
@@ -48,7 +52,7 @@ const Welcome = () => {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.2 }}
-                        className="text-xl md:text-2xl text-gray-500 font-medium max-w-2xl leading-relaxed"
+                        className="text-xl md:text-2xl font-bold max-w-2xl leading-relaxed text-gray-500 mt-6"
                     >
                         Transform scattered documents and lecture notes into active, intelligent study spaces. Experience retrieval-augmented tutoring tailored exactly to your curriculum.
                     </motion.p>
@@ -57,11 +61,11 @@ const Welcome = () => {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.3 }}
-                        className="flex flex-col sm:flex-row items-center gap-4 pt-8 w-full sm:w-auto"
+                        className="flex flex-col sm:flex-row items-center gap-5 pt-8 w-full sm:w-auto"
                     >
                         <Link
                             to="/dashboard"
-                            className="btn-vibrant w-full sm:w-auto px-10 py-5 text-lg flex items-center justify-center gap-3 group relative overflow-hidden"
+                            className="btn-vibrant w-full sm:w-auto group relative overflow-hidden text-lg"
                         >
                             <span className="relative z-10 font-bold flex items-center gap-2">
                                 {user ? 'Go to Workspace' : 'Start Exploring'}
@@ -73,14 +77,16 @@ const Welcome = () => {
                             <div className="flex items-center gap-4 w-full sm:w-auto justify-center">
                                 <Link
                                     to="/login"
-                                    className="px-8 py-5 text-gray-500 hover:text-gray-900 font-bold text-lg hover:bg-gray-50 rounded-2xl transition-all"
+                                    className="px-6 py-2.5 font-bold text-sm rounded-lg transition-all border shadow-sm hover:shadow-md"
+                                    style={{ color: 'var(--c-text)', background: 'var(--c-surface)', borderColor: 'var(--c-border)' }}
                                 >
                                     Log In
                                 </Link>
-                                <span className="text-xs font-black text-gray-300 uppercase tracking-widest">or</span>
+                                <span className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--c-text-muted)' }}>or</span>
                                 <Link
                                     to="/dashboard"
-                                    className="text-sm font-bold text-indigo-500 hover:text-indigo-600 underline underline-offset-4 decoration-2"
+                                    className="text-sm font-bold hover:underline underline-offset-4 decoration-2"
+                                    style={{ color: 'var(--c-primary)' }}
                                 >
                                     Try without account
                                 </Link>
@@ -91,28 +97,30 @@ const Welcome = () => {
             </main>
 
             {/* Features Row */}
-            <div className="border-t border-purple-100/30 bg-white/50 backdrop-blur-md py-16">
-                <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
-                    <div className="space-y-4 p-6">
-                        <div className="w-14 h-14 mx-auto bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center shadow-inner">
-                            <Layers className="w-7 h-7" />
+            <div className="py-20 relative z-10 bg-transparent">
+                <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div className="card-minimal space-y-4 hover:border-purple-200">
+                        <div className="w-14 h-14 rounded-[1.25rem] flex items-center justify-center bg-gradient-to-br from-indigo-100 to-purple-100 text-purple-600 shadow-sm shadow-purple-200/50">
+                            <Layers className="w-6 h-6" />
                         </div>
-                        <h3 className="text-xl font-black text-gray-900">Curated Workspaces</h3>
-                        <p className="text-gray-500 font-medium">Organize your materials by subject and instantly locate relevant concepts without cognitive overload.</p>
+                        <h3 className="text-2xl font-black text-indigo-950">Curated Workspaces</h3>
+                        <p className="font-medium text-gray-500 leading-relaxed text-lg">Organize your materials by subject and instantly locate relevant concepts without cognitive overload.</p>
                     </div>
-                    <div className="space-y-4 p-6">
-                        <div className="w-14 h-14 mx-auto bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shadow-inner">
-                            <Brain className="w-7 h-7" />
+                    
+                    <div className="card-minimal space-y-4 hover:border-pink-200">
+                        <div className="w-14 h-14 rounded-[1.25rem] flex items-center justify-center bg-gradient-to-br from-pink-100 to-rose-100 text-pink-600 shadow-sm shadow-pink-200/50">
+                            <Brain className="w-6 h-6" />
                         </div>
-                        <h3 className="text-xl font-black text-gray-900">Contextual AI Tutor</h3>
-                        <p className="text-gray-500 font-medium">Ask questions and receive answers strictly grounded in your uploaded documents and notes.</p>
+                        <h3 className="text-2xl font-black text-indigo-950">Contextual AI Tutor</h3>
+                        <p className="font-medium text-gray-500 leading-relaxed text-lg">Ask questions and receive answers strictly grounded in your uploaded documents and notes.</p>
                     </div>
-                    <div className="space-y-4 p-6">
-                        <div className="w-14 h-14 mx-auto bg-mint-50 text-mint-700 rounded-2xl flex items-center justify-center shadow-inner">
-                            <BookMarked className="w-7 h-7" />
+
+                    <div className="card-minimal space-y-4 hover:border-teal-200">
+                        <div className="w-14 h-14 rounded-[1.25rem] flex items-center justify-center bg-gradient-to-br from-teal-100 to-emerald-100 text-teal-600 shadow-sm shadow-teal-200/50">
+                            <BookMarked className="w-6 h-6" />
                         </div>
-                        <h3 className="text-xl font-black text-gray-900">Active Generation</h3>
-                        <p className="text-gray-500 font-medium">Automatically transform passive PDFs into interactive quizzes and intelligent summaries.</p>
+                        <h3 className="text-2xl font-black text-indigo-950">Active Generation</h3>
+                        <p className="font-medium text-gray-500 leading-relaxed text-lg">Automatically transform passive PDFs into interactive quizzes and intelligent summaries.</p>
                     </div>
                 </div>
             </div>

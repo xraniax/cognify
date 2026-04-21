@@ -503,7 +503,7 @@ async def chat_route(body: ChatRequest, db: Session = Depends(get_db)):
         
         # 2. Generate response
         context = "\n\n".join(chunk_texts)
-        response = generate_chat_response(context, body.question, body.language)
+        response = await generate_chat_response(body.question, context, [], body.language)
         
         return {
             "status": "success",
@@ -522,7 +522,11 @@ async def chat_route(body: ChatRequest, db: Session = Depends(get_db)):
 @app.post("/generate")
 async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
     """Generate study materials using LLM based on retrieved context."""
-    logger.info("Generate request (async): subject=%s, type=%s, topic=%s, user_id=%s, options=%s", body.subject_id, body.material_type, body.topic, body.user_id, body.options)
+    logger.info("Generate request (async): subject=%s, type=%s, topic=%s, user_id=%s, generation_options=%s", body.subject_id, body.material_type, body.topic, body.user_id, body.generation_options)
+    
+    if not body.generation_options:
+        raise HTTPException(status_code=400, detail="Missing generation_options in request payload.")
+
     try:
         # Trigger the async task
         task = task_generate.delay(
@@ -532,7 +536,7 @@ async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
             body.language, 
             body.top_k or 10,
             body.user_id,
-            options=body.options
+            generation_options=body.generation_options
         )
         
         return {
@@ -582,7 +586,7 @@ async def evaluate_answer_route(body: EvaluateAnswerRequest):
     """
     logger.info("Evaluate answer request: q='%s'...", body.question[:50])
     try:
-        result = evaluate_answer_semantically(
+        result = await evaluate_answer_semantically(
             body.question,
             body.correct_answer,
             body.user_answer
@@ -728,8 +732,8 @@ async def debug_generate(body: DebugGenerateRequest, db: Session = Depends(get_d
         
         chunk_texts = [c.content for c in chunks]
         
-        # 2. Generate (Sync)
-        result = generate_study_material(
+        # 2. Generate (Async)
+        result = await generate_study_material(
             chunk_texts, 
             body.material_type, 
             topic=body.topic, 

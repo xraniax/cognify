@@ -20,13 +20,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'cognify-secret',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: false, // Set to true if using https
-        maxAge: 10 * 60 * 1000 // 10 minutes session for OAuth flow
-    }
+  secret: process.env.SESSION_SECRET || 'cognify-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false, // Set to true if using https
+    maxAge: 10 * 60 * 1000 // 10 minutes session for OAuth flow
+  }
 }));
 app.use(passport.initialize());
 app.use(passport.session());

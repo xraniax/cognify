@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 // eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-    CheckCircle2, 
-    XCircle, 
-    RotateCcw, 
+import {
+    CheckCircle2,
+    XCircle,
+    RotateCcw,
     Trophy,
     HelpCircle,
     Info,
@@ -29,13 +29,13 @@ const playTone = (type) => {
     try {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (audioCtx.state === 'suspended') audioCtx.resume();
-        
+
         const oscillator = audioCtx.createOscillator();
         const gainNode = audioCtx.createGain();
-        
+
         oscillator.connect(gainNode);
         gainNode.connect(audioCtx.destination);
-        
+
         if (type === 'correct') {
             oscillator.type = 'sine';
             oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
@@ -60,13 +60,13 @@ const playTone = (type) => {
 
 const ConfettiComponent = () => {
     const [dim, setDim] = useState({ width: window.innerWidth, height: window.innerHeight });
-    
+
     useEffect(() => {
         const handleResize = () => setDim({ width: window.innerWidth, height: window.innerHeight });
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
     }, []);
-    
+
     return <Confetti width={dim.width} height={dim.height} className="!fixed !top-0 !left-0 !z-[9999] pointer-events-none" />;
 };
 // ---------------------------------------------------------------------------
@@ -75,12 +75,12 @@ const ConfettiComponent = () => {
 const mapQuestion = (q) => {
     const question = q.question || q.text || q.title || q.front || '';
     const options = q.options || q.choices || q.answers || [];
-    
+
     // Support multi-property mapping for correct answers
     // 1. Value-based: correct_answer, answer, correctAnswer
     // 2. Index-based: correctAnswers (array of indices), correctIndex
     let correctAnswer = q.correct_answer || q.answer || q.correctAnswer || '';
-    
+
     // If we have correctAnswers as an array of indices, map to the option value
     if (Array.isArray(q.correctAnswers) && q.correctAnswers.length > 0 && options.length > 0) {
         const idx = parseInt(q.correctAnswers[0], 10);
@@ -102,7 +102,7 @@ const mapQuestion = (q) => {
 
 const extractQuizQuestions = (data) => {
     if (!data) return [];
-    
+
     // 0. String handling
     if (typeof data === 'string') {
         try {
@@ -124,15 +124,15 @@ const extractQuizQuestions = (data) => {
     if (Array.isArray(data)) return data.map(mapQuestion);
 
     // 2. Contains standard properties
-    const arrayField = 
-        data.questions || 
-        data.quiz || 
-        data.flashcards || 
-        data.cards || 
+    const arrayField =
+        data.questions ||
+        data.quiz ||
+        data.flashcards ||
+        data.cards ||
         (data.result && (data.result.questions || data.result.quiz || data.result)) ||
-        data.data || 
+        data.data ||
         data.items;
-        
+
     if (Array.isArray(arrayField)) return arrayField.map(mapQuestion);
 
     // 3. Dictionary support: if it's { "1": {...}, "2": {...} }
@@ -146,15 +146,16 @@ const extractQuizQuestions = (data) => {
     // 4. Try recursively unpacking wrapper objects
     if (data.result) return extractQuizQuestions(data.result);
     if (data.data) return extractQuizQuestions(data.data);
-    
+    if (data.content) return extractQuizQuestions(data.content);
+
     return [];
 };
 
 const QuizView = ({ quizData, isExpanded = false }) => {
     const questions = extractQuizQuestions(quizData);
-    
+
     const storageKey = `cognify_quiz_state_${quizData?.id || (questions.length > 0 ? questions[0]?.question?.replace(/\s+/g, '').substring(0, 30) : 'default')}`;
-    
+
     const initialSaved = (() => {
         try {
             const saved = localStorage.getItem(storageKey);
@@ -199,7 +200,7 @@ const QuizView = ({ quizData, isExpanded = false }) => {
 
     const handleSubmit = useCallback(() => {
         if (selectedOption === null || isSubmitted) return;
-        
+
         const isCorrect = selectedOption === currentQuestion.correct_answer;
         if (isCorrect) {
             setScore(prev => prev + 1);
@@ -209,7 +210,7 @@ const QuizView = ({ quizData, isExpanded = false }) => {
             setStreak(0);
             if (!muted) playTone('wrong');
         }
-        
+
         setIsSubmitted(true);
     }, [selectedOption, isSubmitted, currentQuestion, muted]);
 
@@ -283,52 +284,52 @@ const QuizView = ({ quizData, isExpanded = false }) => {
         const percentage = Math.round((score / questions.length) * 100);
         const isPerfect = percentage === 100;
 
-        return (
-            <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="max-w-2xl mx-auto py-12 px-6"
+        return <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="max-w-2xl mx-auto py-16 px-6"
             >
                 {isPerfect && <ConfettiComponent />}
-                <div className="bg-white rounded-[2rem] shadow-2xl shadow-indigo-100/50 border border-gray-100 p-10 text-center relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 to-purple-500" />
+                <div className="rounded-[4rem] border-8 border-white bg-white shadow-2xl p-12 text-center relative overflow-hidden group">
+                    <div className="absolute top-0 left-0 w-full h-4 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500" />
                     
-                    <motion.div 
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                        transition={{ type: "spring", damping: 12 }}
-                        className="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-6"
+                    <motion.div
+                        initial={{ rotate: -20, scale: 0 }}
+                        animate={{ rotate: 0, scale: 1 }}
+                        transition={{ type: "spring", damping: 10, stiffness: 200 }}
+                        className="w-32 h-32 bg-indigo-50 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 shadow-inner group-hover:rotate-6 transition-transform"
                     >
-                        <Trophy className={cn("w-12 h-12", isPerfect ? "text-amber-500" : "text-indigo-500")} />
+                        <Trophy className={cn("w-16 h-16", isPerfect ? "text-amber-500" : "text-indigo-600")} />
                     </motion.div>
-
-                    <h2 className="text-3xl font-black text-gray-900 mb-2">Quiz Complete!</h2>
-                    <p className="text-gray-500 mb-8 font-medium">
-                        {isPerfect ? "Flawless victory! You knew every single answer." : "You've mastered some new knowledge today."}
+                    
+                    <h2 className="text-4xl font-black text-indigo-950 mb-3 tracking-tight">Quiz Complete!</h2>
+                    <p className="text-gray-400 font-bold uppercase tracking-[0.2em] text-xs mb-10">
+                        {isPerfect ? "Absolute Legend! You mastered it all." : "Great job! Your knowledge is growing fast."}
                     </p>
 
-                    <div className="grid grid-cols-2 gap-4 mb-10">
-                        <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100 mt-2">
-                            <div className="text-4xl font-black text-indigo-600 mb-1">{score}/{questions.length}</div>
-                            <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">Correct Answers</div>
+                    <div className="grid grid-cols-2 gap-6 mb-12">
+                        <div className="bg-indigo-50/50 rounded-[2.5rem] p-8 border-4 border-white shadow-sm transition-transform hover:scale-105">
+                            <div className="text-5xl font-black text-indigo-600 mb-2">{score}/{questions.length}</div>
+                            <div className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Mastered</div>
                         </div>
-                        <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100 mt-2 relative overflow-hidden">
-                            {isPerfect && <div className="absolute inset-0 bg-gradient-to-r from-amber-200/20 to-orange-200/20 animate-pulse" />}
-                            <div className="text-4xl font-black text-purple-600 mb-1 relative z-10">{percentage}%</div>
-                            <div className="text-xs font-bold text-gray-400 uppercase tracking-widest relative z-10">Overall Score</div>
+                        <div className="bg-pink-50/50 rounded-[2.5rem] p-8 border-4 border-white shadow-sm transition-transform hover:scale-105 relative overflow-hidden">
+                            {isPerfect && <div className="absolute inset-0 bg-white/20 animate-pulse" />}
+                            <div className="text-5xl font-black text-pink-600 mb-2 relative z-10">{percentage}%</div>
+                            <div className="text-[10px] font-black text-pink-300 uppercase tracking-widest relative z-10">Success Rate</div>
                         </div>
                     </div>
 
-                    <button 
-                        onClick={resetQuiz}
-                        className="flex items-center gap-2 px-8 py-4 bg-gray-900 text-white rounded-2xl font-bold hover:bg-black transition-all mx-auto shadow-lg shadow-gray-200"
-                    >
-                        <RotateCcw className="w-5 h-5" />
-                        Try Again
-                    </button>
+                    <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                        <button
+                            onClick={resetQuiz}
+                            className="flex items-center justify-center gap-3 px-10 py-5 bg-indigo-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 hover:scale-105 active:scale-95"
+                        >
+                            <RotateCcw className="w-5 h-5" />
+                            Retry Mission
+                        </button>
+                    </div>
                 </div>
-            </motion.div>
-        );
+            </motion.div>;
     }
 
     const progress = ((currentQuestionIndex) / questions.length) * 100;
@@ -342,7 +343,7 @@ const QuizView = ({ quizData, isExpanded = false }) => {
                     <span className="hidden sm:inline">A-D to select, ↵ to submit</span>
                     <span className="sm:hidden">Keyboard ready</span>
                 </div>
-                <button 
+                <button
                     onClick={() => setMuted(!muted)}
                     className="p-1.5 text-gray-400 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-full border border-gray-100 transition-colors"
                     title={muted ? "Unmute sounds" : "Mute sounds"}
@@ -361,10 +362,10 @@ const QuizView = ({ quizData, isExpanded = false }) => {
                             </span>
                             <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-gray-900">Knowledge Check</h2>
                         </div>
-                        
+
                         <AnimatePresence>
                             {streak >= 3 && (
-                                <motion.div 
+                                <motion.div
                                     initial={{ scale: 0, opacity: 0, y: 10 }}
                                     animate={{ scale: 1, opacity: 1, y: 0 }}
                                     exit={{ scale: 0, opacity: 0, y: -10 }}
@@ -384,7 +385,7 @@ const QuizView = ({ quizData, isExpanded = false }) => {
                 {/* Mobile Streak Indicator */}
                 <AnimatePresence>
                     {streak >= 3 && (
-                        <motion.div 
+                        <motion.div
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
@@ -395,130 +396,121 @@ const QuizView = ({ quizData, isExpanded = false }) => {
                         </motion.div>
                     )}
                 </AnimatePresence>
-                <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
-                    <motion.div 
+                <div className="h-4 w-full bg-white rounded-full overflow-hidden shadow-inner border-2 border-indigo-50 p-1">
+                    <motion.div
+                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 shadow-sm"
                         initial={{ width: 0 }}
                         animate={{ width: `${progress}%` }}
-                        className={cn(
-                            "h-full transition-colors duration-500",
-                            streak >= 3 ? "bg-gradient-to-r from-orange-400 to-rose-500" : "bg-gradient-to-r from-indigo-500 to-purple-500"
-                        )}
+                        transition={{ duration: 0.5, ease: "easeOut" }}
                     />
                 </div>
             </div>
 
-            {/* Question Card */}
             <AnimatePresence mode="wait">
                 <motion.div
                     key={currentQuestionIndex}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="bg-white rounded-[2rem] shadow-xl shadow-indigo-100/20 border border-gray-100 p-6 sm:p-8 md:p-10 mb-8"
+                    initial={{ opacity: 0, x: 50, rotate: 1 }}
+                    animate={{ opacity: 1, x: 0, rotate: 0 }}
+                    exit={{ opacity: 0, x: -50, rotate: -1 }}
+                    transition={{ type: "spring", damping: 15 }}
+                    className="relative"
                 >
-                    <h3 className={`font-bold text-gray-800 leading-tight transition-all duration-500 ${isExpanded ? 'text-2xl sm:text-3xl mb-12' : 'text-lg sm:text-xl md:text-2xl mb-10'}`}>
-                        {currentQuestion.question}
-                    </h3>
+                    <div className="absolute -top-12 -left-6 w-24 h-24 bg-indigo-100/50 rounded-full blur-3xl -z-10"></div>
+                    <div className="absolute -bottom-12 -right-6 w-32 h-32 bg-pink-100/50 rounded-full blur-3xl -z-10"></div>
+                    
+                    <div className="rounded-[3.5rem] border-[12px] border-white bg-white shadow-2xl p-8 md:p-12 relative overflow-hidden group">
+                        <div className="inline-flex items-center gap-2 px-5 py-2 rounded-2xl bg-indigo-50 text-indigo-600 font-black uppercase tracking-widest text-[10px] mb-8">
+                            <HelpCircle className="w-4 h-4" />
+                            Question {currentQuestionIndex + 1}
+                        </div>
+                        
+                        <h3 className="text-xl md:text-3xl font-black text-indigo-950 mb-12 leading-tight tracking-tight">
+                            {currentQuestion.question}
+                        </h3>
 
-                    <div className="space-y-3 sm:space-y-4">
-                        {currentQuestion.options && currentQuestion.options.length > 0 ? (
-                            currentQuestion.options.map((option, idx) => {
+                        <div className="grid grid-cols-1 gap-4">
+                            {currentQuestion.options.map((option, i) => {
+                                const isCorrect = option === currentQuestion.correct_answer;
                                 const isSelected = selectedOption === option;
-                                const isCorrect = isSubmitted && option === currentQuestion.correct_answer;
-                                const isWrong = isSubmitted && isSelected && option !== currentQuestion.correct_answer;
+                                const showCorrect = isSubmitted && isCorrect;
+                                const showWrong = isSubmitted && isSelected && !isCorrect;
 
                                 return (
-                                    <motion.button
-                                        key={idx}
-                                        whileHover={!isSubmitted ? { scale: 1.01 } : {}}
-                                        whileTap={!isSubmitted ? { scale: 0.99 } : {}}
+                                    <button
+                                        key={i}
                                         onClick={() => handleOptionSelect(option)}
                                         disabled={isSubmitted}
                                         className={cn(
-                                            "w-full p-4 sm:p-5 rounded-xl sm:rounded-2xl text-left font-bold transition-all border-2 flex items-center justify-between group",
-                                            !isSubmitted && isSelected && "border-indigo-500 bg-indigo-50 text-indigo-700 shadow-lg shadow-indigo-100",
-                                            !isSubmitted && !isSelected && "border-gray-50 bg-gray-50 text-gray-600 hover:border-gray-200 hover:bg-white",
-                                            isSubmitted && isCorrect && "border-emerald-500 bg-emerald-50 text-emerald-700",
-                                            isSubmitted && isWrong && "border-rose-500 bg-rose-50 text-rose-700",
-                                            isSubmitted && !isCorrect && !isWrong && "border-gray-50 bg-gray-50 text-gray-300 opacity-50"
+                                            "group relative flex items-center gap-5 p-6 rounded-[2.5rem] border-4 transition-all duration-300 text-left font-bold text-lg active:scale-[0.98]",
+                                            isSelected && !isSubmitted ? "border-indigo-400 bg-indigo-50 shadow-lg shadow-indigo-100 -translate-y-1" : 
+                                            showCorrect ? "border-green-400 bg-green-50 shadow-lg shadow-green-100" :
+                                            showWrong ? "border-red-400 bg-red-50" :
+                                            "border-gray-50 bg-gray-50/50 hover:border-indigo-100 hover:bg-white hover:shadow-xl hover:shadow-indigo-900/5 hover:-translate-y-0.5"
                                         )}
                                     >
-                                        <div className="flex items-center gap-3 sm:gap-4">
-                                            <div className={cn(
-                                                "w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center text-xs sm:text-sm font-black transition-colors shadow-sm",
-                                                !isSubmitted && isSelected ? "bg-indigo-500 text-white" : "bg-white text-gray-400 group-hover:text-indigo-400 border border-gray-100",
-                                                isSubmitted && isCorrect && "bg-emerald-500 text-white border-transparent",
-                                                isSubmitted && isWrong && "bg-rose-500 text-white border-transparent"
-                                            )}>
-                                                {String.fromCharCode(65 + idx)}
-                                            </div>
-                                            <span className="flex-1 text-sm sm:text-base leading-snug">{option}</span>
+                                        <div className={cn(
+                                            "w-12 h-12 rounded-2xl flex items-center justify-center text-xl font-black uppercase shadow-sm transition-all group-hover:scale-110",
+                                            isSelected && !isSubmitted ? "bg-indigo-500 text-white" :
+                                            showCorrect ? "bg-green-500 text-white" :
+                                            showWrong ? "bg-red-500 text-white" :
+                                            "bg-white text-indigo-300 border-2 border-indigo-50 group-hover:bg-indigo-50 group-hover:text-indigo-500"
+                                        )}>
+                                            {String.fromCharCode(65 + i)}
                                         </div>
+                                        <span className={cn(
+                                            "flex-1 transition-colors",
+                                            isSelected && !isSubmitted ? "text-indigo-950" :
+                                            showCorrect ? "text-green-950" :
+                                            showWrong ? "text-red-950" :
+                                            "text-gray-600"
+                                        )}>{option}</span>
                                         
-                                        {isSubmitted && (
-                                            <div className="flex-shrink-0 ml-3 sm:ml-4">
-                                                {isCorrect && <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-500" />}
-                                                {isWrong && <XCircle className="w-5 h-5 sm:w-6 sm:h-6 text-rose-500" />}
-                                            </div>
-                                        )}
-                                    </motion.button>
+                                        {showCorrect && <CheckCircle2 className="w-8 h-8 text-green-500 animate-in zoom-in duration-300" />}
+                                        {showWrong && <XCircle className="w-8 h-8 text-red-500 animate-in zoom-in duration-300" />}
+                                    </button>
                                 );
-                            })
-                        ) : (
-                            <div className="p-6 sm:p-8 bg-gray-50 rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200 text-center">
-                                <p className="text-gray-500 font-medium mb-2 italic">Thinking of the answer?</p>
-                                <p className="text-gray-400 text-xs">This is a short-answer question. Press 'Reveal Answer' when you're ready.</p>
-                            </div>
-                        )}
+                            })}
+                        </div>
                     </div>
-
-                    <AnimatePresence>
-                        {isSubmitted && (
-                            <motion.div
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                className="mt-8 sm:mt-10 overflow-hidden"
-                            >
-                                <div className="p-4 sm:p-6 bg-indigo-50/50 rounded-xl sm:rounded-2xl border border-indigo-100 flex gap-3 sm:gap-4">
-                                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-sm">
-                                        <Info className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-500" />
-                                    </div>
-                                    <div>
-                                        <h4 className="font-black text-xs sm:text-sm text-indigo-900 mb-1 uppercase tracking-wider">The Insight</h4>
-                                        <p className="text-indigo-800/80 text-xs sm:text-sm leading-relaxed font-medium">
-                                            {currentQuestion.explanation}
-                                        </p>
-                                    </div>
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
                 </motion.div>
             </AnimatePresence>
 
-            {/* Footer Actions */}
-            <div className="flex justify-end gap-3 sm:gap-4">
-                {!isSubmitted ? (
-                    <button
-                        onClick={handleSubmit}
-                        disabled={currentQuestion.options && currentQuestion.options.length > 0 && selectedOption === null}
-                        className={cn(
-                            "px-6 sm:px-10 py-4 sm:py-5 rounded-xl sm:rounded-2xl font-black transition-all flex items-center gap-2 sm:gap-3 shadow-xl text-sm sm:text-base",
-                            (currentQuestion.options && currentQuestion.options.length > 0 && selectedOption === null)
-                                ? "bg-gray-100 text-gray-300 transform-none cursor-not-allowed" 
-                                : "bg-gray-900 text-white hover:bg-black hover:-translate-y-1 shadow-gray-200"
-                        )}
-                    >
-                        {currentQuestion.options && currentQuestion.options.length > 0 ? 'Submit Answer' : 'Reveal Answer'}
-                        <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
-                    </button>
+            <div className="mt-12 flex justify-center">
+                {isSubmitted ? (
+                    <div className="w-full flex flex-col items-center gap-8 animate-in slide-in-from-bottom-6 duration-700">
+                        <div className="w-full rounded-[3rem] p-10 bg-gradient-to-br from-indigo-50 to-purple-50 border-4 border-white shadow-lg relative overflow-hidden">
+                            <div className="absolute top-0 right-0 p-8 opacity-10">
+                                <Info className="w-24 h-24" />
+                            </div>
+                            <div className="relative z-10">
+                                <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400 mb-4">Deep Dive Insight</h4>
+                                <p className="text-gray-700 font-bold leading-relaxed text-lg italic">
+                                    {currentQuestion.explanation}
+                                </p>
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={handleNext}
+                            className="group flex items-center gap-4 px-10 py-6 bg-indigo-950 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs hover:bg-black transition-all shadow-2xl hover:scale-105 active:scale-95"
+                        >
+                            {currentQuestionIndex === questions.length - 1 ? "See Final Results" : "Next Challenge"}
+                            <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-2" />
+                        </button>
+                    </div>
                 ) : (
                     <button
-                        onClick={handleNext}
-                        className="px-6 sm:px-10 py-4 sm:py-5 rounded-xl sm:rounded-2xl bg-indigo-600 text-white font-black hover:bg-indigo-700 transition-all flex items-center gap-2 sm:gap-3 shadow-xl shadow-indigo-100 hover:-translate-y-1 text-sm sm:text-base"
+                        onClick={handleSubmit}
+                        disabled={selectedOption === null}
+                        className="group relative px-12 py-6 rounded-[2.5rem] font-black uppercase tracking-widest text-xs transition-all duration-300 flex items-center gap-4 active:scale-95 disabled:opacity-30 disabled:grayscale disabled:scale-95"
+                        style={{
+                            background: 'linear-gradient(135deg, #7C5CFC, #F43F5E)',
+                            color: 'white',
+                            boxShadow: '0 20px 40px -10px rgba(124,92,252,0.4)'
+                        }}
                     >
-                        {currentQuestionIndex < questions.length - 1 ? 'Next Question' : 'View Summary'}
-                        <ArrowRight className="w-4 h-4 sm:w-5 sm:h-5" />
+                        <Flame className={cn("w-6 h-6", selectedOption !== null && "animate-pulse")} />
+                        Submit Answer
                     </button>
                 )}
             </div>

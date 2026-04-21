@@ -14,7 +14,7 @@ export const AuthProvider = ({ children }) => {
     const actions = useAuthStore((state) => state.actions);
     
     const { isInitialized, user } = data;
-    const { loadUser, login, register, logout, setUser } = actions;
+    const { loadUser, login, register, logout, setUser, deleteAccount } = actions;
     
     const loading = !isInitialized || !!globalLoading;
 
@@ -36,9 +36,10 @@ export const AuthProvider = ({ children }) => {
         login,
         register,
         logout,
+        deleteAccount,
         updateUser: setUser,
         loginWithToken
-    }), [user, loading, error, login, register, logout, setUser, loginWithToken]);
+    }), [user, loading, error, login, register, logout, deleteAccount, setUser, loginWithToken]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

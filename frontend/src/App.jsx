@@ -52,6 +52,16 @@ const AdminRoute = ({ children }) => {
   return children;
 };
 
+const StudentRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+
+  if (loading) return <RouteLoadingState />;
+  if (!user) return <Navigate to="/login" />;
+  if (user.role === 'admin') return <Navigate to="/admin" />;
+
+  return children;
+};
+
 const AppContent = () => {
   const { loginWithToken } = useAuth();
   const location = useLocation();
@@ -61,10 +71,13 @@ const AppContent = () => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
     if (token) {
-      loginWithToken(token).then(() => {
+      loginWithToken(token).then((loadedUser) => {
         const url = new URL(window.location);
         url.searchParams.delete('token');
         window.history.replaceState({}, document.title, url.pathname + url.search);
+        if (loadedUser?.role === 'admin') {
+          window.location.replace('/admin');
+        }
       }).catch(err => {
         console.error('Landing token handling failed', err);
       });
@@ -80,10 +93,10 @@ const AppContent = () => {
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password/:token" element={<ResetPassword />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/subjects/:id" element={<SubjectDetail />} />
+          <Route path="/dashboard" element={<StudentRoute><Dashboard /></StudentRoute>} />
+          <Route path="/subjects/:id" element={<StudentRoute><SubjectDetail /></StudentRoute>} />
           <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
-          <Route path="/history" element={<History />} />
+          <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
           <Route path="/admin" element={<AdminRoute><AdminLayout><AdminDashboard /></AdminLayout></AdminRoute>} />
