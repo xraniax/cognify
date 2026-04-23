@@ -1,10 +1,21 @@
-# Node/Vite
+########################
+# Node / Frontend
+########################
 node_modules/
+frontend/node_modules/
+backend/node_modules/
 dist/
+build/
+frontend/dist/
+frontend/build/
 npm-debug.log
-package-lock.json
 
+# IMPORTANT: keep lock files for reproducibility
+# package-lock.json (DO NOT IGNORE)
+
+########################
 # Python
+########################
 __pycache__/
 *.pyc
 *.pyo
@@ -13,26 +24,41 @@ env/
 venv/
 *.sqlite3
 
-# Docker
-*.env
-# Node
-node_modules
-frontend/node_modules
-backend/node_modules
-
-# Env files
+########################
+# Environment files (STRICT)
+########################
 .env
 *.env
 backend/.env
 engine/.env
+engine/.env.docker
+engine/.env.local
 db.env
 
-# Build
-frontend/build
-frontend/dist
+# Allow ONLY examples
+!.env.example
+!backend/.env.example
+!engine/.env.example
+!engine/.env.docker.example
 
-# Docker
-postgres_data
+########################
+# Docker / Data
+########################
+postgres_data/
 
+########################
+# Uploads (CRITICAL)
+########################
+backend/uploads/
+engine/uploads/
+
+########################
+# Secrets / Credentials
+########################
+**/service-account.json
 ollama-data/id_ed25519
-ollama-data/id_ed25519.pub
+ollama-data/id_ed25519.pub  
+
+engine/services/credentials/
+
+data/

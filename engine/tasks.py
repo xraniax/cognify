@@ -17,6 +17,7 @@ from celery import chain
 from celery_app import celery_app
 import redis
 import json
+import traceback
 
 # DEPRECATED: Standardizing on utils.logging.get_job_logger
 def get_job_logger_deprecated(job_id):
@@ -296,181 +297,231 @@ def initialize_workspace_config(subject_id: str, existing_opts: Optional[dict] =
         
     return config
 
-@celery_app.task(
-    bind=True,
-    name="tasks.task_generate",
-    autoretry_for=(Exception,),
-    retry_backoff=60,  # Wait 60s before first retry
-    retry_jitter=True,
-    max_retries=2,     # Limit to 2 retries (3 total attempts)
-    soft_time_limit=600,
-    time_limit=900
-)
-def task_generate(self, subject_id, material_type, topic=None, language="en", top_k=10, user_id=None, generation_options=None, **kwargs):
-    """
-    Step 5: Generate study materials (Summary/Quiz/Flashcards/Exam) asynchronously.
-    """
-    # 0. Compatibility Shim: Unify 'options' and 'generation_options'
-    generation_options = generation_options or kwargs.get("options")
 
-    job_id = self.request.id
-    log = get_job_logger(job_id, "tasks.generate")
-    log.info(f"STEP: GENERATION STARTED for subject={subject_id}, type={material_type} (Attempt {self.request.retries + 1})")
-    start_time = time.perf_counter()
+def _normalize_generation_result(material: Any, material_type: str, topic: Optional[str], language: str, top_k: int, subject_id: str) -> dict:
+    """Normalize generation output to the ai_generated_content contract only."""
+    if isinstance(material, dict) and material.get("error"):
+        raise RuntimeError(str(material.get("error")))
 
-    from database import SessionLocal
-    from services.retrieval import retrieve_chunks_by_topic
-    from services.generation import generate_study_material
+    if isinstance(material, dict) and "content" in material and "ai_generated_content" in material:
+        raise ValueError("Mixed contract detected - legacy content leak")
 
+    if isinstance(material, dict) and "ai_generated_content" in material:
+        payload = material.get("ai_generated_content")
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid engine response: ai_generated_content must be an object")
+        if "content" not in payload:
+            raise ValueError("Invalid engine response: ai_generated_content.content is required")
+
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        return {
+            "type": payload.get("type") or material_type,
+            "content": payload.get("content"),
+            "metadata": {
+                "model": os.getenv("OLLAMA_GENERATION_MODEL", "unknown"),
+                "provider": "ollama",
+                **metadata,
+                "additional_info": {
+                    "topic": topic,
+                    "language": language,
+                    "top_k": top_k,
+                    "subject_id": subject_id,
+                },
+            },
+        }
+
+    # Direct output from generate_study_material: {type, content, metadata}
+    if isinstance(material, dict) and "content" in material and "type" in material:
+        metadata = material.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        return {
+            "type": material.get("type") or material_type,
+            "content": material.get("content"),
+            "metadata": {
+                "model": os.getenv("OLLAMA_GENERATION_MODEL", "unknown"),
+                "provider": "ollama",
+                **metadata,
+                "additional_info": {
+                    "topic": topic,
+                    "language": language,
+                    "top_k": top_k,
+                    "subject_id": subject_id,
+                },
+            },
+        }
+
+    # String outputs are allowed and wrapped in the normalized schema.
+    normalized_content = material if isinstance(material, str) else material
+
+    return {
+        "type": material_type,
+        "content": normalized_content,
+        "metadata": {
+            "model": os.getenv("OLLAMA_GENERATION_MODEL", "unknown"),
+            "provider": "ollama",
+            "additional_info": {
+                "topic": topic,
+                "language": language,
+                "top_k": top_k,
+                "subject_id": subject_id,
+            },
+        },
+    }
+
+def _safe_remove(path: Optional[str]) -> None:
+    if not path or not os.path.exists(path):
+        return
+    try:
+        os.remove(path)
+        logger.info("Cleaned up temporary file: %s", path)
+    except OSError as e:
+        logger.error("Cleanup failed for %s: %s", path, e)
+
+@celery_app.task(bind=True, max_retries=3)
+def task_process_document(
+    self,
+    drive_file_id: str,
+    original_filename: str,
+    subject_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+):
+    """Background celery task for document extraction, chunking, embedding, and DB persistence."""
+    task_id = getattr(getattr(self, "request", None), "id", None)
+    started_at = time.time()
+    logger.info(
+        "[PIPELINE] task_start request_id=%s task_id=%s drive_file_id=%s filename=%s subject_id=%s",
+        request_id,
+        task_id,
+        drive_file_id,
+        original_filename,
+        subject_id,
+    )
+    
+    tmp_path = None
     db = SessionLocal()
     try:
-        # 0. Validate subject has documents/chunks (Subject ID Mismatch Guard)
-        from models import Chunk, Document
-        from sqlalchemy import func
-        chunk_count = db.query(func.count(Chunk.id)).join(Document).filter(Document.subject_id == subject_id).scalar()
-        log.info(f"STEP: GENERATION Validating content for subject {subject_id} (found {chunk_count} chunks)")
-        
-        if chunk_count == 0:
-            if self.request.retries < self.max_retries:
-                log.warning(f"STEP: RETRYING - No chunks found for subject {subject_id} (Attempt {self.request.retries + 1}/{self.max_retries}). Waiting for persistence...")
-                raise self.retry(countdown=5) # Wait 5 seconds for race condition
-            else:
-                log.error(f"[ERROR] No chunks found for subject_id: {subject_id} (type={type(subject_id)}) after {self.max_retries} attempts.")
-                # Diagnostic: check if subject exists at all in engine DB
-                from models import Subject as EngineSubject
-                exists = db.query(EngineSubject).filter(EngineSubject.id == subject_id).first() is not None
-                log.error(f"DIAGNOSTIC: Subject {subject_id} exists in engine DB: {exists}")
-                raise ValueError(f"No content found for subject {subject_id}. Please ensure documents are uploaded and processed.")
-
-        # 2. Extract policy directly from generation_options
-        from services.policies import GenerationPolicy
-        
-        if not generation_options:
-            raise ValueError("generation_options must be provided for generation.")
-            
+        logger.info(
+            "[PIPELINE] drive_download_begin request_id=%s task_id=%s drive_file_id=%s",
+            request_id,
+            task_id,
+            drive_file_id,
+        )
         try:
-            policy = GenerationPolicy(**generation_options)
-            log.info(f"[WORKSPACE CHECK] Validated generation policy configuration.")
-            log.info(f"[TRACE] Full generation_options dict: {generation_options}")
-            log.info(f"[TRACE] policy.total_count after parse is: {policy.total_count}")
+            download_started = time.time()
+            tmp_path = download_file_from_drive(drive_file_id, request_id=request_id)
+            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+                logger.warning("Downloaded file is empty: %s", tmp_path)
+            logger.info(
+                "[PIPELINE] drive_download_end request_id=%s task_id=%s tmp_path=%s bytes=%d elapsed_ms=%d",
+                request_id,
+                task_id,
+                tmp_path,
+                os.path.getsize(tmp_path) if tmp_path and os.path.exists(tmp_path) else 0,
+                int((time.time() - download_started) * 1000),
+            )
         except Exception as e:
-            raise ValueError(f"Failed to load GenerationPolicy from generation_options: {e}")
-
-        # 1. Retrieve context (optimized for task type)
-        # Dynamically scale top_k to guarantee sufficient context for large target counts
-        target_count = policy.total_count if policy else 10
-        dynamic_top_k = max(top_k, 20, target_count * 2)
-        log.info(f"[TRACE] Retrieval requested top_k={top_k}, scaled dynamically to dynamic_top_k={dynamic_top_k} to satisfy total_count={target_count}")
-
-        chunks = retrieve_chunks_by_topic(db, subject_id, topic, dynamic_top_k, job_id=job_id, task_type=material_type)
-        chunk_texts = [c.content for c in chunks if c.content]
-        
-        log.info(f"[TRACE] Actually retrieved {len(chunk_texts)} chunks from vector database for subject_id={subject_id}")
-        
-        if not chunk_texts:
-            log.warning(f"STEP: GENERATION FAILED - No content for subject {subject_id}")
-            return {"status": "FAILED", "error": "No content available for this subject"}
-
-        # 3. Generate material
-        import asyncio
-        from services.generation import OLLAMA_GENERATION_TIMEOUT
-        log.info(f"STEP: GENERATING {material_type} PARALLEL (GPS v1.1)...")
-
-        # Call the async version of generate_study_material
-        material = asyncio.run(generate_study_material(
-            chunk_texts, 
-            material_type, 
-            topic, 
-            language, 
-            timeout=generation_options.get("timeout", OLLAMA_GENERATION_TIMEOUT),
-            job_id=job_id, 
-            options=generation_options,
-            policy=policy
-        ))
-        
-        # 3. Handle Result
-        ai_generated_content = material if isinstance(material, dict) else None
-        final_material_text = json.dumps(material) if isinstance(material, dict) else str(material)
-        
-        # SSE Broadcast for UI progress
-        try:
-            r = redis.from_url(os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
-            channel = f"job:{job_id}:stream"
-            r.publish(channel, json.dumps({
-                "status": "completed",
-                "telemetry": material.get("metadata", {}).get("telemetry") if isinstance(material, dict) else None,
-                "is_final": True
-            }))
-        except Exception as e:
-            log.warning(f"[REDIS] Failed to broadcast job completion for {job_id}: {e}")
-
-        duration = time.perf_counter() - start_time
-        log.info(f"[GENERATION] [SUCCESS] duration={duration:.2f}s type={material_type} job={job_id}")
-        
-        # 3. Handle Result: Promote nested 'content' to top-level for frontend compatibility
-        ai_generated_content = material if isinstance(material, dict) else {}
-        
-        # Promote nested 'content' to top-level for frontend compatibility
-        top_level_content = ai_generated_content.get("content")
-        
-        # [DIAGNOSTIC] Log structure to verify the fix
-        log.info(f"[DEBUG_GEN] type={material_type} top_level={type(top_level_content).__name__}")
-        if isinstance(top_level_content, dict):
-            log.info(f"[DEBUG_GEN] keys={list(top_level_content.keys())}")
+            logger.error("Drive download error: %s", e)
+            raise self.retry(exc=e, countdown=15)
             
-        final_content_text = top_level_content
+        logger.info(
+            "[PIPELINE] ingestion_begin request_id=%s task_id=%s tmp_path=%s",
+            request_id,
+            task_id,
+            tmp_path,
+        )
+        try:
+            ingest_started = time.time()
+            ingest_result = ingest_file(
+                db,
+                file_path=tmp_path,
+                user_id=None,
+                subject_id=subject_id,
+                original_filename=original_filename,
+                source_uri=f"https://drive.google.com/file/d/{drive_file_id}/view",
+                request_id=request_id,
+            )
+            logger.info(
+                "[PIPELINE] ingestion_end request_id=%s task_id=%s subject_id=%s document_id=%s chunks=%s elapsed_ms=%d",
+                request_id,
+                task_id,
+                ingest_result.get("subject_id"),
+                ingest_result.get("document_id"),
+                ingest_result.get("chunks"),
+                int((time.time() - ingest_started) * 1000),
+            )
+        except Exception as e:
+            db.rollback()
+            logger.error("Ingestion error for %s: %s", original_filename, e)
+            raise self.retry(exc=e, countdown=10)
 
-        log.info(f"[GENERATION] [SUCCESS] duration={time.perf_counter() - start_time:.2f}s type={material_type} job={job_id}")
-        
+        logger.info(
+            "[PIPELINE] task_success request_id=%s task_id=%s filename=%s total_elapsed_ms=%d",
+            request_id,
+            task_id,
+            original_filename,
+            int((time.time() - started_at) * 1000),
+        )
         return {
-            "status": "SUCCESS",
-            "subject_id": subject_id,
-            "material_type": material_type,
-            "content": final_content_text,
-            "ai_generated_content": ai_generated_content
+            "status": "success",
+            "subject_id": ingest_result.get("subject_id"),
+            "document": original_filename,
+            "chunks": ingest_result.get("chunks", 0),
+            "document_id": ingest_result.get("document_id"),
         }
+
     except Exception as e:
-        log.exception(f"STEP: GENERATION FAILED (Attempt {self.request.retries + 1}): {str(e)}")
-        raise
+        logger.error(f"Task crashed for {original_filename}: {e}")
+        logger.error(traceback.format_exc())
+        raise self.retry(exc=e, countdown=10)
     finally:
+        logger.info(
+            "[PIPELINE] cleanup request_id=%s task_id=%s tmp_path=%s",
+            request_id,
+            task_id,
+            tmp_path,
+        )
+        _safe_remove(tmp_path)
         db.close()
 
 
-# --- LEGACY WRAPPER (subject-level processing, backward compatible) ---
-
-@celery_app.task(name="tasks.processDocument")
-def processDocument(subject_id, uploads_dir=None, file_path=None):
-    """
-    Consolidated subject-level processing.
-    Triggered by the backend for bulk processing.
-    """
-    from services.api import logger as api_logger
-    from services.preprocessing import DEFAULT_UPLOADS_DIR
-    
-    base_dir = uploads_dir if uploads_dir else DEFAULT_UPLOADS_DIR
-    api_logger.info(f"[PIPELINE] Celery worker received tasks.processDocument for subject_id={subject_id}")
-    if file_path:
-        api_logger.info(f"[PIPELINE] Processing specific file_path: {file_path}")
-    api_logger.info(f"[PIPELINE] Using uploads_dir: {base_dir}")
-    
-    from services.processor import process_subject
+@celery_app.task(bind=True, max_retries=3)
+def task_generate_material(self, subject_id: str, material_type: str, topic: Optional[str] = None, language: str = "en", top_k: int = 5, user_id: Optional[str] = None):
+    """Background celery task for executing Retrieval-Augmented LLM generation."""
+    logger.info("Celery task_generate_material started: subject=%s, type=%s, topic=%s", subject_id, material_type, topic)
+    db = SessionLocal()
     try:
-        # process_subject now contains all the fail-fast logic and [PIPELINE] logs
-        result = process_subject(
-            subject_id, 
-            uploads_dir=base_dir,
-            file_path=file_path
+        # 1. Retrieve context chunks
+        chunks = retrieve_chunks_by_topic(db, subject_id, topic, top_k)
+        chunk_texts = [c.content for c in chunks if c.content]
+        
+        logger.info(f"Retrieved {len(chunk_texts)} chunk texts for generation.")
+        
+        if not chunk_texts:
+            raise ValueError("No document chunks found for the given subject or topic.")
+            
+        # 2. Generate material (this handles its own LLM retries)
+        material = generate_study_material(chunk_texts, material_type, topic, language)
+        ai_generated_content = _normalize_generation_result(
+            material,
+            material_type,
+            topic,
+            language,
+            top_k,
+            subject_id,
         )
         
-        if result.get("errors"):
-            error_msg = "; ".join(result["errors"])
-            api_logger.error(f"[PIPELINE] Task finished with errors: {error_msg}")
-            # If no documents were processed correctly, we should fail the task
-            if result.get("total_chunks", 0) == 0:
-                raise ValueError(f"Pipeline failed: {error_msg}")
-        
-        api_logger.info(f"[PIPELINE] Task tasks.processDocument COMPLETED for subject_id={subject_id}")
-        return {"status": "SUCCESS", "subject_id": subject_id, "summary": result}
+        return {
+            "status": "SUCCESS",
+            "material_type": material_type,
+            "ai_generated_content": ai_generated_content,
+        }
     except Exception as e:
-        api_logger.exception(f"[PIPELINE] Task tasks.processDocument FAILED for {subject_id}: {str(e)}")
-        raise # Re-raise to mark task as FAILED in Celery
+        logger.exception("Task Generation failed")
+        # Retry with exponential backoff on failure (likely Ollama timeout)
+        raise self.retry(exc=e, countdown=2 ** self.request.retries * 15)
+    finally:
+        db.close()

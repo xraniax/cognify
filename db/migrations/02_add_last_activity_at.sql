@@ -1,7 +1,7 @@
 -- Migration to add last_activity_at to subjects table for Cognify
 
 -- 1. Add the column
-ALTER TABLE subjects ADD COLUMN last_activity_at TIMESTAMP DEFAULT NOW();
+ALTER TABLE subjects ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ DEFAULT NOW();
 
 -- 2. Initialize it with existing updated_at or created_at for legacy data
 UPDATE subjects SET last_activity_at = COALESCE(updated_at, created_at, NOW());

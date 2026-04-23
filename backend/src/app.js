@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
+import path from 'path';
 import passport from './utils/config/passport.js';
 import session from 'express-session';
 import errorHandler from './middlewares/errorHandler.middleware.js';
@@ -10,10 +11,15 @@ import { apiLimiter } from './middlewares/rateLimiter.middleware.js';
 dotenv.config();
 
 const app = express();
+const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+const uploadStoragePath = process.env.PDF_STORAGE_PATH || 'uploads';
+const normalizedUploadPath = path.isAbsolute(uploadStoragePath)
+  ? uploadStoragePath
+  : path.resolve(uploadStoragePath);
 
 // Middlewares
 app.use(cors({
-  origin: [process.env.FRONTEND_URL || 'http://frontend:3000', 'http://127.0.0.1:3000'],
+  origin: [frontendUrl, 'http://127.0.0.1:3000', 'http://localhost:3000'],
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -35,7 +41,7 @@ app.use(passport.session());
 app.use('/api/', apiLimiter);
 
 // Static files (for uploads)
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(normalizedUploadPath));
 
 // Routes
 import authRoutes from './routes/auth.routes.js';

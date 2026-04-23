@@ -1,11 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/user.model.js';
 
-// Fail fast at startup if JWT_SECRET is missing
-if (!process.env.JWT_SECRET) {
-    throw new Error('FATAL: JWT_SECRET environment variable is not set.');
-}
-
 /**
  * Extracts a Bearer token from an Authorization header string.
  * Returns null if no valid Bearer token is found.
@@ -28,6 +23,14 @@ const PING_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
 const protect = async (req, res, next) => {
     const token = extractBearerToken(req.headers.authorization);
 
+    if (!process.env.JWT_SECRET) {
+        return res.status(500).json({
+            status: 'error',
+            message: 'Server configuration error: JWT secret is missing.',
+            code: 'JWT_SECRET_MISSING',
+        });
+    }
+
     if (process.env.NODE_ENV === 'test' && token === 'test-bypass-token') {
         req.user = { id: 1, name: 'Test User', email: 'test@example.com' };
         return next();
@@ -37,6 +40,7 @@ const protect = async (req, res, next) => {
         return res.status(401).json({
             status: 'error',
             message: 'Not authorized. No token provided.',
+            code: 'TOKEN_MISSING',
         });
     }
 

@@ -8,6 +8,5 @@ router.use(protect);
 
 router.get('/', ProfileController.getProfile);
 router.put('/', ProfileController.updateProfile);
-router.delete('/', ProfileController.deleteProfile);
 
 export default router;

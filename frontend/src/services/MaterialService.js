@@ -29,6 +29,27 @@ export const MaterialService = {
     generate: (materialIds, taskType, subjectId, genOptions) =>
         api.post('/materials/generate-combined', { materialIds, taskType, subjectId, genOptions }),
 
+    generateStream: async (materialIds, taskType, subjectId, genOptions, signal) => {
+        const token = localStorage.getItem('token');
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+        const response = await fetch(`${API_URL}/materials/generate-combined/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ materialIds, taskType, subjectId, genOptions }),
+            signal,
+        });
+
+        if (!response.ok) {
+            const detail = await response.text();
+            throw new Error(detail || `Stream failed with status ${response.status}`);
+        }
+
+        return response;
+    },
+
     sync: (id, signal) => api.get(`/materials/${id}/sync`, { signal }),
 
     chat: (materialIds, question) => api.post('/materials/chat-combined', { materialIds, question }),

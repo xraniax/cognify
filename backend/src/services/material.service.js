@@ -1,6 +1,6 @@
-import axios from 'axios';
 import fs from 'fs';
 import FormData from 'form-data';
+import engineClient from './engine.client.js';
 import Material from '../models/material.model.js';
 import Subject from '../models/subject.model.js';
 import File from '../models/file.model.js';
@@ -107,11 +107,9 @@ class MaterialService {
             }
 
             // Send directly to Python Engine's process-document route
-            const engineUrl = process.env.ENGINE_URL || 'http://engine:8000';
-            const endpoint = `${engineUrl}/process-document`;
             const aiResponse = await ((process.env.NODE_ENV === 'test' && global.__mockAxiosPost)
-                ? global.__mockAxiosPost(endpoint, formData, { headers: formData.getHeaders(), timeout: 30000 })
-                : axios.post(endpoint, formData, {
+                ? global.__mockAxiosPost('/process-document', formData, { headers: formData.getHeaders(), timeout: 30000 })
+                : engineClient.post('/process-document', formData, {
                     headers: {
                         ...formData.getHeaders()
                     },
@@ -133,6 +131,9 @@ class MaterialService {
             }
             return documentRecord ? await Material.findById(documentRecord.id, userId) : null;
         }
+    }
+    static async getMaterialById(userId, materialId) {
+        return await Material.findById(materialId, userId);
     }
 
     /**
@@ -175,7 +176,7 @@ class MaterialService {
         // 3. Sync with Celery if job_id exists
         if (material.job_id) {
             try {
-                const response = await axios.get(`${process.env.ENGINE_URL}/job/${material.job_id}`);
+                const response = await engineClient.get(`/job/${material.job_id}`);
                 const { status, result, error } = response.data;
                 const engineStatus = normalizeStatus(status);
 
@@ -208,6 +209,11 @@ class MaterialService {
                                 [materialId, aiContentStr, COMPLETED, updateData.completed_at, updateData.processed_at, userId]
                             );
                         }
+
+                        await query(
+                            'UPDATE materials SET ai_generated_content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
+                            [materialId, JSON.stringify(result.ai_generated_content), COMPLETED, updateData.completed_at, updateData.processed_at, userId]
+                        );
                     } else {
                         // Standard document processing result (task_ocr/task_chunk/task_embed)
                         const extractedText = result.extracted_text || material.content;
@@ -261,7 +267,6 @@ class MaterialService {
         const subjectId = sourceDocuments[0].subject_id;
 
         try {
-            const endpoint = `${process.env.ENGINE_URL}/chat`;
             const payload = {
                 subject_id: subjectId,
                 question: question,
@@ -271,8 +276,8 @@ class MaterialService {
             const options = { timeout: 300000 };
 
             const aiResponse = process.env.NODE_ENV === 'test' && global.__mockAxiosPost
-                ? await global.__mockAxiosPost(endpoint, payload, options)
-                : await axios.post(endpoint, payload, options);
+                ? await global.__mockAxiosPost('/chat', payload, options)
+                : await engineClient.post('/chat', payload, options);
 
             const result = aiResponse.data;
 
@@ -298,6 +303,39 @@ class MaterialService {
             enhancedError.code = isTimeout ? 'ENGINE_TIMEOUT' : 'ENGINE_UNAVAILABLE';
             throw enhancedError;
         }
+    }
+
+    /**
+     * Streaming generation — proxies engine's /generate/stream SSE directly to the caller.
+     * Returns an axios response with responseType: 'stream' so the controller can pipe it.
+     */
+    static async generateStream(userId, materialIds, taskType, subjectId, genOptions = {}) {
+        const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const safeIds = (Array.isArray(materialIds) ? materialIds : [])
+            .filter(id => typeof id === 'string' && UUID_PATTERN.test(id));
+
+        const sourceDocuments = safeIds.length > 0
+            ? await Material.findByIds(safeIds, userId)
+            : [];
+
+        const finalSubjectId = subjectId || (sourceDocuments.length > 0 ? sourceDocuments[0].subject_id : null);
+        if (!finalSubjectId) throw new Error('No subject context available for generation.');
+
+        const typeMap = { summary: 'summary', quiz: 'quiz', flashcards: 'flashcards', mock_exam: 'exam' };
+        const materialType = typeMap[taskType] || 'summary';
+
+        const enginePayload = {
+            subject_id: finalSubjectId,
+            material_type: materialType,
+            topic: (genOptions || {}).topic,
+            language: (genOptions || {}).language || 'en',
+            top_k: 20,
+        };
+
+        return engineClient.post('/generate/stream', enginePayload, {
+            responseType: 'stream',
+            timeout: 300000,
+        });
     }
 
     /**
@@ -359,8 +397,8 @@ class MaterialService {
             console.log(`[MaterialService] Routing to Primary Path (Python Engine) for Material ${materialRecord.id}`);
             
             // Health Watchdog: Short timeout for triggers
-            const response = await axios.post(`${process.env.ENGINE_URL}/generate`, enginePayload, {
-                timeout: 300000 // 5m Watchdog
+            const response = await engineClient.post('/generate', enginePayload, {
+                timeout: 300000
             });
 
             const result = response.data;
@@ -495,7 +533,7 @@ class MaterialService {
 
         try {
             // Forward cancellation to Python engine
-            await axios.post(`${process.env.ENGINE_URL}/job/cancel`, { job_id: material.job_id }, { timeout: 5000 });
+            await engineClient.post('/job/cancel', { job_id: material.job_id }, { timeout: 5000 });
 
             // Revert material status to IDLE or just keep it as is?
             // Usually, we mark it as FAILED with a 'Cancelled by user' message.

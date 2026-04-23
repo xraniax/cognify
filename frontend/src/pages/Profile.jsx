@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import { profileService } from '@/features/user/services/ProfileService';
 import { useAuth } from '@/hooks/AuthContext';
 import { useUIStore } from '@/store/useUIStore';
 import StatusBadge from '@/components/ui/StatusBadge';
-import { Sparkles, ArrowRight, Upload, CheckCircle, MessageCircle, Trash2, AlertTriangle, BookOpen, Brain } from 'lucide-react';
+import { Sparkles, ArrowRight, Upload, CheckCircle, MessageCircle, BookOpen, Brain } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 // Simple SVG Icons
@@ -26,8 +26,8 @@ const formatBytes = (bytes) => {
 };
 
 const Profile = () => {
-    const { user, updateUser, deleteAccount } = useAuth();
-    const navigate = useNavigate();
+    const { user, updateUser } = useAuth();
+
     const [profileData, setProfileData] = useState(null);
     const uiLoading = useUIStore(state => state.data.loadingStates['profile']?.loading || false);
     const uiActions = useUIStore(state => state.actions);
@@ -37,7 +37,7 @@ const Profile = () => {
     const [isEditing, setIsEditing] = useState(false);
     const [editForm, setEditForm] = useState({ name: '', notifications: true, theme: 'light' });
     const [saving, setSaving] = useState(false);
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
 
     useEffect(() => {
         fetchProfile();
@@ -85,15 +85,6 @@ const Profile = () => {
             toast.error(err.message || 'Failed to update profile');
         } finally {
             setSaving(false);
-        }
-    };
-
-    const handleDeleteAccount = async () => {
-        try {
-            await deleteAccount();
-            navigate('/welcome');
-        } catch (err) {
-            // Error toast handled in store
         }
     };
 
@@ -525,64 +516,6 @@ const Profile = () => {
                     </div>
                 </div>
 
-                {/* Danger Zone */}
-                <div className="mt-12 border-t pt-12 animate-in fade-in" style={{ borderColor: 'var(--c-border-soft)' }}>
-                    <div className="flex items-center gap-3 mb-6">
-                        <div className="w-10 h-10 rounded-[1.25rem] bg-red-100 text-red-600 flex items-center justify-center">
-                            <AlertTriangle className="w-5 h-5" />
-                        </div>
-                        <h2 className="text-2xl font-black text-red-600 uppercase tracking-tight">Danger Zone</h2>
-                    </div>
-
-                    <div className="card-minimal border-red-100 bg-red-50/30 p-8 rounded-[2.5rem] flex flex-col md:flex-row items-center justify-between gap-8 group">
-                        <div className="flex-1 text-center md:text-left">
-                            <h3 className="text-xl font-black text-red-950 mb-2">Delete Your Account</h3>
-                            <p className="text-sm font-bold text-red-700/70 max-w-xl">
-                                This action is permanent. All your subjects, study materials, and chat history will be 
-                                <span className="text-red-700"> erased forever</span>. This cannot be undone.
-                            </p>
-                        </div>
-                        <button 
-                            onClick={() => setShowDeleteConfirm(true)}
-                            className="px-8 py-4 bg-red-600 hover:bg-red-700 text-white rounded-[2rem] transition-all font-black uppercase tracking-widest text-xs shadow-xl shadow-red-100 hover:scale-105 active:scale-95 flex items-center gap-3"
-                        >
-                            <Trash2 className="w-5 h-5" />
-                            Delete Account
-                        </button>
-                    </div>
-                </div>
-
-                {/* Delete Confirmation Modal */}
-                {showDeleteConfirm && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-indigo-950/40 backdrop-blur-md animate-in fade-in duration-300">
-                        <div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-2xl border-8 border-white animate-in zoom-in-95 duration-300">
-                            <div className="w-20 h-20 bg-red-100 text-red-600 rounded-[2rem] flex items-center justify-center mx-auto mb-8 shadow-inner">
-                                <AlertTriangle className="w-10 h-10" />
-                            </div>
-                            
-                            <h3 className="text-3xl font-black text-indigo-950 text-center mb-4 leading-tight">Are you absolutely sure?</h3>
-                            <p className="text-gray-500 font-bold text-center mb-8 leading-relaxed">
-                                We'll be sad to see you go. Deleting your account will remove all your data permanently.
-                                <span className="block mt-2 text-red-600 uppercase tracking-widest text-[10px]">No recovery possible</span>
-                            </p>
-                            
-                            <div className="flex flex-col gap-3">
-                                <button 
-                                    onClick={handleDeleteAccount}
-                                    className="w-full py-5 bg-red-600 hover:bg-red-700 text-white rounded-[1.8rem] font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-red-100 hover:scale-[1.02] active:scale-[0.98]"
-                                >
-                                    Yes, Delete Everything
-                                </button>
-                                <button 
-                                    onClick={() => setShowDeleteConfirm(false)}
-                                    className="w-full py-5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-[1.8rem] font-black uppercase tracking-widest text-xs transition-all hover:scale-[1.02] active:scale-[0.98]"
-                                >
-                                    Wait, Take Me Back
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
             </div>
         </div>
     );

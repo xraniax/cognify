@@ -1,21 +1,15 @@
-
 FROM python:3.11-slim
 
 WORKDIR /app
-
-# Install system dependencies for PyTorch, sentence-transformers & PDF/OCR processing
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
+#hedha i needed to copy it expelicitly khater didnt work before #poppler, tesseract + language support
+RUN apt-get update && apt-get install -y \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-eng \
-    libtesseract-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install
 COPY requirements.txt .
-RUN pip install --upgrade pip
+
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 

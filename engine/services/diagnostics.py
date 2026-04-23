@@ -3,7 +3,7 @@ import time
 import httpx
 import asyncio
 from typing import Dict, Any
-from .generation import select_model, invoke_ollama, OLLAMA_GENERATION_TIMEOUT, OLLAMA_BASE_URL
+from .generation import OLLAMA_GENERATION_TIMEOUT, OLLAMA_BASE_URL, OLLAMA_GENERATION_MODEL
 
 logger = logging.getLogger("engine-diagnostics")
 
@@ -35,12 +35,11 @@ async def run_pipeline_diagnostic():
     
     # 1. Router Verification
     models = {
-        "quiz": select_model("quiz"),
-        "chat": select_model("chat"),
-        "flashcard": select_model("flashcard")
+        "quiz": OLLAMA_GENERATION_MODEL,
+        "chat": OLLAMA_GENERATION_MODEL,
+        "flashcard": OLLAMA_GENERATION_MODEL,
     }
-    qwen_unified = all(m == "qwen2.5:7b-instruct" for m in models.values())
-    logger.info(f"[ROUTER] Qwen 2.5 Unified: {qwen_unified} {models}")
+    logger.info(f"[ROUTER] Active model: {OLLAMA_GENERATION_MODEL} {models}")
     
     # 2. GPU & Latency Ping
     gpu_audit = await audit_gpu_offload()
@@ -51,8 +50,8 @@ async def run_pipeline_diagnostic():
     logger.info(f"[NETWORK] Ollama Connection: {'OK' if connection_stable else 'FAIL'}")
     
     logger.info("="*40)
-    if qwen_unified and connection_stable:
-        logger.info("HEARTBEAT SUCCESS: Pipeline is stable and tuned (Qwen 2.5).")
+    if connection_stable:
+        logger.info("HEARTBEAT SUCCESS: Pipeline is stable.")
     else:
         logger.warning("HEARTBEAT WARNING: Pipeline may have optimization gaps.")
     logger.info("="*40)

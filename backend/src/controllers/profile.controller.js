@@ -122,47 +122,6 @@ class ProfileController {
         });
     });
 
-    /**
-     * @route   DELETE /api/profile
-     * @desc    Delete user account and all associated data
-     * @access  Private
-     */
-    static deleteProfile = asyncHandler(async (req, res) => {
-        const userId = req.user.id;
-
-        // 1. Cleanup physical files from disk
-        try {
-            const userFiles = await File.findByUserId(userId);
-            console.info(`[ProfileController] Cleaning up ${userFiles.length} files for user ${userId}`);
-            
-            for (const file of userFiles) {
-                if (file.path && fs.existsSync(file.path)) {
-                    fs.unlinkSync(file.path);
-                    console.debug(`[ProfileController] Deleted file: ${file.path}`);
-                }
-            }
-        } catch (err) {
-            console.error('[ProfileController] Error during file cleanup:', err.message);
-            // We continue anyway to ensure the DB record is deleted
-        }
-
-        // 2. Cascading delete from database (subjects, materials, chat_history, files)
-        const deleted = await User.delete(userId);
-
-        if (!deleted) {
-            res.status(404).json({
-                success: false,
-                message: 'User not found or already deleted'
-            });
-            return;
-        }
-
-        // 3. Response
-        res.json({
-            success: true,
-            message: 'Account and all associated data have been permanently deleted'
-        });
-    });
 }
 
 export default ProfileController;

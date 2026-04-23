@@ -1,107 +1,205 @@
 import os
 import logging
+import asyncio
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
-from requests.exceptions import RequestException, Timeout
+import httpx
 
-import logging
-import time
-from utils.logging import get_job_logger
+from .ollama_config import get_ollama_base_url
 
 logger = logging.getLogger("engine-embeddings")
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama_gpu:11434").rstrip("/")
-# Full URL override keeps Docker/local setups working when only the base host changes.
+# Use the same base URL resolution as the generation pipeline to keep
+# Docker/local behaviour consistent.
+OLLAMA_BASE_URL = get_ollama_base_url()
 OLLAMA_EMBEDDINGS_URL = os.getenv("OLLAMA_EMBEDDINGS_URL") or f"{OLLAMA_BASE_URL}/api/embeddings"
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 
+# Control how many requests hit Ollama concurrently
+MAX_CONCURRENT_REQUESTS = int(os.getenv("OLLAMA_MAX_CONCURRENT", "10"))
+
+# NEW: Logical batch size for embedding work. This controls how many
+# chunks we schedule at once to the embedding layer so that very large
+# documents do not create unbounded asyncio task lists.
+EMBEDDING_BATCH_SIZE = int(os.getenv("OLLAMA_EMBEDDING_BATCH_SIZE", "128"))
 
 def ollama_tags_url() -> str:
     return f"{OLLAMA_BASE_URL}/api/tags"
 
-
-def generate_embedding(text: str, timeout: int = 60, retries: int = 3) -> List[float]:
-    """Generate an embedding for a single text chunk using Ollama"""
+async def _generate_embedding_async(
+    client: httpx.AsyncClient,
+    text: str,
+    timeout: int,
+    retries: int,
+    *,
+    request_id: Optional[str] = None,
+) -> Optional[List[float]]:
     if not text or not text.strip():
-        return []
+        return None
 
-    payload: Dict[str, Any] = {
-        "model": OLLAMA_EMBEDDING_MODEL,
-        "prompt": text,
-    }
+    payload: Dict[str, Any] = {"model": OLLAMA_EMBEDDING_MODEL, "prompt": text}
 
-    last_err = None
+    rid = f"request_id={request_id} " if request_id else ""
+
     for attempt in range(retries):
         try:
-            logger.debug(f"Requesting embedding for chunk (attempt {attempt + 1}/{retries})")
-            response = requests.post(OLLAMA_EMBEDDINGS_URL, json=payload, timeout=timeout)
+            response = await client.post(OLLAMA_EMBEDDINGS_URL, json=payload, timeout=timeout)
             response.raise_for_status()
-
-            response_data = response.json()
-            embedding = response_data.get("embedding") or response_data.get("embeddings")
-
-            if embedding is None:
-                logger.warning("Ollama embeddings response missing embedding field for text length %d", len(text))
-                raise ValueError("No embedding returned by Ollama")
-
-            # Ollama may return one of these shapes; normalize to list of float.
-            if isinstance(embedding, list):
+            
+            data = response.json()
+            embedding = data.get("embedding") or data.get("embeddings")
+            
+            if embedding and isinstance(embedding, list):
                 return [float(x) for x in embedding]
+            return None
+            
+        except httpx.TimeoutException:
+            logger.warning("%sEmbedding timeout (attempt %d/%d)", rid, attempt + 1, retries)
+        except httpx.RequestError as err:
+            logger.warning("%sEmbedding request failed (attempt %d/%d): %s", rid, attempt + 1, retries, err)
+            
+    return None
 
-            raise ValueError("Unexpected embedding format returned by Ollama")
-
-        except (Timeout, RequestException, ValueError) as err:
-            logger.warning("Ollama embedding request failed (attempt %d/%d): %s", attempt + 1, retries, err)
-            last_err = err
-
-    raise RuntimeError(f"All retry attempts failed. Last error: {last_err}") from last_err
-
-
-def generate_embeddings(
-    texts: List[str], 
-    timeout: int = 60, 
-    retries: int = 3,
-    job_id: Optional[str] = None,
+async def _generate_embeddings_batch(
+    texts: List[str], timeout: int, retries: int, *, request_id: Optional[str] = None
 ) -> List[Optional[List[float]]]:
-    """Generate embeddings for a list of text chunks, with graceful handling."""
-    log = get_job_logger(job_id, "engine-embeddings")
-    log.info(f"STEP: EMBEDDING STARTED for {len(texts)} chunks")
-    start_time = time.perf_counter()
-    
-    embeddings: List[Optional[List[float]]] = []
-    vector_size = 0
+    """Generate embeddings for a list of texts.
 
-    for idx, chunk in enumerate(texts):
-        try:
-            emb = generate_embedding(chunk, timeout=timeout, retries=retries)
-            # Stability: avoid persisting empty vectors into pgvector.
-            embeddings.append(emb if emb else None)
-            if emb and not vector_size:
-                vector_size = len(emb)
-        except Exception as err:
-            log.warning("Embedding for chunk %d failed after retries: %s", idx, err)
-            embeddings.append(None)
+    ORIGINAL behaviour: fire off one async HTTP request per text and gather
+    them all at once.
 
-    duration = time.perf_counter() - start_time
-    success_count = sum(1 for e in embeddings if e is not None)
+    NEW behaviour: keep that per-text request model (to stay compatible with
+    Ollama's embeddings API) but schedule work in bounded batches so we never
+    create an unbounded list of asyncio tasks for huge documents. This is a
+    logical "batch embedding" that keeps memory under control while still
+    utilising concurrency via MAX_CONCURRENT_REQUESTS.
+    """
+
+    if not texts:
+        return []
+
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    async def bound_fetch(client: httpx.AsyncClient, text: str):
+        async with semaphore:
+            return await _generate_embedding_async(client, text, timeout, retries, request_id=request_id)
+
+    limits = httpx.Limits(
+        max_keepalive_connections=MAX_CONCURRENT_REQUESTS,
+        max_connections=MAX_CONCURRENT_REQUESTS,
+    )
+
+    results: List[Optional[List[float]]] = []
+    async with httpx.AsyncClient(limits=limits) as client:
+        # Process texts in logical batches so that we do not accumulate
+        # a huge in-memory list of asyncio Tasks for very long documents.
+        for i in range(0, len(texts), EMBEDDING_BATCH_SIZE):
+            batch = texts[i : i + EMBEDDING_BATCH_SIZE]
+            tasks = [bound_fetch(client, text) for text in batch]
+            batch_results = await asyncio.gather(*tasks)
+            results.extend(batch_results)
+
+    return results
+
+async def embed_step_async(
+    texts: List[str], *, timeout: int = 15, retries: int = 3, request_id: Optional[str] = None
+) -> List[Optional[List[float]]]:
+    """Async embeddings for Celery tasks. Recommended for large batches (non-blocking).
     
-    if success_count == 0 and len(texts) > 0:
-        log.error(f"STEP: EMBEDDING FAILED (duration: {duration:.2f}s, chunks: {len(texts)})")
-    elif success_count < len(texts):
-        log.warning(f"STEP: EMBEDDING PARTIAL SUCCESS (duration: {duration:.2f}s, {success_count}/{len(texts)} chunks succeeded)")
-    else:
-        log.info(f"STEP: EMBEDDING SUCCESS (duration: {duration:.2f}s, chunks: {len(texts)}, vector_size: {vector_size})")
-    
-    return embeddings
+    Usage in Celery tasks:
+        result = await embed_step_async(chunks)
+    """
+    if not texts:
+        return []
+    started_at = time.time()
+    logger.info(
+        "[PIPELINE] embeddings_start request_id=%s mode=async count=%d model=%s max_concurrent=%d timeout=%ds retries=%d",
+        request_id,
+        len(texts),
+        OLLAMA_EMBEDDING_MODEL,
+        MAX_CONCURRENT_REQUESTS,
+        timeout,
+        retries,
+    )
+    result = await _generate_embeddings_batch(texts, timeout, retries, request_id=request_id)
+    failed = sum(1 for e in result if e is None)
+    logger.info(
+        "[PIPELINE] embeddings_end request_id=%s mode=async count=%d failed=%d elapsed_ms=%d",
+        request_id,
+        len(texts),
+        failed,
+        int((time.time() - started_at) * 1000),
+    )
+    return result
 
 
 def embed_step(
-    texts: List[str],
-    *,
-    timeout: int = 60,
-    retries: int = 3,
-    job_id: Optional[str] = None,
+    texts: List[str], *, timeout: int = 15, retries: int = 3, request_id: Optional[str] = None
 ) -> List[Optional[List[float]]]:
-    """Pipeline entry point: same behavior as generate_embeddings (batch, per-chunk errors as null)."""
-    return generate_embeddings(texts, timeout=timeout, retries=retries, job_id=job_id)
+    """Synchronous wrapper for FastAPI routes. Uses asyncio.run() in non-loop contexts.
+    
+    For Celery tasks, prefer embed_step_async() to avoid asyncio.run() overhead.
+    For FastAPI routes, this automatically detects running loops and uses threads if needed.
+    """
+    if not texts:
+        return []
+
+    started_at = time.time()
+    logger.info(
+        "[PIPELINE] embeddings_start request_id=%s mode=sync count=%d model=%s max_concurrent=%d timeout=%ds retries=%d",
+        request_id,
+        len(texts),
+        OLLAMA_EMBEDDING_MODEL,
+        MAX_CONCURRENT_REQUESTS,
+        timeout,
+        retries,
+    )
+    
+    try:
+        # Check if event loop already running (e.g., async FastAPI route)
+        asyncio.get_running_loop()
+        logger.debug("Event loop detected; using thread wrapper for embed_step")
+        
+        # Use thread wrapper to avoid "RuntimeError: This event loop is already running"
+        result_container = []
+        def _run_in_thread():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                res = new_loop.run_until_complete(
+                    _generate_embeddings_batch(texts, timeout, retries, request_id=request_id)
+                )
+                result_container.append(res)
+            finally:
+                new_loop.close()
+        
+        thread = threading.Thread(target=_run_in_thread, daemon=False)
+        thread.start()
+        thread.join()
+        result = result_container[0]
+        failed = sum(1 for e in result if e is None)
+        logger.info(
+            "[PIPELINE] embeddings_end request_id=%s mode=sync-thread count=%d failed=%d elapsed_ms=%d",
+            request_id,
+            len(texts),
+            failed,
+            int((time.time() - started_at) * 1000),
+        )
+        return result
+    
+    except RuntimeError:
+        # No event loop running (e.g., sync context, Celery worker)
+        logger.debug("No event loop detected; using asyncio.run() for embed_step")
+        result = asyncio.run(_generate_embeddings_batch(texts, timeout, retries, request_id=request_id))
+        failed = sum(1 for e in result if e is None)
+        logger.info(
+            "[PIPELINE] embeddings_end request_id=%s mode=sync count=%d failed=%d elapsed_ms=%d",
+            request_id,
+            len(texts),
+            failed,
+            int((time.time() - started_at) * 1000),
+        )
+        return result

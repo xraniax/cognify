@@ -1,61 +1,49 @@
 import os
 import tempfile
-import json
 import logging
 import traceback
-from typing import List, Optional
-from uuid import UUID
+import time
+import asyncio
+import json
+from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 
 import requests
-from fastapi import FastAPI, File, HTTPException, UploadFile, Request, Depends, Form
+import httpx
+from fastapi import FastAPI, File, HTTPException, UploadFile, Request, Depends, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse, StreamingResponse
-import asyncio
-import redis.asyncio as async_redis
-
-from celery import chain
-from celery.result import AsyncResult
-try:
-    from celery_app import celery_app
-    from tasks import (
-        task_ocr,
-        task_chunk,
-        task_embed,
-        task_store,
-        task_record_failure,
-        task_generate,
-        processDocument,
-    )
-except ImportError:
-    import sys
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from celery_app import celery_app
-    from tasks import (
-        task_ocr,
-        task_chunk,
-        task_embed,
-        task_store,
-        task_record_failure,
-        task_generate,
-        processDocument,
-    )
+from fastapi.responses import JSONResponse
 
 from .preprocessing import DEFAULT_UPLOADS_DIR, preprocess_document, preprocess_uploads_folder
 from .document_processor import process_document, process_text_pipeline
 from .embeddings import embed_step, ollama_tags_url
 from .processor import process_subject
 from .retrieval import retrieve_chunks_by_topic
-from .generation import (
-    generate_study_material, evaluate_quiz, generate_chat_response,
-    evaluate_answer_semantically
+from .generation import generate_study_material, generate_study_material_stream, evaluate_quiz, generate_chat_response
+from .ollama_config import get_ollama_base_url, get_engine_env_source
+from .google_client import (
+    GoogleDriveConfigError,
+    GoogleDriveNotConfiguredError,
+    log_google_drive_config_mode,
 )
 from .schemas import (
     EmbedRequest, ProcessTextRequest, RetrieveRequest, GenerateRequest,
-    ChatRequest, QuizEvaluateRequest, QuizEvaluateResponse,
-    EvaluateAnswerRequest, EvaluateAnswerResponse,
-    DebugChunkRequest, DebugStoreRequest, DebugGenerateRequest
+    ChatRequest, QuizEvaluateRequest, QuizEvaluateResponse
 )
+from .google_drive import upload_file_to_drive_from_bytes
+from streaming.stream_core import stream_llm_response
+from gpu_detector import detect_gpu_and_ollama
+
+from celery.result import AsyncResult
+try:
+    import celery_app
+    from tasks import task_process_document, task_generate_material
+except ImportError:
+    import sys
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import celery_app
+    from tasks import task_process_document, task_generate_material
 
 try:
     import database
@@ -72,15 +60,99 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("engine-api")
-from utils.logging import get_job_logger
 
-ALLOWED_EXTENSIONS = frozenset({".pdf", ".png", ".jpg", ".jpeg"})
+ALLOWED_UPLOAD_SUFFIXES = frozenset({".pdf", ".png", ".jpg", ".jpeg"})
+MATERIAL_TYPE_ALIASES = {
+    "note": "summary",
+    "notes": "summary",
+    "flashcard": "flashcards",
+}
+SUPPORTED_MATERIAL_TYPES = frozenset({"summary", "quiz", "flashcards", "exam"})
+
+TEXT_JOB_TERMINAL_STATES = {"SUCCESS", "FAILURE", "REVOKED"}
+_TEXT_JOBS: Dict[str, Dict[str, Any]] = {}
+_TEXT_JOBS_LOCK = asyncio.Lock()
+
+
+def _extract_stream_text_from_generation_result(result: Dict[str, Any]) -> Optional[str]:
+    """Extract stream-safe text from normalized generation payload only."""
+    if not isinstance(result, dict):
+        return None
+
+    has_legacy_content = "content" in result
+    has_new_payload = "ai_generated_content" in result
+    if has_legacy_content and has_new_payload:
+        raise ValueError("Mixed contract detected - legacy content leak")
+
+    payload = result.get("ai_generated_content")
+    if not isinstance(payload, dict):
+        return None
+
+    content = payload.get("content")
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False)
 
 app = FastAPI(
     title="Cognify Engine API",
     description="Document preprocessing, chunking, embeddings (Ollama), and subject processing.",
     version="0.2.0",
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Run GPU and Ollama health check on application startup."""
+    logger.info("Cognify Engine API starting up...")
+    logger.info(
+        "[config] env=%s db=%s:%s redis=%s ollama=%s",
+        get_engine_env_source(),
+        os.getenv("DB_HOST", "db"),
+        os.getenv("DB_PORT", "5432"),
+        os.getenv("REDIS_URL", "redis://redis:6379/0"),
+        get_ollama_base_url(),
+    )
+    log_google_drive_config_mode()
+
+    ollama_url = ollama_tags_url()
+    startup_retries = int(os.getenv("OLLAMA_STARTUP_RETRIES", "5"))
+    startup_delay = float(os.getenv("OLLAMA_STARTUP_RETRY_DELAY_SECONDS", "2"))
+    for attempt in range(1, startup_retries + 1):
+        try:
+            response = requests.get(ollama_url, timeout=5)
+            response.raise_for_status()
+            logger.info("✓ Ollama reachable on startup (%s)", ollama_url)
+            break
+        except Exception as exc:
+            if attempt == startup_retries:
+                logger.error(
+                    "Ollama is unreachable after %d startup attempts at %s: %s",
+                    startup_retries,
+                    ollama_url,
+                    exc,
+                )
+            else:
+                logger.warning(
+                    "Ollama not ready yet (attempt %d/%d): %s",
+                    attempt,
+                    startup_retries,
+                    exc,
+                )
+                await asyncio.sleep(startup_delay)
+
+    gpu_health = detect_gpu_and_ollama()
+    
+    # Store health status for later reference
+    app.state.gpu_health = gpu_health
+    
+    if gpu_health["status"] != "healthy":
+        logger.warning(f"⚠️  GPU/Ollama status: {gpu_health['status'].upper()}")
+        if gpu_health["recommendations"]:
+            logger.warning("Please address the recommendations above to restore performance.")
+    else:
+        logger.info("✓ GPU/Ollama health check passed. System ready for processing.")
 
 
 def _stage_error_response(
@@ -99,7 +171,7 @@ def _stage_error_response(
 
 async def _save_upload_to_temp(file: UploadFile) -> str:
     suffix = os.path.splitext(file.filename or "")[1].lower() or ".pdf"
-    if suffix not in ALLOWED_EXTENSIONS:
+    if suffix not in ALLOWED_UPLOAD_SUFFIXES:
         raise ValueError(
             "Only PDF and image files are supported (.pdf, .png, .jpg, .jpeg)."
         )
@@ -126,6 +198,110 @@ def _all_embeddings_failed(embeddings: List[Optional[List[float]]]) -> bool:
     return bool(embeddings) and all(e is None for e in embeddings)
 
 
+def _parse_optional_uuid(value: Optional[str], field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    try:
+        return str(UUID(normalized))
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Invalid {field_name}: must be a UUID") from e
+
+
+def _coalesce_text(content: Optional[str], text: Optional[str]) -> Optional[str]:
+    candidate = content if content is not None else text
+    if candidate is None:
+        return None
+    stripped = str(candidate).strip()
+    return stripped if stripped else None
+
+
+async def _text_job_create(metadata: Optional[Dict[str, Any]] = None) -> str:
+    job_id = str(uuid4())
+    now = time.time()
+    job_entry = {
+        "job_id": job_id,
+        "status": "PENDING",
+        "result": None,
+        "error": None,
+        "meta": metadata or {},
+        "created_at": now,
+        "updated_at": now,
+        "source": "text",
+    }
+    async with _TEXT_JOBS_LOCK:
+        _TEXT_JOBS[job_id] = job_entry
+    return job_id
+
+
+async def _text_job_get(job_id: str) -> Optional[Dict[str, Any]]:
+    async with _TEXT_JOBS_LOCK:
+        job = _TEXT_JOBS.get(job_id)
+        return dict(job) if job else None
+
+
+async def _text_job_update(job_id: str, **updates: Any) -> Optional[Dict[str, Any]]:
+    async with _TEXT_JOBS_LOCK:
+        job = _TEXT_JOBS.get(job_id)
+        if not job:
+            return None
+        job.update(updates)
+        job["updated_at"] = time.time()
+        return dict(job)
+
+
+async def _resolve_job(job_id: str) -> Dict[str, Any]:
+    text_job = await _text_job_get(job_id)
+    if text_job:
+        logger.info("[JOB_RESOLVE] job_id=%s kind=text status=%s", job_id, text_job.get("status", "UNKNOWN"))
+        return {"kind": "text", "entry": text_job}
+
+    try:
+        task_result = AsyncResult(job_id, app=celery_app.celery_app)
+        logger.info("[JOB_RESOLVE] job_id=%s kind=celery status=%s", job_id, task_result.status)
+        return {"kind": "celery", "entry": task_result}
+    except Exception as e:
+        logger.exception("[JOB_RESOLVE] job_id=%s kind=unknown error=%s", job_id, e)
+        return {"kind": "unknown", "entry": None, "error": str(e)}
+
+
+async def _run_text_job(
+    job_id: str,
+    raw_text: str,
+    *,
+    subject_id: Optional[str],
+    document_id: Optional[str],
+    user_id: Optional[str],
+) -> None:
+    await _text_job_update(job_id, status="STARTED")
+    try:
+        result = await asyncio.to_thread(
+            process_text_pipeline,
+            raw_text,
+            max_chunk_chars=1500,
+            chunk_overlap=200,
+            include_embeddings=True,
+        )
+        extracted_text = (result.get("cleaned_text") or raw_text).strip()
+        job_result = {
+            "status": "SUCCESS",
+            "source": "text",
+            "document_id": document_id,
+            "subject_id": subject_id,
+            "user_id": user_id,
+            "extracted_text": extracted_text,
+            "chunk_count": int(result.get("num_chunks") or 0),
+            "provider": "ollama",
+            "model": os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
+        }
+        await _text_job_update(job_id, status="SUCCESS", result=job_result, error=None)
+    except Exception as e:
+        logger.exception("Text processing job failed for job_id=%s", job_id)
+        await _text_job_update(job_id, status="FAILURE", error=str(e), result=None)
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     if isinstance(exc, HTTPException):
@@ -133,13 +309,15 @@ async def global_exception_handler(request: Request, exc: Exception):
             status_code=exc.status_code,
             content=jsonable_encoder({"status": "error", "stage": "api", "detail": exc.detail}),
         )
-    logger.exception("Global error: %s", exc)
+    logger.error("Global error: %s", exc)
+    logger.error(traceback.format_exc())
     return JSONResponse(
         status_code=500,
         content={
             "status": "error",
             "stage": "api",
-            "message": "Internal server error",
+            "message": "Internal Server Error",
+            "details": str(exc),
         },
     )
 
@@ -176,14 +354,44 @@ async def health():
     }
 
 
+@app.get("/gpu-health")
+async def gpu_health():
+    """Get detailed GPU and Ollama status (populated at startup)."""
+    if not hasattr(app.state, "gpu_health"):
+        # If startup event hasn't run yet, run detection now
+        app.state.gpu_health = detect_gpu_and_ollama()
+    
+    return app.state.gpu_health
+
+
 @app.get("/job/{job_id}")
 async def get_job_status(job_id: str):
     """Check the status of a background task."""
-    task_result = AsyncResult(job_id, app=celery_app)
+    resolved = await _resolve_job(job_id)
+    logger.info("[JOB_STATUS] job_id=%s resolved_kind=%s", job_id, resolved.get("kind"))
+    if resolved["kind"] == "text":
+        text_job = resolved["entry"]
+        response = {
+            "job_id": job_id,
+            "status": text_job.get("status", "UNKNOWN"),
+            "result": text_job.get("result"),
+            "error": text_job.get("error"),
+        }
+        if text_job.get("status") == "STARTED":
+            response["meta"] = text_job.get("meta") or {}
+        return response
 
+    if resolved["kind"] == "unknown":
+        return {
+            "job_id": job_id,
+            "status": "UNKNOWN",
+            "error": resolved.get("error") or "Celery not configured properly",
+        }
+
+    task_result = resolved["entry"]
     response = {
         "job_id": job_id,
-        "status": task_result.status,  # PENDING, STARTED, SUCCESS, FAILURE
+        "status": task_result.status,
         "result": None,
         "error": None,
     }
@@ -198,54 +406,164 @@ async def get_job_status(job_id: str):
     return response
 
 
-@app.get("/job/{job_id}/stream")
-async def stream_job_updates(job_id: str):
-    """
-    Server-Sent Events (SSE) endpoint to stream generation updates from Redis.
-    """
-    redis_url = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
-    
-    async def event_generator():
-        client = async_redis.from_url(redis_url)
-        pubsub = client.pubsub()
-        channel = f"job:{job_id}:stream"
-        
-        try:
-            await pubsub.subscribe(channel)
-            logger.info(f"SSE: Client subscribed to {channel}")
-            
-            # Send initial connection event
-            yield "data: {\"status\": \"connected\"}\n\n"
-            
-            while True:
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=30.0)
-                if message:
-                    data = message["data"].decode("utf-8")
-                    yield f"data: {data}\n\n"
-                    
-                    # If the message indicates it's the final chunk, we can exit the loop
-                    try:
-                        parsed = json.loads(data)
-                        if parsed.get("is_final"):
-                            logger.info(f"SSE: Received final chunk for {job_id}")
-                            break
-                    except:
-                        pass
-                else:
-                    # Keep-alive or timeout check
-                    yield "data: {\"status\": \"ping\"}\n\n"
-                
-                await asyncio.sleep(0.01)
-                
-        except Exception as e:
-            logger.error(f"SSE Error for {job_id}: {e}")
-            yield f"data: {{\"status\": \"error\", \"message\": \"{str(e)}\"}}\n\n"
-        finally:
-            await pubsub.unsubscribe(channel)
-            await client.close()
-            logger.info(f"SSE: Client unsubscribed and closed for {job_id}")
+@app.post("/job/cancel")
+async def cancel_job(payload: dict):
+    """Request cancellation of a background Celery task by job id."""
+    job_id = (payload or {}).get("job_id")
+    if not job_id:
+        return _stage_error_response(
+            "job_cancel",
+            "Missing job_id",
+            status_code=400,
+        )
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    text_job = await _text_job_get(job_id)
+    if text_job:
+        if text_job.get("status") in TEXT_JOB_TERMINAL_STATES:
+            return {
+                "status": "success",
+                "stage": "job_cancel",
+                "job_id": job_id,
+                "message": "Job already finished",
+            }
+        await _text_job_update(job_id, status="REVOKED", error="Cancelled by user")
+        return {
+            "status": "success",
+            "stage": "job_cancel",
+            "job_id": job_id,
+            "message": "Cancellation requested",
+        }
+
+    try:
+        celery_app.celery_app.control.revoke(job_id, terminate=False)
+        return {
+            "status": "success",
+            "stage": "job_cancel",
+            "job_id": job_id,
+            "message": "Cancellation requested",
+        }
+    except Exception as e:
+        logger.exception("Job cancellation failed")
+        return _stage_error_response(
+            "job_cancel",
+            "Failed to cancel job",
+            details=str(e),
+            status_code=500,
+        )
+
+
+@app.get("/job/{job_id}/stream")
+async def stream_job_status(job_id: str):
+    """SSE stream for task status updates compatible with backend stream proxy."""
+    from fastapi.responses import StreamingResponse
+
+    async def event_generator():
+        terminal_states = {"SUCCESS", "FAILURE", "REVOKED"}
+        iteration = 0
+        unknown_iterations = 0
+        last_status = None
+
+        while True:
+            iteration += 1
+            try:
+                resolved = await _resolve_job(job_id)
+
+                if resolved["kind"] == "text":
+                    unknown_iterations = 0
+                    text_job = resolved["entry"]
+                    status = text_job.get("status", "UNKNOWN")
+                    result = text_job.get("result") if status == "SUCCESS" else None
+                    error = text_job.get("error") if status in {"FAILURE", "REVOKED"} else None
+                    if status == "SUCCESS" and isinstance(result, dict):
+                        chunk_text = (
+                            result.get("extracted_text")
+                            or result.get("status")
+                            or "SUCCESS"
+                        )
+                    elif status in {"FAILURE", "REVOKED"}:
+                        chunk_text = error or status
+                    else:
+                        chunk_text = status
+                elif resolved["kind"] == "unknown":
+                    unknown_iterations += 1
+                    status = "UNKNOWN"
+                    chunk_text = resolved.get("error") or "Celery not configured properly"
+                else:
+                    unknown_iterations = 0
+                    task_result = resolved["entry"]
+                    status = task_result.status
+                    result = task_result.result if status == "SUCCESS" else None
+                    error = str(task_result.result) if status == "FAILURE" else None
+
+                    if status == "SUCCESS" and isinstance(result, dict):
+                        try:
+                            generation_stream = _extract_stream_text_from_generation_result(result)
+                        except ValueError as contract_error:
+                            payload = {
+                                "chunk": str(contract_error),
+                                "status": "FAILURE",
+                                "is_final": True,
+                            }
+                            yield f"data: {json.dumps(payload)}\\n\\n"
+                            break
+                        chunk_text = generation_stream or result.get("extracted_text") or result.get("status") or "SUCCESS"
+                    elif status == "FAILURE":
+                        chunk_text = error or "FAILURE"
+                    else:
+                        chunk_text = status
+
+                logger.info(
+                    "[JOB_STREAM] job_id=%s iteration=%d kind=%s status=%s unknown_iterations=%d",
+                    job_id,
+                    iteration,
+                    resolved.get("kind"),
+                    status,
+                    unknown_iterations,
+                )
+
+                if status != last_status:
+                    logger.info("[JOB_STREAM] job_id=%s state_change %s -> %s", job_id, last_status, status)
+                    last_status = status
+
+                is_final = status in terminal_states
+                # Keep stream open during transient resolve failures and avoid immediate close.
+                if status == "UNKNOWN":
+                    is_final = False
+
+                payload = {
+                    "chunk": str(chunk_text),
+                    "status": status,
+                    "is_final": is_final,
+                }
+                yield f"data: {json.dumps(payload)}\\n\\n"
+
+                if payload["is_final"]:
+                    break
+
+            except Exception as e:
+                logger.exception("[JOB_STREAM] job_id=%s iteration=%d stream_error=%s", job_id, iteration, e)
+                payload = {
+                    "chunk": f"stream iteration error: {e}",
+                    "status": "UNKNOWN",
+                    "is_final": False,
+                }
+                yield f"data: {json.dumps(payload)}\\n\\n"
+
+            # Emit periodic heartbeat comment so proxies keep the stream alive.
+            yield ": keep-alive\\n\\n"
+            await asyncio.sleep(1)
+
+        yield "event: done\\ndata: [DONE]\\n\\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/preprocess")
@@ -377,72 +695,182 @@ def get_db():
     finally:
         db.close()
 
-def _trigger_pipeline(file_path: str, document_id: Optional[str], subject_id: Optional[str], user_id: Optional[str] = None) -> str:
-    """
-    Build and dispatch the Celery chain:
-        task_ocr → task_chunk → task_embed → task_store
-    with task_record_failure wired as a link_error callback.
-    Returns the chain's root task ID (used as the job_id).
-    """
-    pipeline = chain(
-        task_ocr.s(file_path, document_id, subject_id, user_id),
-        task_chunk.s(),
-        task_embed.s(),
-        task_store.s(),
-    )
-    result = pipeline.apply_async(
-        link_error=task_record_failure.s(document_id, user_id)
-    )
-    return result.id
+# background_process_document was moved to engine/tasks.py as task_process_document
 
 
 @app.post("/process-document")
 async def process_document_route(
+    request: Request,
+    background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
     file_path: Optional[str] = Form(None),
+    content: Optional[str] = Form(None),
+    text: Optional[str] = Form(None),
     document_id: Optional[str] = Form(None),
     subject_id: Optional[str] = Form(None),
     user_id: Optional[str] = Form(None),
 ):
     """
-    Trigger background processing for a document via the modular Celery pipeline.
-    Accepts either an NFS file_path or a direct file upload.
+    Upload a single file directly to Google Drive, and deploy the processing pipeline 
+    to a background Celery task. Returns immediately to prevent HTTP timeouts.
     """
-    # Path remapping for cross-container consistency (Docker volume sharing)
-    # Backend sends /app/uploads/... but engine sees it as /data/uploads/...
-    if file_path and file_path.startswith('/app/uploads/'):
-        alt_path = file_path.replace('/app/uploads/', '/data/uploads/')
-        if os.path.exists(alt_path):
-            file_path = alt_path
-            logger.info(f"Remapped backend path to engine path: {file_path}")
+    request_id = str(uuid4())
+    content_type = (request.headers.get("content-type") or "").lower()
 
-    if file_path and os.path.exists(file_path):
-        logger.info(f"Triggering pipeline for NFS file: {file_path} (document_id={document_id}, user_id={user_id})")
-        job_id = _trigger_pipeline(file_path, document_id, subject_id, user_id)
-        return {"status": "accepted", "job_id": job_id, "message": "Processing started in background"}
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict):
+            content = content if content is not None else body.get("content")
+            text = text if text is not None else body.get("text")
+            file_path = file_path if file_path is not None else body.get("file_path")
+            document_id = document_id if document_id is not None else body.get("document_id")
+            subject_id = subject_id if subject_id is not None else body.get("subject_id")
+            user_id = user_id if user_id is not None else body.get("user_id")
 
-    if not file:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "No file or valid file_path provided."},
-        )
-
-    # HTTP upload fallback: save to shared uploads dir then process
-    filename = file.filename
-    target_path = os.path.join(DEFAULT_UPLOADS_DIR, f"async_{filename}")
+    normalized_text = _coalesce_text(content, text)
 
     try:
-        os.makedirs(DEFAULT_UPLOADS_DIR, exist_ok=True)
-        with open(target_path, "wb") as f:
-            while chunk := await file.read(1024 * 1024):
-                f.write(chunk)
+        normalized_subject_id = _parse_optional_uuid(subject_id, "subject_id")
+    except ValueError as e:
+        return _stage_error_response("processing", "Invalid request payload", details=str(e), status_code=400)
 
-        logger.info(f"Saved upload to {target_path}, triggering pipeline.")
-        job_id = _trigger_pipeline(target_path, document_id, subject_id, user_id)
-        return {"status": "accepted", "job_id": job_id, "message": "Upload success, processing started"}
+    if file is None and not normalized_text:
+        return _stage_error_response(
+            "processing",
+            "No file or raw text provided",
+            details="Provide either file upload or non-empty content/text",
+            status_code=400,
+        )
+
+    if file is not None and normalized_text:
+        logger.warning(
+            "[PIPELINE] both_file_and_text request_id=%s document_id=%s subject_id=%s; preferring file",
+            request_id,
+            document_id,
+            normalized_subject_id,
+        )
+
+    if file is None and normalized_text:
+        job_id = await _text_job_create(
+            {
+                "stage": "processing",
+                "subject_id": normalized_subject_id,
+                "document_id": document_id,
+                "user_id": user_id,
+                "request_id": request_id,
+                "file_path": file_path,
+                "mode": "text",
+            }
+        )
+        background_tasks.add_task(
+            _run_text_job,
+            job_id,
+            normalized_text,
+            subject_id=normalized_subject_id,
+            document_id=document_id,
+            user_id=user_id,
+        )
+        return {
+            "status": "accepted",
+            "stage": "processing",
+            "job_id": job_id,
+            "message": "Text accepted. AI processing and embedding generation has started in the background.",
+        }
+
+    unique_filename = f"{uuid4()}_{file.filename}"
+    started_at = time.time()
+    logger.info(
+        "[PIPELINE] upload_received request_id=%s filename=%s content_type=%s subject_id=%s document_id=%s user_id=%s",
+        request_id,
+        file.filename,
+        getattr(file, "content_type", None),
+        normalized_subject_id,
+        document_id,
+        user_id,
+    )
+    try:
+        # Read file content once
+        content = await file.read()
+        logger.info(
+            "[PIPELINE] upload_buffered request_id=%s filename=%s bytes=%d",
+            request_id,
+            file.filename,
+            len(content) if content is not None else 0,
+        )
+        
+        # Validate file type
+        suffix = os.path.splitext(file.filename or "")[1].lower() or ".pdf"
+        if suffix not in ALLOWED_UPLOAD_SUFFIXES:
+            raise ValueError("Only PDF and image files are supported (.pdf, .png, .jpg, .jpeg).")
+
+        if normalized_subject_id is None:
+            logger.warning(
+                "[PIPELINE] no_subject_id request_id=%s filename=%s (will NOT persist to DB)",
+                request_id,
+                file.filename,
+            )
+        
+        # Upload to Google Drive directly from bytes (no local save)
+        logger.info(
+            "[PIPELINE] drive_upload_start request_id=%s unique_filename=%s",
+            request_id,
+            unique_filename,
+        )
+        google_file_id = await upload_file_to_drive_from_bytes(content, unique_filename, request_id=request_id)
+        logger.info(
+            "[PIPELINE] drive_upload_done request_id=%s drive_file_id=%s elapsed_ms=%d",
+            request_id,
+            google_file_id,
+            int((time.time() - started_at) * 1000),
+        )
+        
+    except ValueError as e:
+        return _stage_error_response(
+            "preprocess", "Invalid or unsupported upload", details=str(e), status_code=400
+        )
+    except GoogleDriveNotConfiguredError:
+        return _stage_error_response(
+            "preprocess",
+            "Google Drive integration not configured",
+            status_code=503,
+        )
+    except GoogleDriveConfigError as e:
+        return _stage_error_response(
+            "preprocess",
+            "Google Drive credentials are missing or invalid",
+            details=str(e),
+            status_code=500,
+        )
     except Exception as e:
-        logger.error(f"Failed to handle upload: {e}")
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+        return _stage_error_response(
+            "preprocess", "Failed to upload file to Google Drive", details=str(e), status_code=500
+        )
+
+    # Queue the celery background task, passing drive_file_id instead of temp path
+    job = task_process_document.delay(
+        google_file_id,
+        file.filename,
+        normalized_subject_id,
+        request_id,
+    )
+
+    logger.info(
+        "[PIPELINE] celery_queued request_id=%s job_id=%s drive_file_id=%s",
+        request_id,
+        job.id,
+        google_file_id,
+    )
+
+    return {
+        "status": "accepted",
+        "stage": "processing",
+        "job_id": job.id,
+        "filename": file.filename,
+        "message": "Document uploaded to Google Drive. AI processing and embedding generation has started in the background."
+    }
 
 
 @app.get("/process-uploads")
@@ -460,23 +888,23 @@ async def process_uploads_route(uploads_dir: Optional[str] = None):
 
 @app.get("/subjects/{subject_id}/process")
 async def process_subject_route(
-    subject_id: str,
+    subject_id: UUID,
     uploads_dir: Optional[str] = None,
+    topic: Optional[str] = None,
 ):
-    """
-    Trigger async processing for all documents in a subject.
-    """
-    logger.info("Dispatching Celery task tasks.processDocument")
-    logger.info(f"Triggering async subject processing for id={subject_id}")
-    task = processDocument.delay(subject_id, uploads_dir=uploads_dir)
-    return {"status": "accepted", "job_id": task.id, "message": "Subject processing task queued"}
+    result = process_subject(
+        subject_id,
+        uploads_dir=uploads_dir,
+        topic=topic,
+    )
+    return result
 
 @app.post("/retrieve")
 async def retrieve_route(body: RetrieveRequest, db: Session = Depends(get_db)):
     """Retrieve top-k relevant chunks for a given topic and subject."""
     logger.info("Retrieve request for subject: %s, topic: %s", body.subject_id, body.topic)
     try:
-        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), body.topic, body.top_k or 10)
+        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), body.topic, body.top_k)
         return {
             "status": "success",
             "stage": "retrieval",
@@ -495,20 +923,28 @@ async def retrieve_route(body: RetrieveRequest, db: Session = Depends(get_db)):
 @app.post("/chat")
 async def chat_route(body: ChatRequest, db: Session = Depends(get_db)):
     """Conversational chat grounded in retrieved context."""
-    logger.info("Chat request: subject=%s, query=%s, user_id=%s", body.subject_id, body.question, body.user_id)
+    logger.info("Chat request: subject=%s, query=%s", body.subject_id, body.question)
     try:
-        # 1. Retrieve context chunks
-        chunks = retrieve_chunks_by_topic(db, body.subject_id, None, body.top_k or 10)
-        chunk_texts = [c.content for c in chunks if c.content]
-        
-        # 2. Generate response
-        context = "\n\n".join(chunk_texts)
-        response = await generate_chat_response(body.question, context, [], body.language)
-        
+        if body.context and body.context.strip():
+            context = body.context
+        else:
+            if body.subject_id is None:
+                return _stage_error_response(
+                    "chat",
+                    "Missing subject_id or context",
+                    status_code=400,
+                )
+            chunks = retrieve_chunks_by_topic(db, str(body.subject_id), None, body.top_k)
+            chunk_texts = [c.content for c in chunks if c.content]
+            context = "\n\n".join(chunk_texts)
+
+        response = generate_chat_response(context, body.question, body.language)
+
         return {
             "status": "success",
             "stage": "chat",
-            "response": response
+            "result": response,
+            "response": response,
         }
     except Exception as e:
         logger.exception("Chat failed")
@@ -521,26 +957,37 @@ async def chat_route(body: ChatRequest, db: Session = Depends(get_db)):
 
 @app.post("/generate")
 async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
-    """Generate study materials using LLM based on retrieved context."""
-    logger.info("Generate request (async): subject=%s, type=%s, topic=%s, user_id=%s, generation_options=%s", body.subject_id, body.material_type, body.topic, body.user_id, body.generation_options)
-    
-    if not body.generation_options:
-        raise HTTPException(status_code=400, detail="Missing generation_options in request payload.")
-
+    """Generate study materials using LLM based on retrieved context via Celery."""
+    logger.info("Generate request (async): subject=%s, type=%s, topic=%s", body.subject_id, body.material_type, body.topic)
     try:
-        # Trigger the async task
-        task = task_generate.delay(
-            str(body.subject_id), 
-            body.material_type, 
-            body.topic, 
-            body.language, 
-            body.top_k or 10,
-            body.user_id,
-            generation_options=body.generation_options
+        requested_type = (body.material_type or "").strip().lower()
+        material_type = MATERIAL_TYPE_ALIASES.get(requested_type, requested_type)
+        if material_type not in SUPPORTED_MATERIAL_TYPES:
+            return _stage_error_response(
+                "generation",
+                f"Unsupported material type '{requested_type}'",
+                status_code=400,
+            )
+
+        if body.subject_id is None:
+            return _stage_error_response(
+                "generation",
+                "Missing subject_id for async generation",
+                status_code=400,
+            )
+
+        # Dispatch to celery
+        task = task_generate_material.delay(
+            str(body.subject_id),
+            material_type,
+            body.topic,
+            body.language,
+            body.top_k,
+            getattr(body, 'user_id', None)
         )
         
         return {
-            "status": "accepted",
+            "status": "SUCCESS",
             "stage": "generation",
             "job_id": task.id,
             "message": f"Study material generation for {body.material_type} started in background"
@@ -553,6 +1000,83 @@ async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
             details=str(e),
             status_code=500,
         )
+
+
+@app.post("/generate/stream")
+async def generate_stream_route(body: GenerateRequest, db: Session = Depends(get_db)):
+    """Generate study materials as real-time SSE chunks (bypasses Celery)."""
+    from fastapi.responses import StreamingResponse
+
+    logger.info(
+        "Generate stream request: subject=%s, type=%s, topic=%s",
+        body.subject_id,
+        body.material_type,
+        body.topic,
+    )
+
+    requested_type = (body.material_type or "").strip().lower()
+    material_type = MATERIAL_TYPE_ALIASES.get(requested_type, requested_type)
+    if material_type not in SUPPORTED_MATERIAL_TYPES:
+        return _stage_error_response(
+            "generation_stream",
+            f"Unsupported material type '{requested_type}'",
+            status_code=400,
+        )
+
+    if body.subject_id is None:
+        return _stage_error_response(
+            "generation_stream",
+            "Missing subject_id for generation stream",
+            status_code=400,
+        )
+
+    try:
+        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), body.topic, body.top_k)
+        chunk_texts = [c.content for c in chunks if c.content]
+    except Exception as e:
+        logger.exception("Generation stream retrieval failed")
+        return _stage_error_response(
+            "generation_stream",
+            "Failed to retrieve context",
+            details=str(e),
+            status_code=500,
+        )
+
+    if not chunk_texts:
+        return _stage_error_response(
+            "generation_stream",
+            "No document chunks found for the given subject or topic.",
+            status_code=404,
+        )
+
+    def generation_generator():
+        for piece in generate_study_material_stream(
+            chunk_texts,
+            material_type,
+            body.topic,
+            body.language,
+        ):
+            if piece is None:
+                continue
+            text = str(piece)
+            if text.startswith("[ERROR]"):
+                raise RuntimeError(text[7:].strip() or "Generation stream failed")
+            yield text
+
+    async def generation_async_generator():
+        for piece in generation_generator():
+            yield piece
+            await asyncio.sleep(0)
+
+    return StreamingResponse(
+        stream_llm_response(generation_async_generator(), source="generation"),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.post("/evaluate-quiz", response_model=QuizEvaluateResponse)
 async def evaluate_quiz_route(body: QuizEvaluateRequest):
@@ -578,229 +1102,171 @@ async def evaluate_quiz_route(body: QuizEvaluateRequest):
             status_code=500,
         )
 
-@app.post("/evaluate-answer", response_model=EvaluateAnswerResponse)
-async def evaluate_answer_route(body: EvaluateAnswerRequest):
-    """
-    Evaluate a single student answer semantically using LLM.
-    Useful for short_answer, problem, and scenario questions.
-    """
-    logger.info("Evaluate answer request: q='%s'...", body.question[:50])
+
+@app.post("/quiz/next")
+async def quiz_next_route(body: dict, db: Session = Depends(get_db)):
+    """Adaptive quiz loop endpoint: update student profile and return one next question."""
     try:
-        result = await evaluate_answer_semantically(
-            body.question,
-            body.correct_answer,
-            body.user_answer
+        from .student_model import get_student, update_student_performance
+
+        user_id = str((body or {}).get("user_id") or "").strip()
+        subject_id = (body or {}).get("subject_id")
+        topic = (body or {}).get("topic")
+        language = (body or {}).get("language") or "en"
+        top_k = (body or {}).get("top_k") or 5
+
+        if not user_id:
+            return _stage_error_response(
+                "quiz_next",
+                "Missing required field: user_id",
+                status_code=400,
+            )
+        if not subject_id:
+            return _stage_error_response(
+                "quiz_next",
+                "Missing required field: subject_id",
+                status_code=400,
+            )
+
+        previous_answer = (body or {}).get("previous_answer")
+        if previous_answer is not None and str(previous_answer).strip() != "":
+            is_correct = bool((body or {}).get("is_correct", False))
+            response_time_raw = (body or {}).get("response_time", 0.0)
+            try:
+                response_time = float(response_time_raw)
+            except (TypeError, ValueError):
+                response_time = 0.0
+            update_student_performance(
+                user_id=user_id,
+                is_correct=is_correct,
+                response_time=response_time,
+                topic=str(topic or "general"),
+            )
+
+        student = get_student(user_id)
+
+        chunks = retrieve_chunks_by_topic(db, str(subject_id), topic, int(top_k))
+        chunk_texts = [c.content for c in chunks if c.content]
+        if not chunk_texts:
+            return _stage_error_response(
+                "quiz_next",
+                "No retrieval context found for this subject/topic",
+                status_code=404,
+            )
+
+        from .generation import generate_single_quiz_question
+
+        question = generate_single_quiz_question(
+            chunks=chunk_texts,
+            student_profile=student,
+            topic=topic,
+            language=language,
         )
-        return result
+
+        accuracy = float(student.get("accuracy", 0.5))
+        if accuracy < 0.5:
+            difficulty = "easy"
+        elif accuracy <= 0.8:
+            difficulty = "medium"
+        else:
+            difficulty = "hard"
+
+        return {
+            "question": question,
+            "progress": {
+                "accuracy": accuracy,
+                "weak_topics": student.get("weak_topics") or [],
+                "difficulty": difficulty,
+            },
+        }
     except Exception as e:
-        logger.exception("Answer evaluation failed")
+        logger.exception("Adaptive quiz next failed")
         return _stage_error_response(
-            "evaluation",
-            "Answer evaluation failed",
+            "quiz_next",
+            "Adaptive quiz next failed",
             details=str(e),
             status_code=500,
         )
 
-# --- DEBUG ENDPOINTS ---
 
-@app.post("/debug/chunk")
-async def debug_chunk(body: DebugChunkRequest):
-    """DEBUG: Test chunking stage independently."""
-    log = get_job_logger("debug-chunk", "engine-api")
-    log.info("DEBUG: Chunking request")
+
+@app.post("/chat/stream")
+async def chat_stream_route(body: ChatRequest, db: Session = Depends(get_db)):
+    """SSE chat endpoint that streams model output progressively."""
+    from fastapi.responses import StreamingResponse
+    from .generation import OLLAMA_GENERATE_URL, OLLAMA_GENERATION_MODEL, OLLAMA_CHAT_TIMEOUT
+
+    logger.info("Chat stream request: subject=%s, query=%s", body.subject_id, body.question)
+
     try:
-        from .preprocessing import chunk_step, clean_text_step
-        cleaned = clean_text_step(body.text)
-        chunks = chunk_step(
-            cleaned, 
-            max_chunk_chars=body.max_chunk_chars, 
-            chunk_overlap=body.chunk_overlap,
-            job_id="debug-chunk"
-        )
-        return {"status": "success", "chunks": chunks, "count": len(chunks)}
-    except Exception as e:
-        log.exception("DEBUG: Chunking failed")
-        return _stage_error_response("debug-chunk", str(e))
+        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), None, body.top_k)
+        chunk_texts = [c.content for c in chunks if c.content]
+        context = "\n\n".join(chunk_texts)
 
-@app.post("/debug/embed")
-async def debug_embed(body: EmbedRequest):
-    """DEBUG: Test embedding stage independently."""
-    log = get_job_logger("debug-embed", "engine-api")
-    log.info("DEBUG: Embedding request")
-    try:
-        if body.chunks:
-            texts = body.chunks
-        else:
-            texts = [body.text]
-        
-        embeddings = embed_step(texts, job_id="debug-embed")
-        
-        sample = None
-        vector_length = 0
-        if embeddings and embeddings[0]:
-            sample = embeddings[0][:5]
-            vector_length = len(embeddings[0])
-            
-        return {
-            "status": "success", 
-            "vector_length": vector_length, 
-            "sample": sample,
-            "count": len(embeddings)
-        }
-    except Exception as e:
-        log.exception("DEBUG: Embedding failed")
-        return _stage_error_response("debug-embed", str(e))
+        if not context.strip():
+            async def empty_stream_error():
+                raise ValueError("No context found for this subject.")
+                yield ""
 
-@app.post("/debug/store")
-async def debug_store(body: DebugStoreRequest, db: Session = Depends(get_db)):
-    """DEBUG: Test chunk + embed + store independently."""
-    log = get_job_logger("debug-store", "engine-api")
-    log.info(f"DEBUG: Store request for subject {body.subject_id}")
-    try:
-        from .preprocessing import chunk_step, clean_text_step
-        from .embeddings import embed_step
-        
-        # 1. Pipeline
-        cleaned = clean_text_step(body.text)
-        chunks = chunk_step(cleaned, job_id="debug-store")
-        embeddings = embed_step(chunks, job_id="debug-store")
-        
-        # 2. Persist
-        # Ensure subject exists
-        subj = db.query(models.Subject).filter(models.Subject.id == body.subject_id).first()
-        if not subj:
-            subj = models.Subject(id=body.subject_id)
-            db.add(subj)
-            db.flush()
-
-        # Ensure a document exists for this subject
-        doc = db.query(models.Document).filter(models.Document.subject_id == body.subject_id).first()
-        if not doc:
-            doc = models.Document(
-                subject_id=body.subject_id,
-                filename="debug_upload.txt",
-                file_path="/tmp/debug_upload.txt"
+            return StreamingResponse(
+                stream_llm_response(empty_stream_error(), source="chat"),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
             )
-            db.add(doc)
-            db.flush()
-        
-        for content, emb in zip(chunks, embeddings):
-            chunk_obj = models.Chunk(
-                document_id=doc.id,
-                content=content,
-                embedding=emb
-            )
-            db.add(chunk_obj)
-        
-        db.commit()
-        return {"status": "success", "stored_chunks": len(chunks), "document_id": doc.id}
-    except Exception as e:
-        db.rollback()
-        log.exception("DEBUG: Store failed")
-        return _stage_error_response("debug-store", str(e))
 
-@app.get("/debug/retrieve/{subject_id}")
-async def debug_retrieve(subject_id: UUID, topic: Optional[str] = None, db: Session = Depends(get_db)):
-    """DEBUG: Test retrieval stage independently."""
-    log = get_job_logger("debug-retrieve", "engine-api")
-    log.info(f"DEBUG: Retrieval request for subject {subject_id}, topic={topic}")
-    try:
-        from .retrieval import retrieve_chunks_by_topic
-        chunks = retrieve_chunks_by_topic(db, subject_id, topic, top_k=5, job_id="debug-retrieve")
-        return {
-            "status": "success", 
-            "count": len(chunks),
-            "chunks": [{"id": c.id, "content": c.content[:100] + "..."} for c in chunks]
-        }
-    except Exception as e:
-        log.exception("DEBUG: Retrieval failed")
-        return _stage_error_response("debug-retrieve", str(e))
-
-@app.post("/debug/generate")
-async def debug_generate(body: DebugGenerateRequest, db: Session = Depends(get_db)):
-    """DEBUG: Test retrieval + generation independently (synchronous)."""
-    log = get_job_logger("debug-generate", "engine-api")
-    log.info(f"DEBUG: Generation request for subject {body.subject_id}, type={body.material_type}")
-    try:
-        from .retrieval import retrieve_chunks_by_topic
-        from .generation import generate_study_material
-        
-        # 1. Retrieve
-        chunks = retrieve_chunks_by_topic(db, body.subject_id, body.topic, top_k=body.top_k, job_id="debug-generate")
-        if not chunks:
-            return _stage_error_response("debug-generate", "No chunks found for retrieval", status_code=404)
-        
-        chunk_texts = [c.content for c in chunks]
-        
-        # 2. Generate (Async)
-        result = await generate_study_material(
-            chunk_texts, 
-            body.material_type, 
-            topic=body.topic, 
-            language=body.language, 
-            job_id="debug-generate"
+        prompt = (
+            f"System instructions: Answer the user's question clearly and concisely based on the provided context in {body.language}. "
+            f"If the answer is not in the context, say you don't know based on the provided material.\n\n"
+            f"Context:\n---\n{context}\n---\n\n"
+            f"User Question: {body.question}\n"
+            f"Response:"
         )
-        
-        return {
-            "status": "success",
-            "material_type": body.material_type,
-            "content": result
-        }
-    except Exception as e:
-        log.exception("DEBUG: Generation failed")
-        return _stage_error_response("debug-generate", str(e))
-@app.get("/debug/pipeline-status/{subject_id}")
-async def debug_pipeline_status(subject_id: UUID, db: Session = Depends(get_db)):
-    """DEBUG: Check document and chunk counts for a subject."""
-    try:
-        from models import Document, Chunk
-        doc_count = db.query(Document).filter(Document.subject_id == subject_id).count()
-        chunk_count = db.query(Chunk).join(Document).filter(Document.subject_id == subject_id).count()
-        
-        return {
-            "status": "success",
-            "subject_id": subject_id,
-            "document_count": doc_count,
-            "chunk_count": chunk_count,
-            "message": f"Subject {subject_id} has {doc_count} documents and {chunk_count} chunks."
-        }
-    except Exception as e:
-        logger.exception("DEBUG: Pipeline status check failed")
-        return _stage_error_response("debug-status", str(e))
 
-@app.get("/debug/subjects")
-async def debug_subjects(db: Session = Depends(get_db)):
-    """DEBUG: List all subjects with document and chunk counts."""
-    try:
-        from models import Subject, Document, Chunk
-        from sqlalchemy import func
-        
-        # We need to count chunks linked to documents belonging to the subject
-        results = db.query(
-            Subject.id,
-            Subject.is_ready,
-            Subject.last_processed_at,
-            func.count(Document.id.distinct()).label('doc_count')
-        ).outerjoin(Document).group_by(Subject.id, Subject.is_ready, Subject.last_processed_at).all()
-        
-        subjects_data = []
-        for r in results:
-            sid = r.id
-            c_count = db.query(func.count(Chunk.id)).join(Document).filter(Document.subject_id == sid).scalar()
-            subjects_data.append({
-                "subject_id": str(sid),
-                "is_ready": r.is_ready,
-                "last_processed_at": r.last_processed_at.isoformat() if r.last_processed_at else None,
-                "document_count": r.doc_count,
-                "chunk_count": c_count,
-            })
-            
-        return {
-            "status": "success",
-            "total_subjects": len(subjects_data),
-            "subjects": subjects_data
+        payload = {
+            "model": OLLAMA_GENERATION_MODEL,
+            "prompt": prompt,
+            "stream": True,
         }
+
+        async def chat_generator():
+            timeout = httpx.Timeout(OLLAMA_CHAT_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", OLLAMA_GENERATE_URL, json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        piece = chunk.get("response")
+                        if isinstance(piece, str) and piece:
+                            yield piece
+
+                        if chunk.get("done") is True:
+                            break
+
+        return StreamingResponse(
+            stream_llm_response(chat_generator(), source="chat"),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
     except Exception as e:
-        logger.exception("DEBUG: Subjects listing failed")
-        return _stage_error_response("debug-subjects", str(e))
+        logger.exception("Chat stream setup failed")
+        return _stage_error_response(
+            "chat_stream",
+            "Chat stream failed",
+            details=str(e),
+            status_code=500,
+        )
 

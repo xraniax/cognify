@@ -1,5 +1,5 @@
-import axios from 'axios';
 import { randomUUID } from 'crypto';
+import engineClient from './engine.client.js';
 import Material from '../models/material.model.js';
 import { COMPLETED } from '../constants/status.enum.js';
 import { query } from '../utils/config/db.js';
@@ -393,20 +393,19 @@ ${blocked}`.trim();
 };
 
 const askModel = async (systemInstruction, userPrompt) => {
-    const response = await axios.post(
-        `${OLLAMA_BASE_URL}/api/chat`,
+    const response = await engineClient.post(
+        '/chat',
         {
-            model: OLLAMA_MODEL,
-            messages: [
-                { role: 'system', content: systemInstruction },
-                { role: 'user', content: userPrompt }
-            ],
-            stream: false,
-            options: { temperature: 0.4, num_predict: 1500 },
+            // Engine currently validates subject_id on chat requests even when context is provided.
+            subject_id: EXAM_ENGINE_SUBJECT_ID,
+            context: systemInstruction,
+            question: userPrompt,
+            top_k: 1,
+            language: 'en',
         },
         { timeout: 300000 }
     );
-    return response?.data?.message?.content || '';
+    return response?.data?.result || response?.data?.response || '';
 };
 
 const getDifficultyForProgress = (currentCount, targetTotal, curve) => {
@@ -441,7 +440,7 @@ class ExamService {
         // --- NEW: RAG Retrieval Stage ---
         let context = '';
         try {
-            const retrieveRes = await axios.post(`${ENGINE_URL}/retrieve`, {
+            const retrieveRes = await engineClient.post('/retrieve', {
                 subject_id: payload.subject_id,
                 topic: fallbackTopic,
                 top_k: 3,

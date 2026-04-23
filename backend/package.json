@@ -4,8 +4,11 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "start": "npm run migrate && npm run start:server",
+    "dev": "npm run migrate && npm run dev:server",
+    "start:server": "node src/server.js",
+    "dev:server": "nodemon src/server.js",
+    "migrate": "node scripts/migrate.js",
     "test": "NODE_OPTIONS='--experimental-vm-modules' npx jest",
     "create:admin": "node scripts/createAdmin.js"
   },

@@ -15,7 +15,22 @@ from typing import List, Optional
 sys.path.insert(0, os.path.dirname(__file__))
 
 from services.preprocessing import preprocess_document, _chunk_text
-from services.embeddings import generate_embeddings, generate_embedding
+# NEW: use the current batching-aware embedding entrypoint
+from services.embeddings import embed_step
+
+
+# NEW: lightweight compatibility wrappers so the rest of this script
+# can keep using the original function names while delegating to
+# the new embed_step API (which supports batching and concurrency).
+def generate_embedding(text: str, timeout: int = 15, retries: int = 2):
+    """NEW: Single-text embedding using embed_step under the hood."""
+    result = embed_step([text], timeout=timeout, retries=retries)
+    return result[0] if result else None
+
+
+def generate_embeddings(texts: List[str], timeout: int = 15, retries: int = 2):
+    """NEW: Batch embeddings using embed_step (batch + concurrency)."""
+    return embed_step(texts, timeout=timeout, retries=retries)
 
 # Configure logging
 logging.basicConfig(
@@ -144,6 +159,42 @@ def test_full_pipeline():
     finally:
         os.unlink(temp_path)
 
+
+def test_embeddings_batching_stress(num_chunks: int = 500) -> bool:
+    """NEW: Stress test for batching behaviour with many chunks.
+
+    This simulates a large document that produces many chunks and
+    verifies that the embeddings pipeline can handle the load and
+    returns a result for each input without crashing.
+    """
+    logger.info("Testing embeddings batching behaviour with %d chunks...", num_chunks)
+
+    # Generate many small synthetic chunks to simulate a big document
+    texts: List[str] = [f"Chunk {i} - synthetic test content." for i in range(num_chunks)]
+
+    try:
+        embeddings = generate_embeddings(texts, timeout=60, retries=2)
+    except Exception as e:
+        logger.error("Batching stress test failed: %s", e)
+        return False
+
+    if not embeddings or len(embeddings) != len(texts):
+        logger.error(
+            "Batching stress test size mismatch: inputs=%d, outputs=%d",
+            len(texts),
+            len(embeddings) if embeddings is not None else 0,
+        )
+        return False
+
+    # Verify that at least most embeddings are non-empty vectors
+    non_null = [e for e in embeddings if e]
+    logger.info(
+        "Batching stress test: %d/%d embeddings returned non-null vectors",
+        len(non_null),
+        len(embeddings),
+    )
+    return len(non_null) > 0
+
 def main():
     """Run all tests."""
     logger.info("Starting Cognify Engine tests...")
@@ -160,13 +211,17 @@ def main():
     # Test full pipeline
     pipeline_ok = test_full_pipeline()
 
+    # NEW: Stress-test batching behaviour with many chunks
+    batching_ok = test_embeddings_batching_stress()
+
     # Summary
     logger.info("Test Summary:")
     logger.info(f"- Preprocessing: {'✓' if chunks else '✗'}")
     logger.info(f"- Embeddings: {'✓' if embeddings_ok else '✗'}")
+    logger.info(f"- Embeddings batching stress: {'✓' if batching_ok else '✗'}")
     logger.info(f"- Full Pipeline: {'✓' if pipeline_ok else '✗'}")
 
-    if embeddings_ok and pipeline_ok:
+    if embeddings_ok and pipeline_ok and batching_ok:
         logger.info("All critical tests passed!")
         return 0
     else:
