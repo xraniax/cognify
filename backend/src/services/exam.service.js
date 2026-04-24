@@ -351,6 +351,8 @@ If you are unsure of a field, provide a sensible default rather than omitting it
 Generate EXACTLY ${numberOfQuestions} exam questions as strict JSON.
 
 Allowed types: ${types.join(', ')}
+Only use the following types EXACTLY: ${types.join(', ')}.
+Do NOT generate any other types.
 Difficulty: ${difficulty}
 Topics: ${topics.join(', ')}
 
@@ -358,16 +360,25 @@ Output format:
 {
   "questions": [
     {
-      "type": "single_choice",
-      "question": "Insert highly detailed question derived ONLY from the provided context here",
-      "options": ["First option", "Second option", "Third option", "Fourth option"],
+      "type": "TYPE_FROM_ALLOWED_TYPES",
+      "question": "Detailed question based ONLY on the provided context",
+
+      // For single_choice or multiple_select ONLY:
+      "options": ["Option 1", "Option 2"],
       "correctAnswers": [0],
-      "acceptedAnswers": ["Accepted short answer text"],
-      "blankAnswers": ["Answer for first blank"],
-      "pairs": [{"left": "Concept from context", "right": "Definition from context"}],
-      "explanation": "Detailed pedagogic explanation of why the answer is correct based on context",
-      "difficulty": "medium",
-      "topic": "Topic Name"
+
+      // For short_answer / problem / scenario ONLY:
+      "acceptedAnswers": ["Answer text"],
+
+      // For fill_blank ONLY:
+      "blankAnswers": ["Answer for blank"],
+
+      // For matching ONLY:
+      "pairs": [{"left": "Concept", "right": "Definition"}],
+
+      "explanation": "Short pedagogic explanation based on context",
+      "difficulty": "easy | medium | hard",
+      "topic": "Topic name"
     }
   ]
 }
@@ -378,9 +389,15 @@ Rules:
 3) if type is short_answer/problem/scenario, provide acceptedAnswers with one or more valid strings.
 4) if type is fill_blank, provide blankAnswers as ordered strings for each blank.
 5) if type is matching, provide pairs with left/right fields (at least 2 pairs).
-6) if type is single_choice or multiple_select, options length >= 2 and correctAnswers must contain valid option indices.
-7) NEVER include words: almost, correct, incorrect in question/choices/explanation.
-8) NEVER use placeholder text like "string", "option A", "choice B".
+6) For each question:
+   - Use ONLY the fields relevant to its type
+   - Do NOT include unused fields
+7) Follow type-specific rules:
+   - single_choice / multiple_select → MUST have options + correctAnswers
+   - short_answer / problem / scenario → MUST have acceptedAnswers
+   - fill_blank → MUST have blankAnswers
+   - matching → MUST have pairs (at least 2)
+8) NEVER include fields that do not belong to the selected type
 9) Match exactly ${numberOfQuestions} items.
 10) explanation must be pedagogic: briefly teach the underlying concept and why the answer is right.
 ${contextStr}
@@ -549,7 +566,10 @@ class ExamService {
                 [userId, exam.title, 'exam']
             );
             if (materialRecord.rows[0]) {
-                await Material.updateAIResult(materialRecord.rows[0].id, userId, exam);
+                await Material.updateAIResult(materialRecord.rows[0].id, userId, exam, {
+                    materialType: 'exam',
+                    count: payload.numberOfQuestions,
+                });
             }
         } catch (dbErr) {
             console.error('[ExamService] Failed to persist exam to history:', dbErr.message);

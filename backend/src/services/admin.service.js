@@ -6,6 +6,7 @@ import QuotaService from './quota.service.js';
 import { query } from '../utils/config/db.js';
 import fs from 'fs';
 import { performStorageCleanup } from '../utils/cleanup.util.js';
+import { normalizeStatus } from '../constants/status.enum.js';
 
 class AdminService {
     /**
@@ -19,7 +20,7 @@ class AdminService {
      * Suspend or activate a user
      */
     static async updateUserStatus(adminId, targetUserId, status, reason = '') {
-        const normalizedStatus = status.toUpperCase();
+        const normalizedStatus = normalizeStatus(status);
         const updatedUser = await User.adminUpdate(targetUserId, { status: normalizedStatus });
         
         await this.logAction(adminId, 'UPDATE_STATUS', 'users', targetUserId, {

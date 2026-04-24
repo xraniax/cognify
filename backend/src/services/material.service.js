@@ -22,6 +22,15 @@ import {
     normalizeStatus
 } from '../constants/status.enum.js';
 
+const generationConstraintByMaterialId = new Map();
+
+const TASK_TYPE_TO_MATERIAL_TYPE = {
+    summary: 'summary',
+    quiz: 'quiz',
+    flashcards: 'flashcards',
+    mock_exam: 'exam'
+};
+
 class MaterialService {
     /**
      * processDocument passes the entire upload payload (PDF + text) to the Python AI engine.
@@ -165,6 +174,7 @@ class MaterialService {
 
             if (diffMinutes > 10) {
                 console.warn(`[MaterialService] Job ${material.job_id} timed out after ${diffMinutes.toFixed(1)} mins.`);
+                generationConstraintByMaterialId.delete(String(materialId));
                 await Material.recordFailure(materialId, userId, 'Job timeout / worker failure');
                 await MaterialService._garbageCollectFile(materialId);
                 return await Material.findById(materialId, userId);
@@ -182,11 +192,7 @@ class MaterialService {
                 if (engineStatus === SUCCESS && result) {
                     // Check if this is a study material generation result (from task_generate)
                     if (result.material_type) {
-                        const updateData = {
-                            completed_at: new Date().toISOString(),
-                            status: COMPLETED,
-                            processed_at: new Date().toISOString()
-                        };
+                        const persistedConstraints = generationConstraintByMaterialId.get(String(materialId)) || {};
 
                         try {
                             if (!result.ai_generated_content) {
@@ -206,15 +212,22 @@ class MaterialService {
                                 throw new Error(validationMessage);
                             }
                         } catch (validationError) {
+                            generationConstraintByMaterialId.delete(String(materialId));
                             await Material.recordFailure(materialId, userId, validationError.message);
                             await MaterialService._garbageCollectFile(materialId);
                             return await Material.findById(materialId, userId);
                         }
 
-                        await query(
-                            'UPDATE materials SET ai_generated_content = $2, status = $3, completed_at = $4, processed_at = $5 WHERE id = $1 AND user_id = $6',
-                            [materialId, JSON.stringify(result.ai_generated_content), COMPLETED, updateData.completed_at, updateData.processed_at, userId]
+                        await Material.updateAIResult(
+                            materialId,
+                            userId,
+                            result.ai_generated_content,
+                            {
+                                materialType: result.material_type,
+                                ...persistedConstraints,
+                            }
                         );
+                        generationConstraintByMaterialId.delete(String(materialId));
                     } else {
                         // Standard document processing result (task_ocr/task_chunk/task_embed)
                         const extractedText = result.extracted_text || material.content;
@@ -229,10 +242,12 @@ class MaterialService {
                     return await Material.findById(materialId, userId);
                 }
 
+                // ENGINE_STATUS (not DB status) — result.status comes from Celery task payload
                 const errorMsg = error || result?.error || (result?.status === 'FAILED' ? result?.error : null) || 'AI Generation Failed';
 
                 // FAILURE: Record error in DB
                 if (engineStatus === FAILURE || result?.status === 'FAILED') {
+                    generationConstraintByMaterialId.delete(String(materialId));
                     await Material.recordFailure(materialId, userId, errorMsg);
                     await MaterialService._garbageCollectFile(materialId);
                     return await Material.findById(materialId, userId);
@@ -316,19 +331,14 @@ class MaterialService {
         const finalSubjectId = subjectId || (sourceDocuments.length > 0 ? sourceDocuments[0].subject_id : null);
         if (!finalSubjectId) return { result: "No subject context available for generation." };
 
-        // Map backend task types to engine material types
-        const typeMap = {
-            'summary': 'summary',
-            'quiz': 'quiz',
-            'flashcards': 'flashcards',
-            'mock_exam': 'exam'
-        };
-        const materialType = typeMap[taskType] || 'summary';
+        const materialType = TASK_TYPE_TO_MATERIAL_TYPE[taskType] || 'summary';
 
         try {
             const payload = {
                 subject_id: finalSubjectId,
                 material_type: materialType,
+                topic: genOptions?.topic || null,
+                language: genOptions?.language || 'en',
                 top_k: 10, // More context for study material generation
                 user_id: userId,
                 options: genOptions
@@ -362,6 +372,10 @@ class MaterialService {
                 PROCESSING,
                 result.job_id
             );
+
+            generationConstraintByMaterialId.set(String(materialRecord.id), {
+                count: genOptions?.count,
+            });
 
             console.info(`[MaterialService] Generation job tracked: ${result.job_id} for material: ${materialRecord.id}`);
 
@@ -412,13 +426,7 @@ class MaterialService {
             throw err;
         }
 
-        const typeMap = {
-            summary: 'summary',
-            quiz: 'quiz',
-            flashcards: 'flashcards',
-            mock_exam: 'exam'
-        };
-        const materialType = typeMap[taskType] || 'summary';
+        const materialType = TASK_TYPE_TO_MATERIAL_TYPE[taskType] || 'summary';
 
         const payload = {
             subject_id: finalSubjectId,
@@ -488,6 +496,7 @@ class MaterialService {
 
             // Revert material status to IDLE or just keep it as is?
             // Usually, we mark it as FAILED with a 'Cancelled by user' message.
+            generationConstraintByMaterialId.delete(String(materialId));
             await Material.recordFailure(materialId, userId, 'Processing cancelled by user');
             return true;
         } catch (error) {

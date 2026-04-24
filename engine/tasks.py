@@ -211,13 +211,34 @@ def task_process_document(
 
 
 @celery_app.task(bind=True, max_retries=3)
-def task_generate_material(self, subject_id: str, material_type: str, topic: Optional[str] = None, language: str = "en", top_k: int = 5, user_id: Optional[str] = None):
+def task_generate_material(
+    self,
+    subject_id: str,
+    material_type: str,
+    topic: Optional[str] = None,
+    language: str = "en",
+    top_k: int = 5,
+    user_id: Optional[str] = None,
+    options: Optional[dict] = None,
+):
     """Background celery task for executing Retrieval-Augmented LLM generation."""
     logger.info("Celery task_generate_material started: subject=%s, type=%s, topic=%s", subject_id, material_type, topic)
     db = SessionLocal()
     try:
+        request_options = options if isinstance(options, dict) else {}
+        effective_topic = topic or request_options.get("topic")
+        effective_language = language or request_options.get("language") or "en"
+
+        raw_count = request_options.get("count")
+        count = raw_count if isinstance(raw_count, int) and 1 <= raw_count <= 50 else None
+
+        raw_difficulty = request_options.get("difficulty")
+        difficulty = str(raw_difficulty).strip() if raw_difficulty is not None else None
+        if difficulty == "":
+            difficulty = None
+
         # 1. Retrieve context chunks
-        chunks = retrieve_chunks_by_topic(db, subject_id, topic, top_k)
+        chunks = retrieve_chunks_by_topic(db, subject_id, effective_topic, top_k)
         chunk_texts = [c.content for c in chunks if c.content]
         
         logger.info(f"Retrieved {len(chunk_texts)} chunk texts for generation.")
@@ -226,12 +247,20 @@ def task_generate_material(self, subject_id: str, material_type: str, topic: Opt
             raise ValueError("No document chunks found for the given subject or topic.")
             
         # 2. Generate material (this handles its own LLM retries)
-        material = generate_study_material(chunk_texts, material_type, topic, language)
+        material = generate_study_material(
+            chunk_texts,
+            material_type,
+            effective_topic,
+            effective_language,
+            user_id=user_id,
+            count=count,
+            difficulty=difficulty,
+        )
         ai_generated_content = _normalize_generation_result(
             material,
             material_type,
-            topic,
-            language,
+            effective_topic,
+            effective_language,
             top_k,
             subject_id,
         )

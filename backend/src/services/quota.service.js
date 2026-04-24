@@ -1,7 +1,7 @@
 import { query } from '../utils/config/db.js';
 import SettingsService from './settings.service.js';
 import User from '../models/user.model.js';
-import { FAILED } from '../constants/status.enum.js';
+import { FAILED, normalizeStatus } from '../constants/status.enum.js';
 
 class QuotaService {
     /**
@@ -45,7 +45,7 @@ class QuotaService {
         return {
             usedBytes: parseInt(row.used_bytes),
             limitBytes: parseInt(limitBytes),
-            status: row.status.toUpperCase()
+            status: normalizeStatus(row.status)
         };
     }
 

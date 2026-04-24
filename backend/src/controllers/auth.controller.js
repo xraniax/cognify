@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import User from '../models/user.model.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import sendEmail from '../utils/services/email.service.js';
+import { normalizeStatus } from '../constants/status.enum.js';
 
 const generateToken = (id) => {
     if (!process.env.JWT_SECRET) {
@@ -60,10 +61,10 @@ class AuthController {
             throw new Error('Invalid email or password');
         }
 
-        if (user.status?.toUpperCase() !== 'ACTIVE') {
+        if (normalizeStatus(user.status) !== 'ACTIVE') {
             console.warn(`[AUTH] Login failed: Account ${user.status} for email: ${email}`);
             res.status(403);
-            const errorMessage = user.status === 'suspended' 
+            const errorMessage = normalizeStatus(user.status) === 'SUSPENDED'
                 ? 'Your account has been suspended. Please contact support.'
                 : 'Your account is currently inactive. Please contact support.';
             throw new Error(errorMessage);
@@ -109,9 +110,9 @@ class AuthController {
         const user = req.user;
         console.log(`[AUTH] Social Auth profile: ${user.email}, provider: ${user.auth_provider}, status: ${user.status}`);
         
-        if (user.status?.toUpperCase() !== 'ACTIVE') {
+        if (normalizeStatus(user.status) !== 'ACTIVE') {
             console.warn(`[AUTH] Social Auth failed: Account ${user.status} for email: ${user.email}`);
-            const errorType = user.status === 'suspended' ? 'account_suspended' : 'account_inactive';
+            const errorType = normalizeStatus(user.status) === 'SUSPENDED' ? 'account_suspended' : 'account_inactive';
             return res.redirect(`${process.env.FRONTEND_URL}/login?error=${errorType}`);
         }
 

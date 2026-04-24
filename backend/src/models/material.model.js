@@ -1,5 +1,6 @@
 import { query } from '../utils/config/db.js';
 import { COMPLETED, FAILED, PROCESSING, normalizeStatus } from '../constants/status.enum.js';
+import { enforceGenerationConstraintsForPersistence } from '../utils/generationConstraints.js';
 
 class Material {
     /**
@@ -20,10 +21,11 @@ class Material {
      * Update material with AI engine results and mark as completed.
      * user_id is enforced in the WHERE clause to prevent IDOR (Insecure Direct Object Reference).
      */
-    static async updateAIResult(materialId, userId, aiResult) {
+    static async updateAIResult(materialId, userId, aiResult, constraints = null) {
+        const finalResult = enforceGenerationConstraintsForPersistence(aiResult, constraints || {});
         const result = await query(
             'UPDATE materials SET ai_generated_content = $2, processed_at = NOW(), completed_at = NOW(), status = $4 WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL RETURNING *',
-            [materialId, aiResult, userId, COMPLETED]
+            [materialId, finalResult, userId, COMPLETED]
         );
         return result.rows[0];
     }

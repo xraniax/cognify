@@ -6,7 +6,7 @@ import time
 import asyncio
 import json
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import requests
 import httpx
@@ -35,6 +35,22 @@ from .google_drive import upload_file_to_drive_from_bytes
 from .redis_client import get_quiz_session, update_quiz_session
 from streaming.stream_core import stream_llm_response
 from gpu_detector import detect_gpu_and_ollama
+try:
+    from core.normalization.status_normalizer import normalize_status
+    from core.normalization.input_normalizer import (
+        SUPPORTED_MATERIAL_TYPES,
+        coalesce_text,
+        normalize_material_type,
+        parse_optional_uuid,
+    )
+except ImportError:
+    from ..core.normalization.status_normalizer import normalize_status
+    from ..core.normalization.input_normalizer import (
+        SUPPORTED_MATERIAL_TYPES,
+        coalesce_text,
+        normalize_material_type,
+        parse_optional_uuid,
+    )
 
 from celery.result import AsyncResult
 try:
@@ -63,12 +79,6 @@ logging.basicConfig(
 logger = logging.getLogger("engine-api")
 
 ALLOWED_UPLOAD_SUFFIXES = frozenset({".pdf", ".png", ".jpg", ".jpeg"})
-MATERIAL_TYPE_ALIASES = {
-    "note": "summary",
-    "notes": "summary",
-    "flashcard": "flashcards",
-}
-SUPPORTED_MATERIAL_TYPES = frozenset({"summary", "quiz", "flashcards", "exam"})
 
 TEXT_JOB_TERMINAL_STATES = {"SUCCESS", "FAILURE", "REVOKED"}
 _TEXT_JOBS: Dict[str, Dict[str, Any]] = {}
@@ -149,7 +159,7 @@ async def startup_event():
     app.state.gpu_health = gpu_health
     
     if gpu_health["status"] != "healthy":
-        logger.warning(f"⚠️  GPU/Ollama status: {gpu_health['status'].upper()}")
+        logger.warning("⚠️  GPU/Ollama status: %s", normalize_status(gpu_health.get("status")))
         if gpu_health["recommendations"]:
             logger.warning("Please address the recommendations above to restore performance.")
     else:
@@ -197,26 +207,6 @@ def _safe_remove(path: Optional[str]) -> None:
 
 def _all_embeddings_failed(embeddings: List[Optional[List[float]]]) -> bool:
     return bool(embeddings) and all(e is None for e in embeddings)
-
-
-def _parse_optional_uuid(value: Optional[str], field_name: str) -> Optional[str]:
-    if value is None:
-        return None
-    normalized = str(value).strip()
-    if not normalized:
-        return None
-    try:
-        return str(UUID(normalized))
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"Invalid {field_name}: must be a UUID") from e
-
-
-def _coalesce_text(content: Optional[str], text: Optional[str]) -> Optional[str]:
-    candidate = content if content is not None else text
-    if candidate is None:
-        return None
-    stripped = str(candidate).strip()
-    return stripped if stripped else None
 
 
 async def _text_job_create(metadata: Optional[Dict[str, Any]] = None) -> str:
@@ -731,11 +721,11 @@ async def process_document_route(
             subject_id = subject_id if subject_id is not None else body.get("subject_id")
             user_id = user_id if user_id is not None else body.get("user_id")
 
-    normalized_text = _coalesce_text(content, text)
+    normalized_text = coalesce_text(content, text)
 
     try:
-        normalized_subject_id = _parse_optional_uuid(subject_id, "subject_id")
-        normalized_user_id = _parse_optional_uuid(user_id, "user_id")
+        normalized_subject_id = parse_optional_uuid(subject_id, "subject_id")
+        normalized_user_id = parse_optional_uuid(user_id, "user_id")
     except ValueError as e:
         return _stage_error_response("processing", "Invalid request payload", details=str(e), status_code=400)
 
@@ -970,8 +960,12 @@ async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
     """Generate study materials using LLM based on retrieved context via Celery."""
     logger.info("Generate request (async): subject=%s, type=%s, topic=%s", body.subject_id, body.material_type, body.topic)
     try:
+        request_options = body.options if isinstance(body.options, dict) else {}
+        topic = body.topic or request_options.get("topic")
+        language = body.language or request_options.get("language") or "en"
+
         requested_type = (body.material_type or "").strip().lower()
-        material_type = MATERIAL_TYPE_ALIASES.get(requested_type, requested_type)
+        material_type = normalize_material_type(body.material_type)
         if material_type not in SUPPORTED_MATERIAL_TYPES:
             return _stage_error_response(
                 "generation",
@@ -990,10 +984,11 @@ async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
         task = task_generate_material.delay(
             str(body.subject_id),
             material_type,
-            body.topic,
-            body.language,
+            topic,
+            language,
             body.top_k,
-            getattr(body, 'user_id', None)
+            getattr(body, 'user_id', None),
+            request_options,
         )
         
         return {
@@ -1024,8 +1019,12 @@ async def generate_stream_route(body: GenerateRequest, db: Session = Depends(get
         body.topic,
     )
 
+    request_options = body.options if isinstance(body.options, dict) else {}
+    topic = body.topic or request_options.get("topic")
+    language = body.language or request_options.get("language") or "en"
+
     requested_type = (body.material_type or "").strip().lower()
-    material_type = MATERIAL_TYPE_ALIASES.get(requested_type, requested_type)
+    material_type = normalize_material_type(body.material_type)
     if material_type not in SUPPORTED_MATERIAL_TYPES:
         return _stage_error_response(
             "generation_stream",
@@ -1041,7 +1040,7 @@ async def generate_stream_route(body: GenerateRequest, db: Session = Depends(get
         )
 
     try:
-        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), body.topic, body.top_k)
+        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), topic, body.top_k)
         chunk_texts = [c.content for c in chunks if c.content]
     except Exception as e:
         logger.exception("Generation stream retrieval failed")
@@ -1063,8 +1062,9 @@ async def generate_stream_route(body: GenerateRequest, db: Session = Depends(get
         for piece in generate_study_material_stream(
             chunk_texts,
             material_type,
-            body.topic,
-            body.language,
+            topic,
+            language,
+            options=request_options,
         ):
             if piece is None:
                 continue

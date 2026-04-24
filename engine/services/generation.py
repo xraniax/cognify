@@ -233,6 +233,8 @@ def build_prompt(
     context: str,
     topic: Optional[str],
     language: str,
+    count: Optional[int] = None,
+    difficulty_override: Optional[str] = None,
     student_profile: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build a structured prompt for the LLM based on material type."""
@@ -273,9 +275,13 @@ def build_prompt(
             else:
                 difficulty = "hard"
 
+        question_count = count if isinstance(count, int) and count > 0 else 5
+        if difficulty_override and str(difficulty_override).strip():
+            difficulty = str(difficulty_override).strip()
+
         base_instructions = (
             f"Generate a multiple-choice or short-answer quiz based on the context in {language}. "
-            f"Include {5} questions. For each question, provide options (if MCQ), the correct answer, and a short explanation."
+            f"Include {question_count} questions. For each question, provide options (if MCQ), the correct answer, and a short explanation."
         )
         base_instructions += f"\nSet quiz difficulty to: {difficulty}."
         if weak_topics:
@@ -300,7 +306,13 @@ def build_prompt(
         base_instructions += f"\nOutput MUST be a JSON object following this structure: {json.dumps(json_structure)}"
 
     elif material_type == "flashcards":
-        base_instructions = f"Create a set of 5-10 flashcards (Front/Back) based on the context in {language}."
+        card_count = count if isinstance(count, int) and count > 0 else None
+        if card_count is not None:
+            base_instructions = f"Create a set of {card_count} flashcards (Front/Back) based on the context in {language}."
+        else:
+            base_instructions = f"Create a set of 5-10 flashcards (Front/Back) based on the context in {language}."
+        if difficulty_override and str(difficulty_override).strip():
+            base_instructions += f" Adapt the complexity to {str(difficulty_override).strip()} level."
         json_structure = {
             "type": "flashcards",
             "cards": [
@@ -353,6 +365,7 @@ def generate_study_material_stream(
     material_type: str,
     topic: Optional[str] = None,
     language: str = "en",
+    options: Optional[Dict[str, Any]] = None,
 ) -> Iterator[str]:
     """Stream study material tokens/chunks directly from Ollama.
 
@@ -363,8 +376,23 @@ def generate_study_material_stream(
         yield "[ERROR] Not enough context to generate material."
         return
 
+    request_options = options if isinstance(options, dict) else {}
+    raw_count = request_options.get("count")
+    count = raw_count if isinstance(raw_count, int) and raw_count > 0 else None
+    raw_difficulty = request_options.get("difficulty")
+    difficulty_override = str(raw_difficulty).strip() if raw_difficulty is not None else None
+    if difficulty_override == "":
+        difficulty_override = None
+
     context = _build_generation_context(chunks)
-    prompt = build_prompt(material_type, context, topic, language)
+    prompt = build_prompt(
+        material_type,
+        context,
+        topic,
+        language,
+        count=count,
+        difficulty_override=difficulty_override,
+    )
 
     payload: Dict[str, Any] = {
         "model": OLLAMA_GENERATION_MODEL,
@@ -435,6 +463,8 @@ def generate_study_material(
     timeout: int = OLLAMA_GENERATION_TIMEOUT,
     retries: int = OLLAMA_REQUEST_RETRIES,
     user_id: Optional[str] = None,
+    count: Optional[int] = None,
+    difficulty: Optional[str] = None,
 ) -> Union[str, Dict[str, Any]]:
     """Combine chunks into context and call Ollama to generate study material."""
     if not chunks:
@@ -457,6 +487,8 @@ def generate_study_material(
         context,
         topic,
         language,
+        count=count,
+        difficulty_override=difficulty,
         student_profile=student_profile,
     )
 
