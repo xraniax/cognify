@@ -189,7 +189,7 @@ const SubjectDetail = () => {
                 <MaterialsPanel
                     genType={genType}
                     setGenType={setGenType}
-                    handleGenerate={handleGenerate}
+                    handleGenerate={(options) => requireAuth(() => handleGenerate(options))}
                     isGenerating={isGenerating}
                     jobProgress={jobProgress}
                     selectedCount={selectedUploads.length}

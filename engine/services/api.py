@@ -32,6 +32,7 @@ from .schemas import (
     ChatRequest, QuizEvaluateRequest, QuizEvaluateResponse
 )
 from .google_drive import upload_file_to_drive_from_bytes
+from .redis_client import get_quiz_session, update_quiz_session
 from streaming.stream_core import stream_llm_response
 from gpu_detector import detect_gpu_and_ollama
 
@@ -504,7 +505,7 @@ async def stream_job_status(job_id: str):
                                 "status": "FAILURE",
                                 "is_final": True,
                             }
-                            yield f"data: {json.dumps(payload)}\\n\\n"
+                            yield f"data: {json.dumps(payload)}\n\n"
                             break
                         chunk_text = generation_stream or result.get("extracted_text") or result.get("status") or "SUCCESS"
                     elif status == "FAILURE":
@@ -535,7 +536,7 @@ async def stream_job_status(job_id: str):
                     "status": status,
                     "is_final": is_final,
                 }
-                yield f"data: {json.dumps(payload)}\\n\\n"
+                yield f"data: {json.dumps(payload)}\n\n"
 
                 if payload["is_final"]:
                     break
@@ -547,13 +548,13 @@ async def stream_job_status(job_id: str):
                     "status": "UNKNOWN",
                     "is_final": False,
                 }
-                yield f"data: {json.dumps(payload)}\\n\\n"
+                yield f"data: {json.dumps(payload)}\n\n"
 
             # Emit periodic heartbeat comment so proxies keep the stream alive.
-            yield ": keep-alive\\n\\n"
+            yield ": keep-alive\n\n"
             await asyncio.sleep(1)
 
-        yield "event: done\\ndata: [DONE]\\n\\n"
+        yield "event: done\ndata: [DONE]\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -734,8 +735,23 @@ async def process_document_route(
 
     try:
         normalized_subject_id = _parse_optional_uuid(subject_id, "subject_id")
+        normalized_user_id = _parse_optional_uuid(user_id, "user_id")
     except ValueError as e:
         return _stage_error_response("processing", "Invalid request payload", details=str(e), status_code=400)
+
+    if normalized_user_id is None:
+        return _stage_error_response(
+            "processing",
+            "Missing user context: user_id is required for ingestion",
+            status_code=400,
+        )
+
+    if normalized_subject_id is None:
+        return _stage_error_response(
+            "processing",
+            "Missing subject context: subject_id is required for ingestion",
+            status_code=400,
+        )
 
     if file is None and not normalized_text:
         return _stage_error_response(
@@ -759,7 +775,7 @@ async def process_document_route(
                 "stage": "processing",
                 "subject_id": normalized_subject_id,
                 "document_id": document_id,
-                "user_id": user_id,
+                "user_id": normalized_user_id,
                 "request_id": request_id,
                 "file_path": file_path,
                 "mode": "text",
@@ -771,7 +787,7 @@ async def process_document_route(
             normalized_text,
             subject_id=normalized_subject_id,
             document_id=document_id,
-            user_id=user_id,
+            user_id=normalized_user_id,
         )
         return {
             "status": "accepted",
@@ -789,7 +805,7 @@ async def process_document_route(
         getattr(file, "content_type", None),
         normalized_subject_id,
         document_id,
-        user_id,
+        normalized_user_id,
     )
     try:
         # Read file content once
@@ -806,13 +822,6 @@ async def process_document_route(
         if suffix not in ALLOWED_UPLOAD_SUFFIXES:
             raise ValueError("Only PDF and image files are supported (.pdf, .png, .jpg, .jpeg).")
 
-        if normalized_subject_id is None:
-            logger.warning(
-                "[PIPELINE] no_subject_id request_id=%s filename=%s (will NOT persist to DB)",
-                request_id,
-                file.filename,
-            )
-        
         # Upload to Google Drive directly from bytes (no local save)
         logger.info(
             "[PIPELINE] drive_upload_start request_id=%s unique_filename=%s",
@@ -851,10 +860,11 @@ async def process_document_route(
 
     # Queue the celery background task, passing drive_file_id instead of temp path
     job = task_process_document.delay(
-        google_file_id,
-        file.filename,
-        normalized_subject_id,
-        request_id,
+        drive_file_id=google_file_id,
+        original_filename=file.filename,
+        subject_id=normalized_subject_id,
+        user_id=normalized_user_id,
+        request_id=request_id,
     )
 
     logger.info(
@@ -1128,6 +1138,12 @@ async def quiz_next_route(body: dict, db: Session = Depends(get_db)):
                 status_code=400,
             )
 
+        session = get_quiz_session(user_id, str(subject_id)) or {
+            "correct_streak": 0,
+            "current_difficulty": 1,
+            "total": 0,
+        }
+
         previous_answer = (body or {}).get("previous_answer")
         if previous_answer is not None and str(previous_answer).strip() != "":
             is_correct = bool((body or {}).get("is_correct", False))
@@ -1142,6 +1158,21 @@ async def quiz_next_route(body: dict, db: Session = Depends(get_db)):
                 response_time=response_time,
                 topic=str(topic or "general"),
             )
+
+            session["total"] = int(session.get("total", 0)) + 1
+            if is_correct:
+                session["correct_streak"] = int(session.get("correct_streak", 0)) + 1
+            else:
+                session["correct_streak"] = 0
+
+            difficulty = int(session.get("current_difficulty", 1))
+            if session["correct_streak"] >= 3:
+                difficulty = min(3, difficulty + 1)
+            if not is_correct:
+                difficulty = max(1, difficulty - 1)
+            session["current_difficulty"] = difficulty
+
+            update_quiz_session(user_id, str(subject_id), session)
 
         student = get_student(user_id)
 
@@ -1163,13 +1194,14 @@ async def quiz_next_route(body: dict, db: Session = Depends(get_db)):
             language=language,
         )
 
+        difficulty_map = {1: "easy", 2: "medium", 3: "hard"}
+        current_difficulty = int(session.get("current_difficulty", 1))
+        if current_difficulty < 1:
+            current_difficulty = 1
+        if current_difficulty > 3:
+            current_difficulty = 3
+        difficulty = difficulty_map[current_difficulty]
         accuracy = float(student.get("accuracy", 0.5))
-        if accuracy < 0.5:
-            difficulty = "easy"
-        elif accuracy <= 0.8:
-            difficulty = "medium"
-        else:
-            difficulty = "hard"
 
         return {
             "question": question,
@@ -1178,6 +1210,7 @@ async def quiz_next_route(body: dict, db: Session = Depends(get_db)):
                 "weak_topics": student.get("weak_topics") or [],
                 "difficulty": difficulty,
             },
+            "session": session,
         }
     except Exception as e:
         logger.exception("Adaptive quiz next failed")
