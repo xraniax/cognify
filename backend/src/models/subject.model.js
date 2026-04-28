@@ -51,12 +51,12 @@ class Subject {
     }
 
     /**
-     * Update subject name
+     * Update subject name and description
      */
-    static async update(id, userId, name) {
+    static async update(id, userId, name, description) {
         const result = await query(
-            'UPDATE subjects SET name = $1, last_activity_at = NOW(), updated_at = NOW() WHERE id = $2 AND user_id = $3 RETURNING *, last_activity_at AS "lastActivityAt"',
-            [name, id, userId]
+            'UPDATE subjects SET name = $1, description = $2, last_activity_at = NOW(), updated_at = NOW() WHERE id = $3 AND user_id = $4 RETURNING *, last_activity_at AS "lastActivityAt"',
+            [name, description, id, userId]
         );
         return result.rows[0];
     }

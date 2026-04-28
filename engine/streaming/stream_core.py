@@ -29,7 +29,7 @@ async def stream_llm_response(generator: AsyncIterator[str], *, source: str) -> 
     try:
         while True:
             try:
-                raw = await asyncio.wait_for(iterator.__anext__(), timeout=15)
+                raw = await asyncio.wait_for(iterator.__anext__(), timeout=90)
             except asyncio.TimeoutError:
                 keepalive_count += 1
                 yield ": keep-alive\n\n"

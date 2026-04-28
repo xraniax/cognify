@@ -495,13 +495,90 @@ def task_process_document(
 
 
 @celery_app.task(bind=True, max_retries=3)
-def task_generate_material(self, subject_id: str, material_type: str, topic: Optional[str] = None, language: str = "en", top_k: int = 5, user_id: Optional[str] = None):
+def task_process_document_local(
+    self,
+    local_file_path: str,
+    original_filename: str,
+    subject_id: str,
+    user_id: str,
+    request_id: Optional[str] = None,
+):
+    """Background celery task: process a document from a local file path (Drive-free fallback)."""
+    task_id = getattr(getattr(self, "request", None), "id", None)
+    started_at = time.time()
+    logger.info(
+        "[PIPELINE] local_task_start request_id=%s task_id=%s path=%s filename=%s subject_id=%s",
+        request_id, task_id, local_file_path, original_filename, subject_id,
+    )
+
+    if not user_id:
+        raise ValueError("Missing user context: user_id is required for ingestion")
+    if not subject_id:
+        raise ValueError("Missing subject context: subject_id is required for ingestion")
+
+    from database import SessionLocal
+    from services.ingestion import ingest_file
+
+    db = SessionLocal()
+    try:
+        ingest_result = ingest_file(
+            db,
+            file_path=local_file_path,
+            user_id=user_id,
+            subject_id=subject_id,
+            original_filename=original_filename,
+            request_id=request_id,
+        )
+        logger.info(
+            "[PIPELINE] local_task_success request_id=%s task_id=%s chunks=%s elapsed_ms=%d",
+            request_id, task_id, ingest_result.get("chunks", 0),
+            int((time.time() - started_at) * 1000),
+        )
+        return {
+            "status": "success",
+            "subject_id": ingest_result.get("subject_id"),
+            "document": original_filename,
+            "chunk_count": ingest_result.get("chunks", 0),
+            "chunks": ingest_result.get("chunks", 0),
+            "document_id": ingest_result.get("document_id"),
+        }
+    except Exception as e:
+        logger.error("Local task crashed for %s: %s", original_filename, e)
+        logger.error(traceback.format_exc())
+        raise self.retry(exc=e, countdown=10)
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, max_retries=3)
+def task_generate_material(
+    self,
+    subject_id: str,
+    material_type: str,
+    topic: Optional[str] = None,
+    language: str = "en",
+    top_k: int = 5,
+    user_id: Optional[str] = None,
+    options: Optional[dict] = None,
+):
     """Background celery task for executing Retrieval-Augmented LLM generation."""
     logger.info("Celery task_generate_material started: subject=%s, type=%s, topic=%s", subject_id, material_type, topic)
     db = SessionLocal()
     try:
+        request_options = options if isinstance(options, dict) else {}
+        effective_topic = topic or request_options.get("topic")
+        effective_language = language or request_options.get("language") or "en"
+
+        raw_count = request_options.get("count")
+        count = raw_count if isinstance(raw_count, int) and 1 <= raw_count <= 50 else None
+
+        raw_difficulty = request_options.get("difficulty")
+        difficulty = str(raw_difficulty).strip() if raw_difficulty is not None else None
+        if difficulty == "":
+            difficulty = None
+
         # 1. Retrieve context chunks
-        chunks = retrieve_chunks_by_topic(db, subject_id, topic, top_k)
+        chunks = retrieve_chunks_by_topic(db, subject_id, effective_topic, top_k)
         chunk_texts = [c.content for c in chunks if c.content]
         
         logger.info(f"Retrieved {len(chunk_texts)} chunk texts for generation.")
@@ -510,12 +587,20 @@ def task_generate_material(self, subject_id: str, material_type: str, topic: Opt
             raise ValueError("No document chunks found for the given subject or topic.")
             
         # 2. Generate material (this handles its own LLM retries)
-        material = generate_study_material(chunk_texts, material_type, topic, language)
+        material = generate_study_material(
+            chunk_texts,
+            material_type,
+            effective_topic,
+            effective_language,
+            user_id=user_id,
+            count=count,
+            difficulty=difficulty,
+        )
         ai_generated_content = _normalize_generation_result(
             material,
             material_type,
-            topic,
-            language,
+            effective_topic,
+            effective_language,
             top_k,
             subject_id,
         )

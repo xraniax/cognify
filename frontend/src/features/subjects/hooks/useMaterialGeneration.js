@@ -60,6 +60,17 @@ export const useMaterialGeneration = ({
     const handleGenerateMaterial = useCallback(async (genType, singleId = null, genOptions = undefined) => {
         setMaterialGenError('');
 
+        // Adaptive quiz: skip bulk generation, open a live AdaptiveQuizView tab
+        if (genType === 'quiz' && genOptions?.difficulty === 'adaptive') {
+            const tabId = `adaptive-quiz-${subjectId}`;
+            setTabs(prev => prev.find(t => t.id === tabId)
+                ? prev
+                : [...prev, { id: tabId, title: 'Adaptive Quiz', type: 'quiz', quizMode: 'adaptive', material: null, pinned: false }]
+            );
+            setActiveTabId(tabId);
+            return;
+        }
+
         const targets = (singleId ? [singleId] : selectedUploads)
             .filter(t => t && typeof t === 'string' && t !== '[object Object]')
             .map(String);
@@ -75,10 +86,10 @@ export const useMaterialGeneration = ({
         hasRenamedRef.current = false;
         activeMaterialIdRef.current = null;
 
-        // Store params for retry
+        // Store params for retry (from HEAD)
         lastGenParamsRef.current = { genType, singleId, genOptions };
 
-        // Set generation timeout
+        // Set generation timeout (from HEAD)
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
         timeoutRef.current = setTimeout(() => {
             streamControllerRef.current?.abort();
@@ -163,12 +174,12 @@ export const useMaterialGeneration = ({
             }
 
             streamControllerRef.current = null;
-            setIsGeneratingMaterial(false);
+            finishGenerating();
             return;
         } catch (streamErr) {
             console.warn('[MaterialGen] Streaming path failed, falling back to async job flow:', streamErr?.message || streamErr);
             streamControllerRef.current = null;
-            setIsGeneratingMaterial(false);
+            // Note: we don't finishGenerating() here because we're about to start the async/poll fallback
         }
 
         try {

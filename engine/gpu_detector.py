@@ -11,6 +11,7 @@ from typing import Dict, Any
 from datetime import datetime
 
 from services.ollama_config import get_ollama_base_url
+from core.normalization.status_normalizer import normalize_status
 
 logger = logging.getLogger("engine-gpu-detector")
 
@@ -227,7 +228,7 @@ def detect_gpu_and_ollama() -> Dict[str, Any]:
     }
     
     logger.info("=" * 80)
-    logger.info(f"Overall Status: {status.upper()}")
+    logger.info("Overall Status: %s", normalize_status(status))
     logger.info("=" * 80)
     
     return result

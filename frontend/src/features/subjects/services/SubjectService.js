@@ -5,7 +5,7 @@ export const subjectService = {
     getAll: () => api.get('/subjects'),
     getOne: (id) => api.get(`/subjects/${id}`),
     create: (name, description) => api.post('/subjects', { name, description }),
-    rename: (id, name) => api.patch(`/subjects/${id}`, { name }),
+    update: (id, name, description) => api.patch(`/subjects/${id}`, { name, description }),
     delete: (id) => api.delete(`/subjects/${id}`),
 };
 

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/user.model.js';
+import { normalizeStatus } from '../constants/status.enum.js';
 
 /**
  * Extracts a Bearer token from an Authorization header string.
@@ -55,7 +56,7 @@ const protect = async (req, res, next) => {
             });
         }
 
-        if (user.status === 'suspended') {
+        if (normalizeStatus(user.status) === 'SUSPENDED') {
             return res.status(403).json({
                 status: 'error',
                 message: 'Your account has been suspended. Please contact support.',

@@ -9,7 +9,7 @@ class FallbackGenerationService {
      */
     static async generateSync(userId, materialId, taskType, gps, context) {
         console.warn(`[Fallback] Triggering fallback generation for material ${materialId}`);
-        const OLLAMA_URL = process.env.OLLAMA_FALLBACK_URL || 'http://ollama_gpu:11434/api/generate';
+        const OLLAMA_URL = process.env.OLLAMA_FALLBACK_URL || 'http://ollama:11434/api/generate';
         const MODEL = process.env.OLLAMA_FALLBACK_MODEL || 'llama3.1:8b';
 
         try {

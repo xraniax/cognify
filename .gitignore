@@ -62,3 +62,9 @@ ollama-data/id_ed25519.pub
 engine/services/credentials/
 
 data/
+# Secrets
+sa.json
+sa.base64
+engine/credentials/*.json
+engine/.env.docker
+engine/.env

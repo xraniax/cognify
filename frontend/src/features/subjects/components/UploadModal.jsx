@@ -9,7 +9,7 @@ const UploadModal = ({
     onSuccess
 }) => {
     return (
-        <CustomModal isOpen={isOpen} onClose={onClose} title="Garden Expansion" showFooter={false}>
+        <CustomModal isOpen={isOpen} onClose={onClose} title="Garden Expansion" type="upload" showFooter={false}>
             <div className="p-1">
                 <FileUpload 
                     subjectId={subjectId}

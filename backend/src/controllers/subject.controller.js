@@ -22,9 +22,9 @@ class SubjectController {
         res.status(200).json({ status: 'success', data: subject });
     });
 
-    static rename = asyncHandler(async (req, res) => {
-        const { name } = req.body;
-        const subject = await SubjectService.renameSubject(req.user.id, req.params.id, name);
+    static update = asyncHandler(async (req, res) => {
+        const { name, description } = req.body;
+        const subject = await SubjectService.updateSubject(req.user.id, req.params.id, name, description);
         if (!subject) {
             res.status(404);
             throw new Error('Subject not found');

@@ -1,8 +1,35 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useUIStore } from '@/store/useUIStore';
 import { validateEmail, validatePassword, validateName } from '@/utils/validators';
+
+const Orb = ({ color, size, top, left, delay, opacity = 0.15 }) => (
+    <motion.div
+        animate={{
+            y: [0, -30, 0],
+            x: [0, 20, 0],
+            scale: [1, 1.1, 1],
+            rotate: [0, 45, 0],
+        }}
+        transition={{
+            duration: 12,
+            repeat: Infinity,
+            delay: delay,
+            ease: "easeInOut"
+        }}
+        className="absolute blur-[80px] rounded-full pointer-events-none z-0"
+        style={{
+            background: color,
+            width: size,
+            height: size,
+            top: top,
+            left: left,
+            opacity: opacity
+        }}
+    />
+);
 
 const Register = () => {
     const [formData, setFormData] = useState({ name: '', email: '', password: '' });
@@ -72,12 +99,69 @@ const Register = () => {
         window.location.href = `${backendBase}/auth/${provider}`;
     };
 
-    return (
-        <div className="flex flex-col items-center justify-center min-h-[90vh] p-6 animate-in fade-in duration-700 relative overflow-hidden" style={{ background: 'var(--c-canvas)' }}>
-            {/* Decorative background elements */}
-            <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(var(--c-primary) 1px, transparent 1px)', backgroundSize: '32px 32px' }}></div>
+    const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
-            <div className="w-full max-w-[420px] p-10 rounded-[2.5rem] relative z-10" style={{ background: 'var(--c-surface)', boxShadow: 'var(--shadow-xl)', border: '1px solid var(--c-border-soft)' }}>
+    const handleMouseMove = (e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        setMousePos({
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top,
+        });
+    };
+
+    return (
+        <div 
+            onMouseMove={handleMouseMove}
+            className="flex flex-col items-center justify-center min-h-screen p-6 animate-in fade-in duration-700 relative overflow-hidden" 
+            style={{ 
+                background: 'var(--c-canvas)',
+                backgroundImage: `
+                    radial-gradient(circle at 10% 20%, rgba(99, 91, 255, 0.15), transparent 40%),
+                    radial-gradient(circle at 90% 80%, rgba(244, 63, 94, 0.15), transparent 40%),
+                    radial-gradient(circle at 50% 50%, rgba(16, 184, 213, 0.1), transparent 50%),
+                    radial-gradient(circle at 80% 10%, rgba(245, 166, 35, 0.1), transparent 40%)
+                ` 
+            }}
+        >
+            {/* High-Vibrancy Ambient Elements */}
+            <Orb color="var(--c-primary)" size="500px" top="-15%" left="-10%" delay={0} opacity={0.2} />
+            <Orb color="var(--c-rose)" size="400px" top="60%" left="75%" delay={2} opacity={0.15} />
+            <Orb color="var(--c-teal)" size="350px" top="20%" left="60%" delay={4} opacity={0.12} />
+            <Orb color="var(--c-amber)" size="300px" top="70%" left="10%" delay={6} opacity={0.1} />
+            <Orb color="var(--c-fuchsia)" size="450px" top="-5%" left="50%" delay={8} opacity={0.15} />
+            
+            <div className="absolute inset-0 opacity-[0.02]" style={{ backgroundImage: 'radial-gradient(var(--c-primary) 1px, transparent 1px)', backgroundSize: '32px 32px' }}></div>
+
+            {/* Global Cursor Glow */}
+            <motion.div
+                className="pointer-events-none absolute inset-0 z-0 opacity-50 transition-opacity duration-500"
+                style={{
+                    background: `radial-gradient(800px circle at ${mousePos.x}px ${mousePos.y}px, var(--c-primary-soft), transparent 45%)`
+                }}
+            />
+
+            <motion.div 
+                initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.8, ease: "circOut" }}
+                className="w-full max-w-[440px] p-10 rounded-[3rem] relative z-10 backdrop-blur-3xl shadow-2xl overflow-hidden group" 
+                style={{ 
+                    background: 'rgba(255, 255, 255, 0.82)', 
+                    border: '1px solid rgba(255, 255, 255, 0.4)', 
+                }}
+            >
+                {/* Rainbow Border Glow Effect */}
+                <div className="absolute inset-0 pointer-events-none opacity-20 group-hover:opacity-40 transition-opacity duration-700" 
+                     style={{ 
+                         padding: '1px',
+                         background: 'linear-gradient(45deg, #635bff, #f43f5e, #f59e0b, #10b981, #3baaff, #635bff)',
+                         backgroundSize: '400% 400%',
+                         WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                         WebkitMaskComposite: 'xor',
+                         maskComposite: 'exclude',
+                         animation: 'gradient-shift 8s linear infinite'
+                     }}
+                />
                 <div className="text-center mb-10">
                     <h1 className="mb-2 text-4xl font-black font-serif" style={{ color: 'var(--c-text)' }}>Create Account</h1>
                     <p className="font-bold" style={{ color: 'var(--c-text-secondary)' }}>Join Cognify to start your journey</p>
@@ -130,7 +214,7 @@ const Register = () => {
                         <input
                             type="text"
                             className={`input-field ${touched.name && fieldErrors.name ? '!border-red-400 !ring-4 !ring-red-50' : ''}`}
-                            placeholder="John Doe"
+                            placeholder="Enter your name"
                             value={formData.name}
                             onChange={(e) => handleChange('name', e.target.value)}
                             onBlur={() => handleBlur('name')}
@@ -197,7 +281,7 @@ const Register = () => {
                 <p className="text-center mt-8 text-sm font-bold" style={{ color: 'var(--c-text-muted)' }}>
                     Already have an account? <Link to="/login" className="font-black transition-colors hover:underline underline-offset-4" style={{ color: 'var(--c-primary)' }}>Sign in</Link>
                 </p>
-            </div>
+            </motion.div>
 
             <p className="mt-8 text-xs font-black uppercase tracking-[0.2em] text-gray-400 relative z-10 text-center">
                 Vibrant Learning &bull; Unlimited Potential

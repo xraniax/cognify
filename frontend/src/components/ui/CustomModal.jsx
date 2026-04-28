@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, AlertCircle, HelpCircle, Info } from 'lucide-react';
+import { X, AlertCircle, HelpCircle, Info, Upload } from 'lucide-react';
 
 const CustomModal = ({
     isOpen,
@@ -72,12 +72,13 @@ const CustomModal = ({
                         <div className="p-8 pb-0 flex flex-col items-center text-center">
                             <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-6 shadow-sm`}
                                 style={{
-                                    background: type === 'warning' ? 'var(--c-danger-ultra)' : type === 'prompt' ? 'var(--c-primary-light)' : 'var(--c-accent-light)',
-                                    color: type === 'warning' ? 'var(--c-danger)' : type === 'prompt' ? 'var(--c-primary)' : 'var(--c-accent)',
+                                    background: type === 'warning' ? 'var(--c-danger-ultra)' : type === 'prompt' ? 'var(--c-primary-light)' : type === 'upload' ? 'var(--c-primary-light)' : 'var(--c-accent-light)',
+                                    color: type === 'warning' ? 'var(--c-danger)' : type === 'prompt' ? 'var(--c-primary)' : type === 'upload' ? 'var(--c-primary)' : 'var(--c-accent)',
                                 }}
                             >
                                 {type === 'warning' ? <AlertCircle className="w-8 h-8" /> :
                                  type === 'prompt' ? <HelpCircle className="w-8 h-8" /> :
+                                 type === 'upload' ? <Upload className="w-8 h-8" /> :
                                  <Info className="w-8 h-8" />}
                             </div>
                             <h2 className="text-2xl font-black mb-2 leading-tight" style={{ color: 'var(--c-text)' }}>

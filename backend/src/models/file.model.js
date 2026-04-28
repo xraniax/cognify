@@ -16,6 +16,19 @@ class File {
     }
 
     /**
+     * Track a new file from Google Drive.
+     */
+    static async create_with_drive(userId, subjectId, materialId, filename, originalName, mimeType, sizeBytes, path, driveFileId) {
+        const result = await query(
+            `INSERT INTO files (user_id, subject_id, material_id, filename, original_name, mime_type, size_bytes, path, drive_file_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING *`,
+            [userId, subjectId, materialId, filename, originalName, mimeType, sizeBytes, path, driveFileId]
+        );
+        return result.rows[0];
+    }
+
+    /**
      * Find a file by ID.
      */
     static async findById(id) {

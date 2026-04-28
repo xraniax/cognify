@@ -1,8 +1,63 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { useUIStore } from '@/store/useUIStore';
 
-const MIN_PCT = 12; // minimum panel width as a percentage
+const MIN_PCT = 12;
+const PANEL_TRANSITION = 'width 0.32s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease';
+
+// Grip dots — 4 vertically stacked dots that are always softly visible
+const GripDots = () => (
+    <div className="flex flex-col items-center gap-[4px]">
+        {[0,1,2,3].map(i => (
+            <div key={i} className="w-[3px] h-[3px] rounded-full" style={{ background: 'currentColor' }} />
+        ))}
+    </div>
+);
+
+const Separator = ({ idx, activeIdx, onMouseDown }) => {
+    const isActive  = activeIdx === idx;
+    const [hovered, setHovered] = useState(false);
+    const lit = isActive || hovered;
+
+    return (
+        <div
+            className="hidden md:flex items-center justify-center flex-shrink-0 cursor-col-resize"
+            style={{ width: 28, margin: '0 -14px', position: 'relative', zIndex: 30 }}
+            onMouseDown={onMouseDown}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
+            {/* Vertical rule — always softly present */}
+            <div
+                className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px"
+                style={{
+                    background: lit ? 'var(--c-primary)' : 'var(--c-border-soft)',
+                    opacity: lit ? 0.7 : 0.4,
+                    transition: 'opacity 0.15s, background 0.15s',
+                }}
+            />
+            {/* Grip pill */}
+            <div
+                className="relative flex items-center justify-center rounded-full"
+                style={{
+                    width: 20,
+                    height: 48,
+                    background: lit ? 'var(--c-primary)' : 'var(--c-border)',
+                    color: lit ? '#fff' : 'var(--c-text-muted)',
+                    opacity: lit ? 1 : 0.5,
+                    transform: isActive ? 'scaleX(1.1)' : 'scaleX(1)',
+                    boxShadow: isActive
+                        ? '0 0 0 3px color-mix(in srgb, var(--c-primary) 20%, transparent)'
+                        : hovered
+                        ? '0 0 0 2px color-mix(in srgb, var(--c-primary) 10%, transparent)'
+                        : 'none',
+                    transition: 'all 0.15s ease',
+                }}
+            >
+                <GripDots />
+            </div>
+        </div>
+    );
+};
 
 const WorkspaceLayout = ({
     leftPanel,
@@ -11,156 +66,171 @@ const WorkspaceLayout = ({
     leftPanelCollapsed,
     rightPanelCollapsed
 }) => {
-    // Panel widths as percentages [left, middle, right] — must sum to 100
+    // Widths are the *stored* percentages [left, middle, right]
+    // during drag we mutate widthsRef and write directly to the DOM — no React re-renders
     const [widths, setWidths] = useState([22, 50, 28]);
-    const [isDragging, setIsDragging] = useState(false);
-    const containerRef = useRef(null);
-    const dragging = useRef(null); // { separatorIndex, startX, startWidths }
+    const widthsRef = useRef([22, 50, 28]);
 
-    // Reactive mobile state — updates on window resize
-    const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+    const containerRef = useRef(null);
+    const leftRef    = useRef(null);
+    const midRef     = useRef(null);
+    const rightRef   = useRef(null);
+
+    const [isMobile, setIsMobile] = useState(
+        () => typeof window !== 'undefined' && window.innerWidth < 768
+    );
     useEffect(() => {
-        const handleResize = () => setIsMobile(window.innerWidth < 768);
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
+        const h = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', h);
+        return () => window.removeEventListener('resize', h);
     }, []);
 
-    // Mobile View State
-    const activePanel = useUIStore((state) => state.data.activeWorkspacePanel);
+    const activePanel = useUIStore((s) => s.data.activeWorkspacePanel);
 
-    // spring config for smooth transitions - softer and more organic
-    const springConfig = { type: 'spring', stiffness: 280, damping: 32, mass: 1 };
-    const [transitionConfig, setTransitionConfig] = useState(springConfig);
-
-    // Reset transition to spring only when collapse state changes from props
-    useEffect(() => {
-        setTransitionConfig(springConfig);
+    // Computes effective pixel-percentages respecting collapse flags
+    const computeEffective = useCallback((w) => {
+        const lw = leftPanelCollapsed  ? 0 : w[0];
+        const rw = rightPanelCollapsed ? 0 : w[2];
+        return [lw, 100 - lw - rw, rw];
     }, [leftPanelCollapsed, rightPanelCollapsed]);
+
+    // Push widths straight to the DOM — zero React involvement
+    const applyToDom = useCallback((w) => {
+        const [lw, mw, rw] = computeEffective(w);
+        if (leftRef.current)  leftRef.current.style.width  = `${lw}%`;
+        if (midRef.current)   midRef.current.style.width   = `${mw}%`;
+        if (rightRef.current) rightRef.current.style.width = `${rw}%`;
+    }, [computeEffective]);
+
+    // Whenever collapse state changes, re-sync DOM from current stored widths
+    useEffect(() => {
+        applyToDom(widthsRef.current);
+    }, [leftPanelCollapsed, rightPanelCollapsed, applyToDom]);
+
+    const [draggingIdx, setDraggingIdx] = useState(null);
 
     const onMouseDown = useCallback((separatorIndex) => (e) => {
         e.preventDefault();
-        setIsDragging(true);
-        setTransitionConfig({ duration: 0 }); // Disable transition during and immediately after drag
-        dragging.current = {
-            separatorIndex,
-            startX: e.clientX,
-            startWidths: [...widths],
-        };
 
-        const onMouseMove = (e) => {
-            if (!dragging.current) return;
-            const containerWidth = containerRef.current?.getBoundingClientRect().width || 1;
-            const deltaPct = ((e.clientX - dragging.current.startX) / containerWidth) * 100;
-            const { separatorIndex: si, startWidths: sw } = dragging.current;
+        const startX      = e.clientX;
+        const startWidths = [...widthsRef.current];
 
-            const newWidths = [...sw];
-            newWidths[si] = sw[si] + deltaPct;
-            newWidths[si + 1] = sw[si + 1] - deltaPct;
+        // Kill transitions so drag is frame-perfect
+        [leftRef, midRef, rightRef].forEach(r => {
+            if (r.current) r.current.style.transition = 'none';
+        });
+        document.body.style.cursor     = 'col-resize';
+        document.body.style.userSelect = 'none';
+        setDraggingIdx(separatorIndex);
 
-            // Enforce minimums
-            if (newWidths[si] < MIN_PCT || newWidths[si + 1] < MIN_PCT) return;
-
-            setWidths(newWidths);
+        const onMouseMove = (mv) => {
+            const cw    = containerRef.current?.getBoundingClientRect().width ?? 1;
+            const delta = ((mv.clientX - startX) / cw) * 100;
+            const si    = separatorIndex;
+            const next  = [...startWidths];
+            next[si]     = startWidths[si]     + delta;
+            next[si + 1] = startWidths[si + 1] - delta;
+            if (next[si] < MIN_PCT || next[si + 1] < MIN_PCT) return;
+            widthsRef.current = next;
+            applyToDom(next);
         };
 
         const onMouseUp = () => {
-            dragging.current = null;
-            setIsDragging(false);
-            // We DON'T reset transition to spring here so it stops exactly where dropped
+            // Restore transitions for future collapse animations
+            [leftRef, midRef, rightRef].forEach(r => {
+                if (r.current) r.current.style.transition = '';
+            });
+            document.body.style.cursor     = '';
+            document.body.style.userSelect = '';
+            setDraggingIdx(null);
+
+            // One React commit — syncs state to what the DOM already shows
+            setWidths([...widthsRef.current]);
+
             document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('mouseup',   onMouseUp);
         };
 
         document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-    }, [widths, springConfig]);
+        document.addEventListener('mouseup',   onMouseUp);
+    }, [applyToDom]);
 
-    const leftWidth = leftPanelCollapsed ? 0 : widths[0];
-    const rightWidth = rightPanelCollapsed ? 0 : widths[2];
-    const middleWidth = 100 - leftWidth - rightWidth;
+    const [lw, mw, rw] = computeEffective(widths);
 
     return (
-        <div ref={containerRef} className={`flex-1 flex overflow-hidden select-none pb-20 md:pb-0 relative ${isDragging ? 'cursor-col-resize shadow-inner transition-none' : ''}`} style={{ background: 'var(--c-canvas)' }}>
-            {/* Left Panel */}
-            <motion.div 
-                initial={false}
-                animate={{ 
-                    width: isMobile ? '100%' : `${leftWidth}%`,
-                    opacity: leftPanelCollapsed && !isMobile ? 0 : 1
-                }}
-                transition={isDragging ? { duration: 0 } : transitionConfig}
+        <div
+            ref={containerRef}
+            className="flex-1 flex overflow-hidden select-none pb-20 md:pb-0"
+            style={{ background: 'var(--c-canvas)' }}
+        >
+            {/* ── Left panel ── */}
+            <div
+                ref={leftRef}
                 className={`h-full overflow-hidden flex-shrink-0
                     ${isMobile ? (activePanel === 'files' ? 'flex' : 'hidden') : 'flex'}`}
-                style={{ 
-                    borderRight: leftPanelCollapsed ? 'none' : '1px solid var(--c-border-soft)'
+                style={{
+                    width:        isMobile ? '100%' : `${lw}%`,
+                    opacity:      leftPanelCollapsed && !isMobile ? 0 : 1,
+                    pointerEvents: leftPanelCollapsed ? 'none' : 'auto',
+                    borderRight:  leftPanelCollapsed ? 'none' : '1px solid var(--c-border-soft)',
+                    transition:   PANEL_TRANSITION,
                 }}
             >
-                <div className="w-full h-full min-w-[250px]">
-                    {leftPanel}
-                </div>
-            </motion.div>
+                <div className="w-full h-full">{leftPanel}</div>
+            </div>
 
-            {/* Separator 0 */}
+            {/* ── Separator 0 ── */}
             {!leftPanelCollapsed && !isMobile && (
-                <div
-                    className="hidden md:block w-2.5 h-full cursor-col-resize z-10 -mx-1.25 relative group"
+                <Separator
+                    idx={0}
+                    activeIdx={draggingIdx}
                     onMouseDown={onMouseDown(0)}
-                >
-                    <div className={`absolute inset-y-0 left-1/2 -translate-x-1/2 w-[3px] transition-all ${isDragging ? 'opacity-100 scale-x-150' : 'opacity-0 group-hover:opacity-100'}`} style={{ background: 'var(--c-primary)' }}></div>
-                </div>
+                />
             )}
 
-            {/* Middle Panel */}
-            <motion.div 
-                initial={false}
-                animate={{ 
-                    width: isMobile ? '100%' : `${middleWidth}%`
-                }}
-                transition={isDragging ? { duration: 0 } : transitionConfig}
+            {/* ── Middle panel ── */}
+            <div
+                ref={midRef}
                 className={`h-full overflow-hidden flex-shrink-0
                     ${isMobile ? (activePanel === 'content' ? 'flex' : 'hidden') : 'flex'}`}
-                style={{ 
-                    background: 'var(--c-surface)', 
-                    borderTopLeftRadius: '32px', 
-                    boxShadow: '-4px 0 32px rgba(0,0,0,0.03)',
-                    zoom: 1.1,
-                    fontSize: '20px'
+                style={{
+                    width:             isMobile ? '100%' : `${mw}%`,
+                    background:        'var(--c-surface)',
+                    borderTopLeftRadius: '32px',
+                    boxShadow:         '-4px 0 32px rgba(0,0,0,0.03)',
+                    zoom:              1.1,
+                    fontSize:          '20px',
+                    transition:        PANEL_TRANSITION,
                 }}
             >
-                <div className="w-full h-full min-w-[400px]">
-                    {middlePanel}
-                </div>
-            </motion.div>
+                <div className="w-full h-full">{middlePanel}</div>
+            </div>
 
-            {/* Separator 1 */}
+            {/* ── Separator 1 ── */}
             {!rightPanelCollapsed && !isMobile && (
-                <div
-                    className="hidden md:block w-2.5 h-full cursor-col-resize z-10 -mx-1.25 relative group"
+                <Separator
+                    idx={1}
+                    activeIdx={draggingIdx}
                     onMouseDown={onMouseDown(1)}
-                >
-                    <div className={`absolute inset-y-0 left-1/2 -translate-x-1/2 w-[3px] transition-all ${isDragging ? 'opacity-100 scale-x-150' : 'opacity-0 group-hover:opacity-100'}`} style={{ background: 'var(--c-primary)' }}></div>
-                </div>
+                />
             )}
 
-            {/* Right Panel */}
-            <motion.div 
-                initial={false}
-                animate={{ 
-                    width: isMobile ? '100%' : `${rightWidth}%`,
-                    opacity: rightPanelCollapsed && !isMobile ? 0 : 1
-                }}
-                transition={isDragging ? { duration: 0 } : transitionConfig}
+            {/* ── Right panel ── */}
+            <div
+                ref={rightRef}
                 className={`h-full overflow-hidden flex-shrink-0
                     ${isMobile ? (activePanel === 'tutor' ? 'flex' : 'hidden') : 'flex'}`}
-                style={{ 
-                    borderLeft: rightPanelCollapsed ? 'none' : '1px solid var(--c-border-soft)', 
-                    background: 'var(--c-surface)'
+                style={{
+                    width:        isMobile ? '100%' : `${rw}%`,
+                    opacity:      rightPanelCollapsed && !isMobile ? 0 : 1,
+                    pointerEvents: rightPanelCollapsed ? 'none' : 'auto',
+                    borderLeft:   rightPanelCollapsed ? 'none' : '1px solid var(--c-border-soft)',
+                    background:   'var(--c-surface)',
+                    transition:   PANEL_TRANSITION,
                 }}
             >
-                <div className="w-full h-full min-w-[300px]">
-                    {rightPanel}
-                </div>
-            </motion.div>
+                <div className="w-full h-full">{rightPanel}</div>
+            </div>
         </div>
     );
 };

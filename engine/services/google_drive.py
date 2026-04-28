@@ -169,3 +169,27 @@ def download_file_from_drive(file_id: str, *, request_id: str | None = None) -> 
     except Exception as e:
         logger.error(f"Failed to download file from Drive (ID: {file_id}): {str(e)}")
         raise RuntimeError(f"Failed to download file from Drive: {str(e)}") from e
+def list_files_in_folder() -> list:
+    """Retrieve all files from the configured Google Drive folder."""
+    try:
+        folder_id = get_google_drive_folder_id()
+        service = get_drive_service()
+        
+        query = f"'{folder_id}' in parents and trashed = false"
+        logger.info(f"Listing files in Google Drive folder: {folder_id}")
+        
+        results = service.files().list(
+            q=query,
+            fields="files(id, name, mimeType, size, webViewLink, thumbnailLink)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
+        
+        files = results.get('files', [])
+        logger.info(f"Found {len(files)} files in Google Drive folder.")
+        return files
+    except (GoogleDriveConfigError, GoogleDriveNotConfiguredError):
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list files in Google Drive folder: {str(e)}")
+        raise RuntimeError(f"Failed to list files in Google Drive folder: {str(e)}") from e

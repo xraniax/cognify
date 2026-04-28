@@ -11,8 +11,8 @@ import {
     Lock,
     Sparkles,
     XCircle,
-    BarChart2,
     Minimize2,
+    Cloud,
     X as XIcon,
 } from 'lucide-react';
 import { requireAuth } from '@/utils/requireAuth';
@@ -28,7 +28,6 @@ import QuizView from '@/features/subjects/components/QuizView';
 import FlashcardsView from '@/features/subjects/components/FlashcardsView';
 import ExamView from '@/features/subjects/components/ExamView';
 import SummaryView from '@/features/subjects/components/SummaryView';
-import AnalyticsView from '@/features/subjects/components/AnalyticsView';
 
 // UI Components
 import CustomModal from '@/components/ui/CustomModal';
@@ -221,12 +220,28 @@ const SubjectDetail = () => {
             );
         }
 
-        if (tabId === 'analytics') {
-            return <AnalyticsView subjectId={id} isExpanded={isExpanded} />;
-        }
 
         const tab = tabs.find(t => t.id === tabId);
         if (!tab) return null;
+
+        // Adaptive quiz tabs have no backing material — handle before the null guard
+        if (tab.type === 'quiz' && tab.quizMode === 'adaptive') {
+            return (
+                <div className="flex-1 h-full overflow-y-auto bg-transparent">
+                    <MaterialErrorBoundary type="quiz">
+                        <QuizView
+                            key={tab.id}
+                            quizMode="adaptive"
+                            quizData={null}
+                            isExpanded={isExpanded}
+                            subjectId={id}
+                            topic={subject?.name || null}
+                            language="en"
+                        />
+                    </MaterialErrorBoundary>
+                </div>
+            );
+        }
 
         const material = tab.material;
 
@@ -243,15 +258,38 @@ const SubjectDetail = () => {
             const hasContent = !!material.content;
 
             if (hasFile) {
-                const fileUrl = `${BASE_URL}/${material.file_path}`;
-                if (material.file_path.toLowerCase().endsWith('.pdf')) {
+                const isDrive = material.file_path.includes('drive.google.com');
+                const isMemory = material.file_path.startsWith('memory://');
+                let fileUrl = (material.file_path.startsWith('http') || isMemory)
+                    ? material.file_path
+                    : `${BASE_URL.replace(/\/+$/, '')}/${material.file_path.replace(/^\/+/, '')}`;
+
+                // Optimize Drive preview link
+                if (isDrive && fileUrl.includes('/view')) {
+                    fileUrl = fileUrl.replace('/view', '/preview');
+                }
+
+                if (isMemory && material.status !== 'FAILED') {
+                    return (
+                        <div className="flex-1 h-full flex flex-col items-center justify-center p-8 text-center" style={{ background: 'var(--c-surface-alt)', color: 'var(--c-text-muted)' }}>
+                            <div className="relative mb-6">
+                                <div className="w-16 h-16 rounded-full border-4 border-dashed animate-spin" style={{ borderColor: 'var(--c-primary-light)', borderTopColor: 'var(--c-primary)' }} />
+                                <Cloud className="w-6 h-6 absolute inset-0 m-auto opacity-50" />
+                            </div>
+                            <h3 className="text-lg font-bold mb-2">Syncing with Cloud...</h3>
+                            <p className="text-sm max-w-xs mx-auto">We're moving your document to Google Drive for permanent storage. This will only take a moment.</p>
+                        </div>
+                    );
+                }
+
+                if (material.file_path.toLowerCase().endsWith('.pdf') || isDrive) {
                     return (
                         <div className="flex-1 h-full w-full flex flex-col" style={{ background: 'var(--c-canvas)' }}>
                             <iframe
-                                src={`${fileUrl}#view=Fit&toolbar=0&navpanes=0&scrollbar=1`}
+                                src={isDrive ? fileUrl : `${fileUrl}#view=Fit&toolbar=0&navpanes=0&scrollbar=1`}
                                 className="w-full flex-1 border-none"
                                 title={tab.title}
-                                sandbox="allow-scripts allow-same-origin"
+                                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
                             />
                         </div>
                     );
@@ -302,7 +340,15 @@ const SubjectDetail = () => {
             return (
                 <div className="flex-1 h-full overflow-y-auto bg-transparent">
                     <MaterialErrorBoundary type="quiz">
-                        <QuizView key={parsedContent?.id || 'quiz'} quizData={parsedContent} subjectId={id} materialId={material.id} isExpanded={isExpanded} />
+                        <QuizView
+                            key={tab.id}
+                            quizMode="static"
+                            quizData={parsedContent}
+                            isExpanded={isExpanded}
+                            subjectId={id}
+                            topic={subject?.name || null}
+                            language="en"
+                        />
                     </MaterialErrorBoundary>
                 </div>
             );
@@ -400,19 +446,6 @@ const SubjectDetail = () => {
                         >
                             <PanelLeft className="w-4 h-4" />
                             <span>Sources</span>
-                        </button>
-                        <button
-                            onClick={() => {
-                                const hasTab = tabs.some(t => t.id === 'analytics');
-                                if (!hasTab) {
-                                    setTabs(prev => [...prev, { id: 'analytics', title: 'Analytics', type: 'analytics', pinned: false }]);
-                                }
-                                setActiveTabId('analytics');
-                            }}
-                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${activeTabId === 'analytics' ? 'bg-white text-indigo-600 shadow-md transform scale-105' : 'text-gray-400 hover:text-indigo-400'}`}
-                        >
-                            <BarChart2 className="w-4 h-4" />
-                            <span>Analytics</span>
                         </button>
                         <button
                             onClick={() => setChatCollapsed(!chatCollapsed)}

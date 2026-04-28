@@ -43,8 +43,12 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
 
     const enhancedTabs = useMemo(() => tabs.map(tab => {
         if (tab.id === 'generator') return { ...tab, isDeleted: false };
-        const exists = (materials || []).some(m => String(m.id) === String(tab.id));
-        return { ...tab, isDeleted: !exists };
+        const material = (materials || []).find(m => String(m.id) === String(tab.id));
+        return { 
+            ...tab, 
+            isDeleted: !material && !tab.material, 
+            material: material || tab.material 
+        };
     }), [tabs, materials]);
 
     // ── Global Tab Open Listener ──────────────────────────────────────────────

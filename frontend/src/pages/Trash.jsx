@@ -1,9 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MaterialService } from '@/services/MaterialService';
-import { Trash2, RotateCcw, File as FileIcon, ArrowLeft, AlertTriangle, X } from 'lucide-react';
+import { Trash2, RotateCcw, File as FileIcon, ArrowLeft, AlertTriangle, X, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { format } from 'date-fns';
+import { format, differenceInDays, differenceInHours } from 'date-fns';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function getExpiryInfo(expiresAt) {
+    if (!expiresAt) return null;
+    const now = new Date();
+    const exp = new Date(expiresAt);
+    const daysLeft = differenceInDays(exp, now);
+    const hoursLeft = differenceInHours(exp, now);
+
+    if (hoursLeft <= 0) return { label: 'Expired', urgent: true, critical: true };
+    if (daysLeft < 1)   return { label: `${hoursLeft}h left`, urgent: true, critical: true };
+    if (daysLeft <= 3)  return { label: `${daysLeft}d left`, urgent: true, critical: false };
+    if (daysLeft <= 7)  return { label: `${daysLeft}d left`, urgent: false, critical: false };
+    return { label: `${daysLeft}d left`, urgent: false, critical: false };
+}
 
 // ─── Confirmation modal ───────────────────────────────────────────────────────
 
@@ -33,17 +49,51 @@ const ConfirmModal = ({ title, message, confirmLabel, onConfirm, onCancel, dange
     </div>
 );
 
+// ─── Expiry badge ─────────────────────────────────────────────────────────────
+
+const ExpiryBadge = ({ expiresAt }) => {
+    const info = getExpiryInfo(expiresAt);
+    if (!info) return null;
+
+    const base = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-widest';
+    const color = info.critical
+        ? 'bg-red-50 text-red-500 border border-red-100'
+        : info.urgent
+        ? 'bg-amber-50 text-amber-600 border border-amber-100'
+        : 'bg-gray-50 text-gray-400 border border-gray-100';
+
+    return (
+        <span className={`${base} ${color}`}>
+            <Clock className="w-2.5 h-2.5" />
+            {info.label}
+        </span>
+    );
+};
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const Trash = () => {
     const navigate = useNavigate();
     const [trashItems, setTrashItems]         = useState([]);
+    const [ttlDays, setTtlDays]               = useState(30);
     const [loading, setLoading]               = useState(true);
-    const [actionId, setActionId]             = useState(null); // id of item being acted on
+    const [actionId, setActionId]             = useState(null);
     const [emptyingTrash, setEmptyingTrash]   = useState(false);
-    const [modal, setModal]                   = useState(null); // { type: 'item'|'all', id?, title? }
+    const [modal, setModal]                   = useState(null);
 
-    useEffect(() => { fetchTrash(); }, []);
+    useEffect(() => {
+        fetchSettings();
+        fetchTrash();
+    }, []);
+
+    const fetchSettings = async () => {
+        try {
+            const res = await MaterialService.getSettings();
+            if (res.data?.data?.trash_ttl_days) {
+                setTtlDays(res.data.data.trash_ttl_days);
+            }
+        } catch { /* non-critical */ }
+    };
 
     const fetchTrash = async () => {
         setLoading(true);
@@ -99,6 +149,11 @@ const Trash = () => {
         }
     };
 
+    const urgentCount = trashItems.filter(i => {
+        const info = getExpiryInfo(i.expires_at);
+        return info?.urgent;
+    }).length;
+
     return (
         <div className="max-w-5xl mx-auto px-4 sm:px-6 md:px-8 py-10 animate-in fade-in duration-500">
 
@@ -122,7 +177,8 @@ const Trash = () => {
                         My <span className="text-transparent bg-clip-text bg-gradient-to-r from-red-600 to-orange-500">Trash</span>
                     </h1>
                     <p className="text-gray-400 font-medium mt-1.5 text-sm">
-                        Deleted materials — restore them or remove them permanently.
+                        Materials are permanently deleted after{' '}
+                        <span className="font-black text-gray-600">{ttlDays} days</span> in trash.
                     </p>
                 </div>
 
@@ -142,6 +198,16 @@ const Trash = () => {
                 )}
             </div>
 
+            {/* Urgent warning banner */}
+            {urgentCount > 0 && (
+                <div className="flex items-center gap-3 px-5 py-3.5 mb-6 bg-amber-50 border border-amber-200 rounded-2xl text-amber-700">
+                    <Clock className="w-4 h-4 shrink-0 text-amber-500" />
+                    <p className="text-xs font-bold">
+                        {urgentCount} item{urgentCount !== 1 ? 's' : ''} will be permanently deleted soon — restore them now if you need them.
+                    </p>
+                </div>
+            )}
+
             {/* Content */}
             {loading ? (
                 <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-20 flex flex-col items-center">
@@ -159,23 +225,29 @@ const Trash = () => {
             ) : (
                 <div className="bg-white border border-gray-100 rounded-3xl overflow-hidden shadow-sm">
                     <div className="overflow-x-auto">
-                        <table className="w-full text-left min-w-[680px]">
+                        <table className="w-full text-left min-w-[720px]">
                             <thead>
                                 <tr className="border-b border-gray-100 bg-gray-50/60">
                                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Material</th>
                                     <th className="px-4 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Subject</th>
                                     <th className="px-4 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Deleted</th>
+                                    <th className="px-4 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Expires</th>
                                     <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-50">
                                 {trashItems.map((item) => {
                                     const busy = actionId === item.id;
+                                    const expInfo = getExpiryInfo(item.expires_at);
+                                    const rowUrgent = expInfo?.critical;
                                     return (
-                                        <tr key={item.id} className="group hover:bg-gray-50/50 transition-colors">
+                                        <tr
+                                            key={item.id}
+                                            className={`group transition-colors ${rowUrgent ? 'bg-red-50/30 hover:bg-red-50/50' : 'hover:bg-gray-50/50'}`}
+                                        >
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 rounded-xl bg-red-50 text-red-400 flex items-center justify-center border border-red-100 shrink-0">
+                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center border shrink-0 ${rowUrgent ? 'bg-red-50 text-red-400 border-red-100' : 'bg-red-50 text-red-400 border-red-100'}`}>
                                                         <FileIcon className="w-5 h-5" />
                                                     </div>
                                                     <div className="min-w-0">
@@ -199,6 +271,18 @@ const Trash = () => {
                                                 <p className="text-[10px] text-gray-400">
                                                     {item.deleted_at ? format(new Date(item.deleted_at), 'HH:mm') : ''}
                                                 </p>
+                                            </td>
+                                            <td className="px-4 py-4 whitespace-nowrap">
+                                                {item.expires_at ? (
+                                                    <div className="flex flex-col gap-1">
+                                                        <ExpiryBadge expiresAt={item.expires_at} />
+                                                        <p className="text-[10px] text-gray-400">
+                                                            {format(new Date(item.expires_at), 'MMM dd')}
+                                                        </p>
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-[10px] text-gray-400">—</span>
+                                                )}
                                             </td>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
@@ -227,9 +311,12 @@ const Trash = () => {
                         </table>
                     </div>
 
-                    <div className="px-6 py-3 border-t border-gray-50 bg-gray-50/30">
+                    <div className="px-6 py-3 border-t border-gray-50 bg-gray-50/30 flex items-center justify-between">
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                             {trashItems.length} item{trashItems.length !== 1 ? 's' : ''} in trash
+                        </p>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                            Auto-deleted after {ttlDays} days
                         </p>
                     </div>
                 </div>

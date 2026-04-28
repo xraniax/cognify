@@ -1,6 +1,6 @@
 import React from 'react';
 import { Reorder, AnimatePresence, motion } from 'framer-motion';
-import { X, Pin, FileText, Sparkles, BrainCircuit, Layers, CheckCircle2, Trash2, BarChart2, Maximize2 } from 'lucide-react';
+import { X, Pin, FileText, Sparkles, BrainCircuit, Layers, CheckCircle2, Trash2, BarChart2, Maximize2, Cloud } from 'lucide-react';
 import { morphIn } from '@/utils/motion';
 
 // ── Tab type → visual identity ──────────────────────────────
@@ -64,7 +64,8 @@ const WorkspaceTabs = ({ tabs, setTabs, activeTabId, setActiveTabId, renderTabCo
                             {tabs.map((tab) => {
                                 const isActive = activeTabId === tab.id;
                                 const cfg      = getTabConfig(tab);
-                                const Icon     = cfg.icon;
+                                const isDrive  = tab.material?.file_path?.includes("drive.google.com");
+                                 const Icon     = isDrive ? Cloud : cfg.icon;
 
                                 return (
                                     <Reorder.Item
@@ -95,7 +96,7 @@ const WorkspaceTabs = ({ tabs, setTabs, activeTabId, setActiveTabId, renderTabCo
                                         {/* Icon */}
                                         <div
                                             className="flex-shrink-0 w-4 h-4 flex items-center justify-center"
-                                            style={{ color: isActive ? cfg.color : 'var(--c-text-placeholder)' }}
+                                            style={{ color: isActive ? (isDrive ? "var(--c-sky)" : cfg.color) : 'var(--c-text-placeholder)' }}
                                         >
                                             <Icon className="w-3.5 h-3.5" />
                                         </div>
@@ -119,7 +120,7 @@ const WorkspaceTabs = ({ tabs, setTabs, activeTabId, setActiveTabId, renderTabCo
                                             {tab.pinned ? (
                                                 <Pin
                                                     className="w-2.5 h-2.5"
-                                                    style={{ color: isActive ? cfg.color : 'var(--c-text-placeholder)' }}
+                                                    style={{ color: isActive ? (isDrive ? 'var(--c-sky)' : cfg.color) : 'var(--c-text-placeholder)' }}
                                                 />
                                             ) : (
                                                 <motion.button

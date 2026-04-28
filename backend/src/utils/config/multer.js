@@ -10,17 +10,10 @@ const destPath = process.env.PDF_STORAGE_PATH || '/app/data/uploads';
 fs.mkdirSync(destPath, { recursive: true });
 
 /**
- * Multer disk storage configuration.
- * Files are saved to the defined destination directory with a timestamped, unique filename.
+ * Multer memory storage configuration.
+ * Files are held in memory as buffers, avoiding disk permission issues.
  */
-const storage = multer.diskStorage({
-  destination: destPath,
-  filename: (req, file, cb) => {
-    // Sanitize the original filename to prevent directory traversal
-    const safeName = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
-    cb(null, `${file.fieldname}-${Date.now()}-${safeName}`);
-  },
-});
+const storage = multer.memoryStorage();
 
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg']);
 

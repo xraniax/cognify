@@ -1,5 +1,6 @@
 import { query } from '../utils/config/db.js';
 import { COMPLETED, FAILED, PROCESSING, normalizeStatus } from '../constants/status.enum.js';
+import { enforceGenerationConstraintsForPersistence } from '../utils/generationConstraints.js';
 
 class Material {
     /**
@@ -20,10 +21,11 @@ class Material {
      * Update material with AI engine results and mark as completed.
      * user_id is enforced in the WHERE clause to prevent IDOR (Insecure Direct Object Reference).
      */
-    static async updateAIResult(materialId, userId, aiResult) {
+    static async updateAIResult(materialId, userId, aiResult, constraints = null) {
+        const finalResult = enforceGenerationConstraintsForPersistence(aiResult, constraints || {});
         const result = await query(
             'UPDATE materials SET ai_generated_content = $2, processed_at = NOW(), completed_at = NOW(), status = $4 WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL RETURNING *',
-            [materialId, aiResult, userId, COMPLETED]
+            [materialId, finalResult, userId, COMPLETED]
         );
         return result.rows[0];
     }
@@ -218,18 +220,51 @@ class Material {
 
     /**
      * Find all deleted materials for the user (Trash View).
+     * Includes computed expires_at based on trash TTL.
      */
-    static async findDeleted(userId) {
+    static async findDeleted(userId, ttlDays = 30) {
+        const days = String(Math.max(1, parseInt(ttlDays, 10)));
         const result = await query(
-            `SELECT m.*, s.name as subject_name, f.path as file_path 
-             FROM materials m 
-             LEFT JOIN subjects s ON m.subject_id = s.id 
-             LEFT JOIN files f ON f.material_id = m.id 
-             WHERE m.user_id = $1 AND m.deleted_at IS NOT NULL 
+            `SELECT m.*, s.name as subject_name, f.path as file_path,
+             (m.deleted_at + ($2 || ' days')::interval) AS expires_at
+             FROM materials m
+             LEFT JOIN subjects s ON m.subject_id = s.id
+             LEFT JOIN files f ON f.material_id = m.id
+             WHERE m.user_id = $1 AND m.deleted_at IS NOT NULL
              ORDER BY m.deleted_at DESC`,
-            [userId]
+            [userId, days]
         );
         return result.rows;
+    }
+
+    /**
+     * Find IDs of materials that have been in the trash longer than ttlDays.
+     */
+    static async findExpiredTrash(ttlDays = 30) {
+        const days = String(Math.max(1, parseInt(ttlDays, 10)));
+        const result = await query(
+            `SELECT id FROM materials
+             WHERE deleted_at IS NOT NULL
+             AND deleted_at < NOW() - ($1 || ' days')::interval`,
+            [days]
+        );
+        return result.rows; // [{ id }]
+    }
+
+    /**
+     * Hard-delete all materials that have been in the trash longer than ttlDays.
+     * Files records are cascade-deleted by Postgres FK — GC disk files first.
+     */
+    static async deleteExpiredTrash(ttlDays = 30) {
+        const days = String(Math.max(1, parseInt(ttlDays, 10)));
+        const result = await query(
+            `DELETE FROM materials
+             WHERE deleted_at IS NOT NULL
+             AND deleted_at < NOW() - ($1 || ' days')::interval
+             RETURNING id`,
+            [days]
+        );
+        return result.rows.length;
     }
 
     /**

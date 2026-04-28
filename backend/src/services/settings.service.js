@@ -44,7 +44,8 @@ class SettingsService {
         return await this.get('storage_controls') || {
             max_file_size_mb: 10,
             allowed_types: ["application/pdf"],
-            default_user_quota_mb: 100
+            default_user_quota_mb: 100,
+            trash_ttl_days: parseInt(process.env.TRASH_TTL_DAYS, 10) || 30
         };
     }
 }

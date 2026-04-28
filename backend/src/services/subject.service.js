@@ -50,14 +50,14 @@ class SubjectService {
     }
 
     /**
-     * Rename a subject
+     * Update a subject (rename and/or update description)
      */
-    static async renameSubject(userId, subjectId, newName) {
+    static async updateSubject(userId, subjectId, newName, newDescription) {
         const existing = await Subject.findByName(userId, newName);
-        if (existing && existing.id !== subjectId) {
+        if (existing && String(existing.id) !== String(subjectId)) {
             throw Object.assign(new Error(`A subject named "${newName}" already exists.`), { statusCode: 409, code: 'DUPLICATE_SUBJECT' });
         }
-        return await Subject.update(subjectId, userId, newName);
+        return await Subject.update(subjectId, userId, newName, newDescription);
     }
 
     /**

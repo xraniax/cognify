@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, Layout, FileText, CheckCircle2, RotateCcw, BrainCircuit, Minus, Plus, ClipboardList, ArrowLeft } from 'lucide-react';
+import { Sparkles, Layout, FileText, CheckCircle2, RotateCcw, BrainCircuit, Minus, Plus, ClipboardList, ArrowLeft, Info, HelpCircle } from 'lucide-react';
 import Skeleton from '@/components/ui/Skeleton';
 import GenerationLoadingOverlay from '@/components/ui/GenerationLoadingOverlay';
 import SummaryView from './SummaryView';
@@ -16,6 +16,7 @@ const MATERIAL_TYPES = [
 ];
 
 const DIFFICULTIES = [
+    { id: 'adaptive', label: 'Adaptive', badge: 'NEW' },
     { id: 'Intro', label: 'Beginner'     },
     { id: 'Inter', label: 'Intermediate' },
     { id: 'Adv',   label: 'Advanced'     },
@@ -48,49 +49,51 @@ const MaterialsPanel = ({
     onRetry,
     generationStartTime,
 }) => {
-    const [count,      setCount]      = useState(10);
-    const [difficulty, setDifficulty] = useState('Inter');
-    const [examTypes,  setExamTypes]  = useState(['single_choice', 'multiple_select', 'short_answer']);
-    const [timeLimit,  setTimeLimit]  = useState(30);
-    const [topics,     setTopics]     = useState('');
+    // Merged state using redis-fix pattern but individual variables for legacy compatibility where needed or just full object
+    const [genOptions, setGenOptions] = useState({
+        count: 10,
+        difficulty: 'adaptive',
+        topics: '',
+        examTypes: ['single_choice', 'multiple_select', 'short_answer'],
+        timeLimit: 30,
+        cardType: 'mixed'
+    });
+
     const [showAlert,  setShowAlert]  = useState(false);
     const alertTimer = useRef(null);
 
-    const showCount    = genType !== 'summary';
+    const isAdaptiveQuiz = genType === 'quiz' && genOptions.difficulty === 'adaptive';
+    const showCount    = genType !== 'summary' && !isAdaptiveQuiz;
     const showExamOpts = genType === 'mock_exam';
     const countLabel   = genType === 'flashcards' ? 'Cards' : 'Questions';
     const activeType   = MATERIAL_TYPES.find(t => t.id === genType) || MATERIAL_TYPES[0];
 
     const displayMessage = jobProgress?.message
-        || `Generating ${count} ${genType.replace('_', ' ')}…`;
+        || (isAdaptiveQuiz ? "Preparing Adaptive Session..." : `Generating ${genOptions.count} ${genType.replace('_', ' ')}…`);
 
     const onGenerate = () => {
         if (isGenerating) return;
-        if (selectedCount === 0) {
+        // Adaptive quizzes don't strictly require sources if they can pull from subject knowledge, 
+        // but we'll follow the redis-fix logic: if not adaptive quiz, require sources.
+        if (selectedCount === 0 && !isAdaptiveQuiz) {
             setShowAlert(true);
             clearTimeout(alertTimer.current);
             alertTimer.current = setTimeout(() => setShowAlert(false), 3500);
             return;
         }
         setShowAlert(false);
-        handleGenerate({
-            count,
-            difficulty,
-            examTypes,
-            timeLimit,
-            topics,
-            topic: '',
-        });
+        handleGenerate(genType, null, genOptions);
     };
 
     useEffect(() => () => clearTimeout(alertTimer.current), []);
 
     const toggleExamType = (id) => {
-        setExamTypes(prev =>
-            prev.includes(id)
-                ? prev.length > 1 ? prev.filter(t => t !== id) : prev
-                : [...prev, id]
-        );
+        setGenOptions(prev => {
+            const next = prev.examTypes.includes(id)
+                ? prev.examTypes.length > 1 ? prev.examTypes.filter(t => t !== id) : prev.examTypes
+                : [...prev.examTypes, id];
+            return { ...prev, examTypes: next };
+        });
     };
 
     return (
@@ -160,46 +163,54 @@ const MaterialsPanel = ({
                     {/* Difficulty */}
                     <div>
                         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2.5">Difficulty</p>
-                        <div className="flex gap-1.5">
-                            {DIFFICULTIES.map(({ id, label }) => (
+                        <div className="grid grid-cols-2 gap-1.5">
+                            {DIFFICULTIES.map(({ id, label, badge }) => (
                                 <button
                                     key={id}
-                                    onClick={() => setDifficulty(id)}
-                                    className={`flex-1 py-2 rounded-xl text-[11px] font-bold border-2 transition-all ${
-                                        difficulty === id
+                                    onClick={() => setGenOptions(prev => ({ ...prev, difficulty: id }))}
+                                    className={`relative py-2 rounded-xl text-[11px] font-bold border-2 transition-all ${
+                                        genOptions.difficulty === id
                                             ? 'bg-purple-600 border-purple-600 text-white shadow-sm'
                                             : 'bg-white border-gray-100 text-gray-500 hover:border-purple-200'
                                     }`}
                                 >
                                     {label}
+                                    {badge && (
+                                        <span className="absolute -top-1 -right-1 text-[7px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded-full shadow-sm">
+                                            {badge}
+                                        </span>
+                                    )}
                                 </button>
                             ))}
                         </div>
+                        {genOptions.difficulty === 'adaptive' && genType === 'quiz' && (
+                            <p className="text-[10px] text-purple-400 mt-2 italic font-medium">Questions will adapt to your performance level in a live session.</p>
+                        )}
                     </div>
 
-                    {/* Count — hidden for summary */}
+                    {/* Count — hidden for summary or adaptive quiz */}
                     {showCount && (
                         <div>
                             <div className="flex items-center justify-between mb-2.5">
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{countLabel}</p>
-                                <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">{count}</span>
+                                <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">{genOptions.count}</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
-                                    onClick={() => setCount(c => clamp(c - 1, 3, 30))}
+                                    onClick={() => setGenOptions(prev => ({ ...prev, count: clamp(prev.count - 1, 3, 30) }))}
                                     className="w-7 h-7 rounded-lg border-2 border-gray-100 bg-white flex items-center justify-center text-gray-400 hover:border-purple-300 hover:text-purple-600 transition-colors shrink-0"
                                 >
                                     <Minus className="w-3 h-3" />
                                 </button>
                                 <input
                                     type="range" min="3" max="30" step="1"
-                                    value={count}
-                                    onChange={e => setCount(parseInt(e.target.value))}
+                                    value={genOptions.count}
+                                    onChange={e => setGenOptions(prev => ({ ...prev, count: parseInt(e.target.value) }))}
                                     className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer bg-gray-200"
                                     style={{ accentColor: '#7C5CFC' }}
                                 />
                                 <button
-                                    onClick={() => setCount(c => clamp(c + 1, 3, 30))}
+                                    onClick={() => setGenOptions(prev => ({ ...prev, count: clamp(prev.count + 1, 3, 30) }))}
                                     className="w-7 h-7 rounded-lg border-2 border-gray-100 bg-white flex items-center justify-center text-gray-400 hover:border-purple-300 hover:text-purple-600 transition-colors shrink-0"
                                 >
                                     <Plus className="w-3 h-3" />
@@ -219,7 +230,7 @@ const MaterialsPanel = ({
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2.5">Question Types</p>
                                 <div className="grid grid-cols-2 gap-1.5">
                                     {EXAM_QUESTION_TYPES.map(({ id, label }) => {
-                                        const active = examTypes.includes(id);
+                                        const active = genOptions.examTypes.includes(id);
                                         return (
                                             <button
                                                 key={id}
@@ -244,12 +255,12 @@ const MaterialsPanel = ({
                             <div>
                                 <div className="flex items-center justify-between mb-2.5">
                                     <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Time Limit</p>
-                                    <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">{timeLimit} min</span>
+                                    <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">{genOptions.timeLimit} min</span>
                                 </div>
                                 <input
                                     type="range" min="5" max="120" step="5"
-                                    value={timeLimit}
-                                    onChange={e => setTimeLimit(parseInt(e.target.value, 10))}
+                                    value={genOptions.timeLimit}
+                                    onChange={e => setGenOptions(prev => ({ ...prev, timeLimit: parseInt(e.target.value, 10) }))}
                                     className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-gray-200"
                                     style={{ accentColor: '#7C5CFC' }}
                                 />
@@ -263,8 +274,8 @@ const MaterialsPanel = ({
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Focus Topics <span className="normal-case font-medium tracking-normal text-gray-300">(optional)</span></p>
                                 <input
                                     type="text"
-                                    value={topics}
-                                    onChange={e => setTopics(e.target.value)}
+                                    value={genOptions.topics}
+                                    onChange={e => setGenOptions(prev => ({ ...prev, topics: e.target.value }))}
                                     placeholder="e.g. Networks, OS, Databases"
                                     className="w-full px-3 py-2.5 rounded-xl text-xs font-medium border-2 border-gray-100 bg-white focus:border-purple-300 focus:outline-none transition-colors placeholder-gray-300"
                                 />
@@ -288,7 +299,7 @@ const MaterialsPanel = ({
                             ) : (
                                 <>
                                     <Sparkles className="w-4 h-4" />
-                                    Generate {activeType.label}
+                                    {isAdaptiveQuiz ? "Start Adaptive Session" : `Generate ${activeType.label}`}
                                 </>
                             )}
                         </button>
@@ -311,7 +322,7 @@ const MaterialsPanel = ({
                         <GenerationLoadingOverlay
                             isGenerating={false}
                             genType={genType}
-                            count={count}
+                            count={genOptions.count}
                             error={genError}
                             onRetry={onRetry}
                             startTime={generationStartTime}
@@ -360,7 +371,7 @@ const MaterialsPanel = ({
                         <GenerationLoadingOverlay
                             isGenerating={isGenerating}
                             genType={genType}
-                            count={count}
+                            count={genOptions.count}
                             error={genError}
                             onRetry={onRetry}
                             startTime={generationStartTime}
