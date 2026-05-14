@@ -1,11 +1,13 @@
 import json
+import logging
 import os
 from typing import Optional, Dict, Any, Set
 
 import redis
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+logger = logging.getLogger("engine-redis-client")
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 QUIZ_SESSION_TTL_SECONDS = 3600
 
 _client: Optional[redis.Redis] = None
@@ -14,7 +16,8 @@ _client: Optional[redis.Redis] = None
 def _get_client() -> redis.Redis:
     global _client
     if _client is None:
-        _client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        _client = redis.from_url(REDIS_URL, decode_responses=True)
+        logger.info("[REDIS_INIT] redis_client connected via %s", REDIS_URL)
     return _client
 
 
@@ -85,8 +88,7 @@ def update_quiz_session(user_id: str, subject_id: str, data: Dict[str, Any]) -> 
 
 # ── Concept SET helpers ────────────────────────────────────────────────────
 # These wrap Redis SET operations (SMEMBERS / SADD / SREM) for concept keys.
-# Accepts an optional `client` so callers on different Redis databases (e.g.
-# student_model.py on DB 1) can pass their own connection.
+# Accepts an optional `client` so callers can pass their own connection.
 
 def get_concepts(key: str, client: Optional[redis.Redis] = None) -> Set[str]:
     """Return the Redis SET at `key` as a Python set of strings."""

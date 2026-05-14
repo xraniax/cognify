@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile, Request, Depends, Form, BackgroundTasks
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Request, Depends, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -30,7 +30,7 @@ from .google_client import (
 from .schemas import (
     EmbedRequest, ProcessTextRequest, RetrieveRequest, GenerateRequest,
     ChatRequest, QuizEvaluateRequest, QuizEvaluateResponse,
-    QuizNextRequest, QuizSubmitAnswerRequest,
+    QuizNextRequest, QuizSubmitAnswerRequest, LearningEventRequest,
 )
 from .google_drive import upload_file_to_drive_from_bytes
 from streaming.stream_core import stream_llm_response
@@ -177,6 +177,14 @@ async def startup_event():
             logger.warning("Please address the recommendations above to restore performance.")
     else:
         logger.info("✓ GPU/Ollama health check passed. System ready for processing.")
+
+    # Start background learner-state durability sync (non-blocking).
+    try:
+        from .learner_state_sync import LearnerStateSyncService
+
+        LearnerStateSyncService.start_periodic_snapshot_refresh()
+    except Exception as exc:
+        logger.warning("Learner state sync startup failed: %s", exc)
 
 
 def _stage_error_response(
@@ -1011,20 +1019,47 @@ async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
                 status_code=400,
             )
 
-        # Extract difficulty from generation_options (GPS) sent by backend
+        # Extract difficulty from generation_options sent by backend.
         gen_opts = body.generation_options or {}
-        difficulty = normalize_difficulty(gen_opts.get("difficulty", "intermediate"))
+        raw_difficulty = gen_opts.get("difficulty", "intermediate")
+        difficulty = normalize_difficulty(raw_difficulty)
+        user_id = getattr(body, "user_id", None)
+        adaptive_weak_concepts = None
 
-        # Dispatch to celery
+        is_adaptive = (
+            raw_difficulty == "adaptive"
+            or gen_opts.get("mode") == "adaptive"
+        )
+        if is_adaptive and user_id and body.subject_id:
+            try:
+                from .adaptive_profile_service import get_adaptive_profile
+
+                profile = get_adaptive_profile(user_id, str(body.subject_id), db)
+                difficulty = profile["recommended_difficulty"]
+                adaptive_weak_concepts = profile["weak_concepts"][:5]
+                logger.info(
+                    "[ADAPTIVE_GENERATION] user_id=%s subject_id=%s "
+                    "resolved_difficulty=%s weak_concepts=%s",
+                    user_id, body.subject_id, difficulty, adaptive_weak_concepts,
+                )
+            except Exception as _exc:
+                logger.warning(
+                    "[ADAPTIVE_GENERATION] profile lookup failed, falling back to intermediate: %s",
+                    _exc,
+                )
+                difficulty = "intermediate"
+
+        # Dispatch to Celery.
         task = task_generate_material.delay(
             str(body.subject_id),
             material_type,
             topic,
             language,
             body.top_k,
-            getattr(body, 'user_id', None),
+            user_id,
             difficulty,
             source_filenames=body.source_filenames or [],
+            adaptive_weak_concepts=adaptive_weak_concepts,
         )
         
         return {
@@ -1205,20 +1240,79 @@ async def generate_stream_route(body: GenerateRequest, db: Session = Depends(get
         },
     )
 
+def _emit_static_quiz_learning_events(
+    user_id: str,
+    subject_id: Optional[str],
+    questions: List[Dict[str, Any]],
+    result: Dict[str, Any],
+) -> None:
+    """Background task: emit one learning event per evaluated question that carries a concept.
+
+    Called fire-and-forget after evaluate_quiz() returns so it never delays the response.
+    Silently skips questions without a concept field — no concept, no adaptive signal.
+    Never raises — all exceptions are swallowed and logged as warnings.
+    """
+    from .learning_event_router import handle_learning_event
+
+    # Index result by question_id for O(1) lookup.
+    result_map: Dict[int, bool] = {}
+    for r in (result.get("results") or []):
+        try:
+            result_map[int(r["question_id"])] = r["status"] == "correct"
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    for q in questions:
+        try:
+            concept = (q.get("concept") or "").strip()
+            if not concept:
+                continue
+            q_id = q.get("id")
+            if q_id is None:
+                continue
+            is_correct = result_map.get(int(q_id))
+            if is_correct is None:
+                continue
+            handle_learning_event(
+                user_id=user_id,
+                concept=concept,
+                is_correct=is_correct,
+                source="quiz_static",
+                response_time=None,
+                subject_id=subject_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[STATIC_QUIZ_ADAPTIVE] event emit failed user_id=%s q_id=%s error=%s",
+                user_id, q.get("id"), exc,
+            )
+
+
 @app.post("/evaluate-quiz", response_model=QuizEvaluateResponse)
-async def evaluate_quiz_route(body: QuizEvaluateRequest):
+async def evaluate_quiz_route(body: QuizEvaluateRequest, background_tasks: BackgroundTasks):
     """
     Evaluate user answers for a quiz.
-    The request includes the original questions (with correct answers) 
+    The request includes the original questions (with correct answers)
     and the user submissions.
+    If user_id is provided and questions carry a concept field, learning events
+    are emitted fire-and-forget after evaluation — response is never delayed.
     """
     logger.info("Evaluate quiz request: %d submissions", len(body.submissions))
     try:
         # Convert Pydantic models to dicts for the helper
         questions_dict = [q.model_dump() for q in body.questions]
         submissions_dict = [s.model_dump() for s in body.submissions]
-        
+
         result = evaluate_quiz(questions_dict, submissions_dict)
+
+        # Emit adaptive learning events without blocking the response.
+        # Skipped entirely when user_id is absent (backwards-compatible path).
+        user_id = (body.user_id or "").strip()
+        if user_id:
+            background_tasks.add_task(
+                _emit_static_quiz_learning_events, user_id, body.subject_id, questions_dict, result
+            )
+
         return result
     except Exception as e:
         logger.exception("Quiz evaluation failed")
@@ -1272,6 +1366,73 @@ async def quiz_submit_answer_route(body: QuizSubmitAnswerRequest, db: Session = 
     except Exception as exc:
         logger.exception("quiz/submit-answer failed")
         return _stage_error_response("quiz_submit", "Failed to process answer", details=str(exc), status_code=500)
+
+
+def _run_learning_event(body: LearningEventRequest) -> JSONResponse | dict:
+    """Shared logic for both /adaptive/learning-event and /adaptive/update-learning-event."""
+    from .learning_event_router import handle_learning_event
+
+    try:
+        # user_id and concept are already stripped by the schema validator.
+        handle_learning_event(
+            user_id=body.user_id,
+            concept=body.concept,
+            is_correct=body.is_correct,
+            source=body.source,
+            subject_id=body.subject_id,
+        )
+        return {"status": "ok"}
+    except ValueError as exc:
+        return _stage_error_response("adaptive_learning_event", str(exc), status_code=422)
+    except Exception as exc:
+        logger.exception("[ADAPTIVE_EVENT_SYNC] failed source=%s user_id=%s concept=%s", body.source, body.user_id, body.concept)
+        return _stage_error_response("adaptive_learning_event", "Failed to update student model", details=str(exc), status_code=500)
+
+
+@app.post("/adaptive/learning-event")
+async def adaptive_learning_event_route(body: LearningEventRequest):
+    """Update Redis student model from a non-quiz learning event. Kept for analytics backward compatibility."""
+    return _run_learning_event(body)
+
+
+@app.post("/adaptive/update-learning-event")
+async def adaptive_update_learning_event_route(body: LearningEventRequest):
+    """Canonical internal endpoint: update Redis learner state from flashcard or exam events."""
+    return _run_learning_event(body)
+
+
+@app.get("/adaptive/profile/{subject_id}")
+async def adaptive_profile_route(
+    subject_id: str,
+    user_id: str = Query(..., description="Authenticated user UUID"),
+    db: Session = Depends(get_db),
+):
+    """Return unified adaptive learner profile for (user_id, subject_id).
+
+    Aggregates Redis learner state, PostgreSQL mastery snapshots, and
+    cross-source attempt counts into a single normalized profile.
+    """
+    from .adaptive_profile_service import get_adaptive_profile
+
+    if not user_id.strip():
+        return _stage_error_response("adaptive_profile", "user_id must not be blank", status_code=422)
+    if not subject_id.strip():
+        return _stage_error_response("adaptive_profile", "subject_id must not be blank", status_code=422)
+
+    try:
+        profile = get_adaptive_profile(user_id.strip(), subject_id.strip(), db)
+        return profile
+    except ValueError as exc:
+        return _stage_error_response("adaptive_profile", str(exc), status_code=422)
+    except Exception as exc:
+        logger.exception(
+            "[ADAPTIVE_PROFILE] endpoint failed user_id=%s subject_id=%s",
+            user_id, subject_id,
+        )
+        return _stage_error_response(
+            "adaptive_profile", "Failed to build adaptive profile",
+            details=str(exc), status_code=500,
+        )
 
 
 @app.post("/chat/stream")

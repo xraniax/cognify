@@ -14,7 +14,11 @@ from database import SessionLocal
 from services.google_drive import download_file_from_drive
 from services.ingestion import ingest_file
 from services.retrieval import retrieve_chunks_by_topic
-from services.generation import generate_study_material
+from services.generation import (
+    generate_study_material,
+    RetryableGenerationError,
+    NonRetryableGenerationError,
+)
 from services.summary_pipeline import generate_summary, MAP_MAX_CHUNKS as SUMMARY_MAP_MAX_CHUNKS
 from utils.logging import get_job_logger
 
@@ -523,7 +527,7 @@ def task_process_document(
     soft_time_limit=1800,
     time_limit=2100,
 )
-def task_generate_material(self, subject_id: str, material_type: str, topic: Optional[str] = None, language: str = "en", top_k: int = 5, user_id: Optional[str] = None, difficulty: str = "intermediate", source_filenames: Optional[List[str]] = None):
+def task_generate_material(self, subject_id: str, material_type: str, topic: Optional[str] = None, language: str = "en", top_k: int = 5, user_id: Optional[str] = None, difficulty: str = "intermediate", source_filenames: Optional[List[str]] = None, adaptive_weak_concepts: Optional[List[str]] = None):
     """Background celery task for executing Retrieval-Augmented LLM generation."""
     logger.info("Celery task_generate_material started: subject=%s, type=%s, topic=%s, difficulty=%s, file_filter=%d", subject_id, material_type, topic, difficulty, len(source_filenames or []))
     db = SessionLocal()
@@ -559,6 +563,7 @@ def task_generate_material(self, subject_id: str, material_type: str, topic: Opt
                 language,
                 user_id=user_id,
                 difficulty=difficulty,
+                adaptive_weak_concepts=adaptive_weak_concepts,
             )
 
         # Fast-path normalization for summary strings (S-7)
@@ -598,6 +603,21 @@ def task_generate_material(self, subject_id: str, material_type: str, topic: Opt
         # that should surface immediately rather than burn retry budget.
         logger.exception("Task Generation failed with non-retriable error (%s)", type(e).__name__)
         raise
+    except NonRetryableGenerationError as e:
+        logger.error(
+            "Task Generation non-retryable failure material_type=%s error=%s",
+            material_type,
+            e,
+        )
+        raise
+    except RetryableGenerationError as e:
+        logger.warning(
+            "Task Generation retryable failure material_type=%s retry=%d error=%s",
+            material_type,
+            self.request.retries,
+            e,
+        )
+        raise self.retry(exc=e, countdown=2 ** self.request.retries * 15)
     except Exception as e:
         logger.exception("Task Generation failed")
         # Retry with exponential backoff on failure (likely Ollama timeout)

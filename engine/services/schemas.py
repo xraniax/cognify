@@ -5,7 +5,7 @@ except ImportError:
     from typing_extensions import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class EmbedRequest(BaseModel):
@@ -113,6 +113,7 @@ class QuizQuestion(BaseModel):
     options: Optional[List[str]] = None
     correct_answer: int
     explanation: str
+    concept: Optional[str] = None
 
 class QuizContent(BaseModel):
     questions: List[QuizQuestion]
@@ -132,7 +133,7 @@ class FlashcardsContent(BaseModel):
 class FlashcardsOutput(BaseModel):
     type: Literal["flashcards"] = "flashcards"
     content: FlashcardsContent
-    metadata: GenerationMetadata
+    metadata: Optional[GenerationMetadata] = None
 
 class SummarySection(BaseModel):
     heading: str
@@ -157,6 +158,8 @@ class QuizEvaluateRequest(BaseModel):
     # Questions (with correct answers) are passed back for stateless evaluation
     questions: List[QuizQuestion]
     submissions: List[QuizSubmission]
+    user_id: Optional[str] = None
+    subject_id: Optional[str] = None
 
 class QuizResultItem(BaseModel):
     question_id: int
@@ -187,3 +190,19 @@ class QuizSubmitAnswerRequest(BaseModel):
     response_time: float = Field(default=0.0, ge=0.0)
     language: str = Field(default="en")
     top_k: int = Field(default=5, ge=1, le=50)
+
+
+class LearningEventRequest(BaseModel):
+    user_id: str
+    concept: str
+    is_correct: bool
+    source: Literal["flashcards", "exam", "quiz_static"]
+    subject_id: Optional[str] = None
+
+    @field_validator("user_id", "concept", mode="before")
+    @classmethod
+    def _must_not_be_blank(cls, v: str, info) -> str:
+        stripped = (v or "").strip()
+        if not stripped:
+            raise ValueError(f"{info.field_name} must not be blank")
+        return stripped

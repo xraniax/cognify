@@ -80,19 +80,39 @@ class MaterialService {
 
         // 5. Track File Persistence and Link to Material
         let filePath = null;
+        let driveFileId = null;
         if (file) {
-            await File.create(
-                userId,
-                finalSubjectId,
-                documentRecord.id, // Linked material_id
-                file.filename,
-                file.originalname,
-                file.mimetype,
-                file.size,
-                file.path
-            );
-            // Ensure absolute path for cross-container consistency
             filePath = file.path.startsWith('/') ? file.path : `/app/${file.path}`;
+            console.log(`[MaterialService] Upload State: LOCAL_SAVED - ${file.path}`);
+            
+            try {
+                const DriveService = (await import('./drive.service.js')).default;
+                driveFileId = await DriveService.uploadFile(file.path, file.mimetype, file.originalname);
+                if (driveFileId) {
+                    console.log(`[MaterialService] Upload State: DRIVE_UPLOADED - ${driveFileId}`);
+                }
+            } catch (err) {
+                console.warn(`[MaterialService] Upload State: UPLOAD_FAILED (Drive) - falling back to local path. ${err.message}`);
+                driveFileId = null;
+            }
+
+            try {
+                await File.create(
+                    userId,
+                    finalSubjectId,
+                    documentRecord.id, // Linked material_id
+                    file.filename,
+                    file.originalname,
+                    file.mimetype,
+                    file.size,
+                    file.path,
+                    driveFileId
+                );
+                console.log(`[MaterialService] Upload State: DB_PERSISTED - document_id=${documentRecord.id}`);
+            } catch (dbErr) {
+                console.error(`[MaterialService] Upload State: UPLOAD_FAILED (DB) - ${dbErr.message}`);
+                throw dbErr;
+            }
         }
 
         // 6. Update Subject activity
@@ -136,12 +156,28 @@ class MaterialService {
 
             console.info(`[MaterialService] Async job triggered: ${job_id} for material: ${documentRecord.id}`);
 
+            // Safety check: ONLY delete local file AFTER Drive upload is confirmed successful AND drive_file_id is persisted
+            const isDriveUploadConfirmed = !!driveFileId;
+            if (filePath && isDriveUploadConfirmed) {
+                try {
+                    if (fs.existsSync(file.path)) {
+                        fs.unlinkSync(file.path);
+                    } else if (fs.existsSync(filePath)) {
+                        fs.unlinkSync(filePath);
+                    }
+                    console.log(`[MaterialService] Upload State: CLEANED - ${file.path}`);
+                } catch (err) {
+                    console.warn(`[MaterialService] Could not delete local file after Drive upload: ${err.message}`);
+                }
+            }
+
             return await Material.findById(documentRecord.id, userId);
         } catch (error) {
             console.error(`[MaterialService] Failed to trigger AI job: ${error.message}`, { ...opContext, materialId: documentRecord?.id });
             if (documentRecord) {
                 await Material.updateStatus(documentRecord.id, userId, FAILED);
             }
+            console.log(`[MaterialService] Upload State: UPLOAD_FAILED (Engine) - keeping local temp file for retry/debug`);
             return documentRecord ? await Material.findById(documentRecord.id, userId) : null;
         }
     }
@@ -483,15 +519,13 @@ class MaterialService {
      * Builds the Shared Generation Policy (GPS) based on UI preferences.
      */
     static _buildGPS(taskType, options) {
-        const difficultyMap = {
-            'Intro': 'introductory',
-            'Inter': 'intermediate',
-            'Adv': 'advanced'
-        };
+        // Frontend pre-maps UI codes to canonical strings before sending:
+        // 'Intro' → 'beginner', 'Inter' → 'intermediate', 'Adv' → 'advanced'
+        const VALID_DIFFICULTIES = new Set(['beginner', 'intermediate', 'advanced']);
 
         const gps = {
             total_count: Math.max(1, parseInt(options.count) || 5),
-            difficulty: difficultyMap[options.difficulty] || 'intermediate',
+            difficulty: VALID_DIFFICULTIES.has(options.difficulty) ? options.difficulty : 'intermediate',
             distribution: [],
             config_version: 1 // Match engine's CURRENT_CONFIG_VERSION
         };

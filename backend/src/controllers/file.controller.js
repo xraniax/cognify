@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
-import { query } from '../utils/config/db.js';
 import asyncHandler from '../utils/asyncHandler.js';
+import FileService from '../services/file.service.js';
 
 // Resolved once at startup — all stored paths must be children of this directory.
 const UPLOAD_BASE = path.resolve(process.env.PDF_STORAGE_PATH || '/app/data/uploads');
@@ -20,18 +20,7 @@ const download = asyncHandler(async (req, res) => {
         return res.status(404).json({ message: 'Document not found' });
     }
 
-    // Resolve file record — no user_id filter here so admin path works too.
-    const result = await query(
-        `SELECT f.path, f.mime_type, f.original_name, f.user_id
-         FROM files f
-         JOIN materials m ON f.material_id = m.id
-         WHERE m.id = $1
-           AND m.deleted_at IS NULL
-         LIMIT 1`,
-        [document_id]
-    );
-
-    const record = result.rows[0];
+    const record = await FileService.getFile(document_id);
 
     if (!record) {
         console.log(`[files] 404 document_id=${document_id} user_id=${userId} reason=not_found`);
@@ -43,6 +32,28 @@ const download = asyncHandler(async (req, res) => {
         return res.status(403).json({ message: 'Access denied' });
     }
 
+    const encodedName = encodeURIComponent(
+        record.original_name || 'document'
+    );
+    res.setHeader('Content-Type', record.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodedName}`);
+
+    if (record.drive_file_id) {
+        console.log(`[files] { "document_id": "${document_id}", "storage_type": "drive", "drive_file_id": "${record.drive_file_id}" }`);
+        try {
+            const driveStream = await record.getStream();
+            return driveStream.pipe(res);
+        } catch (error) {
+            console.error(`[files] Drive stream failed for document_id=${document_id} - ${error.message}`);
+            if (error.code === 404 || error.status === 404 || error.message.includes('not found')) {
+                return res.status(404).json({ message: 'File not found in Drive' });
+            }
+            return res.status(503).json({ message: 'Service Unavailable' });
+        }
+    }
+
+    console.log(`[files] { "document_id": "${document_id}", "storage_type": "local" }`);
+
     // Resolve the stored path and confirm it is strictly inside UPLOAD_BASE.
     // path.resolve handles any embedded "../" sequences before the check.
     const resolvedPath = path.resolve(record.path);
@@ -50,19 +61,13 @@ const download = asyncHandler(async (req, res) => {
         console.error(
             `[files] path_escape document_id=${document_id} stored_path=${record.path} resolved=${resolvedPath}`
         );
-        return res.status(500).json({ message: 'Internal error' });
+        return res.status(503).json({ message: 'Service Unavailable' });
     }
 
     if (!fs.existsSync(resolvedPath)) {
-        console.log(`[files] 410 document_id=${document_id} user_id=${userId} reason=missing_on_disk`);
-        return res.status(410).json({ message: 'File no longer available' });
+        console.log(`[files] 404 document_id=${document_id} user_id=${userId} reason=missing_on_disk`);
+        return res.status(404).json({ message: 'File not found' });
     }
-
-    const encodedName = encodeURIComponent(
-        record.original_name || path.basename(resolvedPath)
-    );
-    res.setHeader('Content-Type', record.mime_type || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodedName}`);
 
     console.log(`[files] 200 document_id=${document_id} user_id=${userId} path=${resolvedPath}`);
 

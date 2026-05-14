@@ -1,0 +1,38 @@
+{
+  "summary": {
+    "system_status": "NON_FUNCTIONAL",
+    "adaptive_behavior": "NONE",
+    "is_real_adaptive_system": false,
+    "proven_mechanisms": [],
+    "broken_mechanisms": [
+      "Redis Connection"
+    ],
+    "working_count": 0,
+    "broken_count": 1,
+    "total_tested": 1
+  },
+  "detailed_results": [
+    {
+      "component": "Redis Connection",
+      "status": "RUNTIME VERIFIED BROKEN",
+      "evidence": "Redis not accessible from engine container",
+      "command": "docker compose exec engine python -c ping",
+      "output": "  File \"<string>\", line 1\n    \"import\n    ^\nSyntaxError: unterminated string literal (detected at line 1)\n",
+      "risks": []
+    }
+  ],
+  "categories": {
+    "RUNTIME VERIFIED WORKING": [],
+    "RUNTIME VERIFIED BROKEN": [
+      {
+        "component": "Redis Connection",
+        "status": "RUNTIME VERIFIED BROKEN",
+        "evidence": "Redis not accessible from engine container",
+        "command": "docker compose exec engine python -c ping",
+        "output": "  File \"<string>\", line 1\n    \"import\n    ^\nSyntaxError: unterminated string literal (detected at line 1)\n",
+        "risks": []
+      }
+    ],
+    "IMPLEMENTED BUT NEVER VERIFIED": []
+  }
+}

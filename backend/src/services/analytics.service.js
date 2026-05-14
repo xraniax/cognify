@@ -1,5 +1,6 @@
 import { query } from '../utils/config/db.js';
 import pool from '../utils/config/db.js';
+import engineClient from './engine.client.js';
 import {
     computeAllScores,
     computeConceptReport,
@@ -49,6 +50,25 @@ const windowTo   = (to)   => toDate(to)   ?? new Date();
 class AnalyticsService {
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // ADAPTIVE SYNC
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /** Fire-and-forget Redis student model update. Never throws — only warns. */
+    static async #syncAdaptive(userId, concept, isCorrect, source) {
+        try {
+            await engineClient.post('/adaptive/learning-event', {
+                user_id: String(userId),
+                concept,
+                is_correct: isCorrect,
+                source,
+            });
+            console.log(`[ADAPTIVE_SYNC] source=${source} user=${userId} concept="${concept}" is_correct=${isCorrect}`);
+        } catch (err) {
+            console.warn(`[ADAPTIVE_SYNC] WARNING: Redis update failed source=${source} user=${userId} concept="${concept}" — ${err.message}`);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // WRITE
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -83,6 +103,14 @@ class AnalyticsService {
             await client.query('COMMIT');
             this.#refreshMastery(userId, subjectId).catch((e) =>
                 console.error('[Analytics] mastery refresh failed after quiz:', e.message));
+            // Adaptive sync: emit one learning event per response that carries a topicName.
+            // Mirrors the same pattern used by recordFlashcardReview and recordExamAttempt.
+            // Fire-and-forget — never throws; failures are warnings only.
+            for (const r of responses) {
+                if (r.topicName) {
+                    this.#syncAdaptive(userId, r.topicName, r.isCorrect, 'quiz_static');
+                }
+            }
             return attemptId;
         } catch (err) {
             await client.query('ROLLBACK');
@@ -101,14 +129,20 @@ class AnalyticsService {
             [userId, materialId ?? null, cardId ?? null, topicName ?? null,
                 outcome, easeFactor ?? 2.50, intervalDays ?? 1, daysSinceLast ?? null]
         );
-        if (topicName && materialId) {
-            const { rows } = await query(
-                'SELECT subject_id FROM materials WHERE id = $1 AND user_id = $2 LIMIT 1',
-                [materialId, userId]
-            );
-            if (rows[0]) {
-                this.#refreshMastery(userId, rows[0].subject_id).catch((e) =>
-                    console.error('[Analytics] mastery refresh failed after flashcard:', e.message));
+        if (topicName) {
+            // outcome values from FlashcardsView: 'easy' | 'good' (medium) | 'again' (hard)
+            const isCorrect = outcome === 'easy' || outcome === 'good';
+            this.#syncAdaptive(userId, topicName, isCorrect, 'flashcards');
+
+            if (materialId) {
+                const { rows } = await query(
+                    'SELECT subject_id FROM materials WHERE id = $1 AND user_id = $2 LIMIT 1',
+                    [materialId, userId]
+                );
+                if (rows[0]) {
+                    this.#refreshMastery(userId, rows[0].subject_id).catch((e) =>
+                        console.error('[Analytics] mastery refresh failed after flashcard:', e.message));
+                }
             }
         }
         return reviewId;
@@ -153,6 +187,12 @@ class AnalyticsService {
                 );
             }
             await client.query('COMMIT');
+
+            for (const [topicName, stats] of topicStats.entries()) {
+                const isCorrect = stats.max_score > 0 && (stats.score / stats.max_score) >= 0.70;
+                this.#syncAdaptive(userId, topicName, isCorrect, 'exam');
+            }
+
             this.#refreshMastery(userId, subjectId).catch((e) =>
                 console.error('[Analytics] mastery refresh failed after exam:', e.message));
             return attemptId;
@@ -256,12 +296,14 @@ class AnalyticsService {
                 const state  = classifyDBScore(score);
                 const wScore = weaknessFromDB(score, null, n);
                 return {
-                    name:           r.topic_name,
-                    crs:            score,
+                    name:                r.topic_name,
+                    crs:                 score,
                     state,
-                    weakness_score: Math.round(wScore * 1000) / 1000,
-                    trend:          null,   // not computed in fast path
-                    action:         wScore > 0.5 ? 'urgent_review' : wScore > 0.3 ? 'scheduled_review' : 'monitor',
+                    weakness_score:      Math.round(wScore * 1000) / 1000,
+                    trend:               null,   // not computed in fast path
+                    action:              wScore > 0.5 ? 'urgent_review' : wScore > 0.3 ? 'scheduled_review' : 'monitor',
+                    quiz_accuracy:       f(r.quiz_accuracy),
+                    flashcard_retention: f(r.flashcard_retention),
                 };
             })
             .filter((c) => c.state === 'critical' || c.state === 'weak');
@@ -939,8 +981,15 @@ class AnalyticsService {
     }
 
     static #suggestAction(weakestConcept) {
+        const retention     = weakestConcept.flashcard_retention ?? weakestConcept.scores?.retention;
+        const understanding = weakestConcept.quiz_accuracy       ?? weakestConcept.scores?.understanding;
+        const type = (retention !== null && retention !== undefined &&
+                      understanding !== null && understanding !== undefined &&
+                      retention < understanding)
+            ? 'flashcard_review'
+            : 'quiz';
         return {
-            type:    weakestConcept.scores?.retention < weakestConcept.scores?.understanding ? 'flashcard_review' : 'quiz',
+            type,
             concept: weakestConcept.name,
             reason:  `${weakestConcept.state === 'critical' ? 'Critical gap' : 'Weak area'} in ${weakestConcept.name}`,
         };

@@ -27,6 +27,8 @@ import {
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useMaterialStore } from '@/store/useMaterialStore';
+import { ingest } from '@/learning/adaptiveRuntime';
+import { LEARNING_SOURCE, LEARNING_EVENT_TYPE, LEARNING_EVENT_SCHEMA_VERSION } from '@/learning/learningEventSchema';
 
 function cn(...inputs) {
     return twMerge(clsx(inputs));
@@ -306,6 +308,16 @@ const CardDot = ({ rating, isCurrent, onClick }) => {
     );
 };
 
+function _genEventId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
@@ -332,6 +344,7 @@ const FlashcardsView = ({ flashcardsData, subjectId, isExpanded = false }) => {
     const [streak, setStreak] = useState(0);
     const [elapsed, setElapsed] = useState(0);
     const timerRef = useRef(null);
+    const sessionIdRef = useRef(_genEventId());
     const [showSummary, setShowSummary] = useState(false);
     const [celebrating, setCelebrating] = useState(false);
     const [studyHardOnly, setStudyHardOnly] = useState(false);
@@ -343,6 +356,7 @@ const FlashcardsView = ({ flashcardsData, subjectId, isExpanded = false }) => {
     useEffect(() => {
         if (prevDataRef.current !== flashcardsData) {
             prevDataRef.current = flashcardsData;
+            sessionIdRef.current = _genEventId();
             console.log("[Flashcards] NEW SESSION — resetting state. Cards:", cards.length);
             setCurrentIndex(0);
             setIsRevealed(false);
@@ -452,6 +466,25 @@ const FlashcardsView = ({ flashcardsData, subjectId, isExpanded = false }) => {
         }
 
         if (subjectId) {
+            const _easeRatingMap = { hard: 1, medium: 3, easy: 4 };
+            const _intervalMap   = { hard: 1, medium: 3, easy: 7 };
+            ingest({
+                eventId:        _genEventId(),
+                sessionId:      sessionIdRef.current,
+                timestamp:      new Date().toISOString(),
+                source:         LEARNING_SOURCE.FLASHCARDS,
+                eventType:      LEARNING_EVENT_TYPE.ITEM_REVIEWED,
+                subjectId,
+                materialId:     materialId ?? null,
+                contentId:      String(originalIndex),
+                difficulty:     null,
+                responseTimeMs: null,
+                schemaVersion:  LEARNING_EVENT_SCHEMA_VERSION,
+                flippedSide:    'back',
+                easeRating:     _easeRatingMap[rating] ?? 3,
+                interval:       _intervalMap[rating] ?? 3,
+            });
+
             const cardKey = String(originalIndex);
             const prevTs  = lastReviewedAt.current[cardKey];
             const now     = Date.now();

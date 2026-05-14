@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\" -Recurse)",
+      "Bash(Select-Object FullName)",
+      "Bash(Sort-Object FullName)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(cd /c/Users/ASUS/Documents/GitHub/cognify/backend && grep -n \"engineClient\\\\|/generate\\\\|/quiz\" src/services/material.service.js | head -30)",
+      "Read(//c/c/Users/ASUS/Documents/GitHub/cognify/backend/src/services/**)",
+      "Bash(Remove-Item \"c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\\\\frontend\\\\src\\\\services\\\\adaptiveLearningStore.js\")",
+      "Read(//c/Users/ASUS/.claude/projects/c--Users-ASUS-Documents-GitHub-cognify/memory/**)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\ASUS\\.claude\\projects\\c--Users-ASUS-Documents-GitHub-cognify\\memory"
+    ]
+  }
+}

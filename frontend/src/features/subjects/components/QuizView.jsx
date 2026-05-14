@@ -143,7 +143,9 @@ const mapQuestion = (q) => {
         question: String(question).trim(),
         options: Array.isArray(options) ? options.map(String) : [],
         correct_answer: String(correctAnswer).trim(),
-        explanation: q.explanation || q.rationale || q.back || 'No explanation provided.'
+        explanation: q.explanation || q.rationale || q.back || 'No explanation provided.',
+        topicName: q.topic || q.topicName || q.topic_name || q.category || null,
+        difficulty: q.difficulty || q.difficultyLevel || null,
     };
 };
 
@@ -201,93 +203,93 @@ const QuestionCard = ({ question, selectedOption, isSubmitted, isExpanded, onSel
     const options = normalizeOptions(question);
 
     return (
-    <AnimatePresence mode="wait">
-        <motion.div
-            key={question.id}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="bg-white rounded-[2rem] shadow-xl shadow-indigo-100/20 border border-gray-100 p-6 sm:p-8 md:p-10 mb-8"
-        >
-            <h3 className={`font-bold text-gray-800 leading-tight transition-all duration-500 ${isExpanded ? 'text-2xl sm:text-3xl mb-12' : 'text-lg sm:text-xl md:text-2xl mb-10'}`}>
-                {question.question}
-            </h3>
+        <AnimatePresence mode="wait">
+            <motion.div
+                key={question.id}
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="bg-white rounded-[2rem] shadow-xl shadow-indigo-100/20 border border-gray-100 p-6 sm:p-8 md:p-10 mb-8"
+            >
+                <h3 className={`font-bold text-gray-800 leading-tight transition-all duration-500 ${isExpanded ? 'text-2xl sm:text-3xl mb-12' : 'text-lg sm:text-xl md:text-2xl mb-10'}`}>
+                    {question.question}
+                </h3>
 
-            <div className="space-y-3 sm:space-y-4">
-                {options.length > 0 ? (
-                    options.map((option, idx) => {
-                        const isSelected = selectedOption === option;
-                        const isCorrect = isSubmitted && isCorrectAnswer(option, question.correct_answer);
-                        const isWrong = isSubmitted && isSelected && !isCorrectAnswer(option, question.correct_answer);
+                <div className="space-y-3 sm:space-y-4">
+                    {options.length > 0 ? (
+                        options.map((option, idx) => {
+                            const isSelected = selectedOption === option;
+                            const isCorrect = isSubmitted && isCorrectAnswer(option, question.correct_answer);
+                            const isWrong = isSubmitted && isSelected && !isCorrectAnswer(option, question.correct_answer);
 
-                        return (
-                            <motion.button
-                                key={idx}
-                                whileHover={!isSubmitted ? { scale: 1.01 } : {}}
-                                whileTap={!isSubmitted ? { scale: 0.99 } : {}}
-                                onClick={() => onSelect(option)}
-                                disabled={isSubmitted}
-                                className={cn(
-                                    "w-full p-4 sm:p-5 rounded-xl sm:rounded-2xl text-left font-bold transition-all border-2 flex items-center justify-between group",
-                                    !isSubmitted && isSelected && "border-indigo-500 bg-indigo-50 text-indigo-700 shadow-lg shadow-indigo-100",
-                                    !isSubmitted && !isSelected && "border-gray-50 bg-gray-50 text-gray-600 hover:border-gray-200 hover:bg-white",
-                                    isSubmitted && isCorrect && "border-emerald-500 bg-emerald-50 text-emerald-700",
-                                    isSubmitted && isWrong && "border-rose-500 bg-rose-50 text-rose-700",
-                                    isSubmitted && !isCorrect && !isWrong && "border-gray-50 bg-gray-50 text-gray-300 opacity-50"
-                                )}
-                            >
-                                <div className="flex items-center gap-3 sm:gap-4">
-                                    <div className={cn(
-                                        "w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center text-xs sm:text-sm font-black transition-colors shadow-sm",
-                                        !isSubmitted && isSelected ? "bg-indigo-500 text-white" : "bg-white text-gray-400 group-hover:text-indigo-400 border border-gray-100",
-                                        isSubmitted && isCorrect && "bg-emerald-500 text-white border-transparent",
-                                        isSubmitted && isWrong && "bg-rose-500 text-white border-transparent"
-                                    )}>
-                                        {String.fromCharCode(65 + idx)}
+                            return (
+                                <motion.button
+                                    key={idx}
+                                    whileHover={!isSubmitted ? { scale: 1.01 } : {}}
+                                    whileTap={!isSubmitted ? { scale: 0.99 } : {}}
+                                    onClick={() => onSelect(option)}
+                                    disabled={isSubmitted}
+                                    className={cn(
+                                        "w-full p-4 sm:p-5 rounded-xl sm:rounded-2xl text-left font-bold transition-all border-2 flex items-center justify-between group",
+                                        !isSubmitted && isSelected && "border-indigo-500 bg-indigo-50 text-indigo-700 shadow-lg shadow-indigo-100",
+                                        !isSubmitted && !isSelected && "border-gray-50 bg-gray-50 text-gray-600 hover:border-gray-200 hover:bg-white",
+                                        isSubmitted && isCorrect && "border-emerald-500 bg-emerald-50 text-emerald-700",
+                                        isSubmitted && isWrong && "border-rose-500 bg-rose-50 text-rose-700",
+                                        isSubmitted && !isCorrect && !isWrong && "border-gray-50 bg-gray-50 text-gray-300 opacity-50"
+                                    )}
+                                >
+                                    <div className="flex items-center gap-3 sm:gap-4">
+                                        <div className={cn(
+                                            "w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center text-xs sm:text-sm font-black transition-colors shadow-sm",
+                                            !isSubmitted && isSelected ? "bg-indigo-500 text-white" : "bg-white text-gray-400 group-hover:text-indigo-400 border border-gray-100",
+                                            isSubmitted && isCorrect && "bg-emerald-500 text-white border-transparent",
+                                            isSubmitted && isWrong && "bg-rose-500 text-white border-transparent"
+                                        )}>
+                                            {String.fromCharCode(65 + idx)}
+                                        </div>
+                                        <span className="flex-1 text-sm sm:text-base leading-snug">{option}</span>
                                     </div>
-                                    <span className="flex-1 text-sm sm:text-base leading-snug">{option}</span>
-                                </div>
 
-                                {isSubmitted && (
-                                    <div className="flex-shrink-0 ml-3 sm:ml-4">
-                                        {isCorrect && <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-500" />}
-                                        {isWrong && <XCircle className="w-5 h-5 sm:w-6 sm:h-6 text-rose-500" />}
-                                    </div>
-                                )}
-                            </motion.button>
-                        );
-                    })
-                ) : (
-                    <div className="p-6 sm:p-8 bg-gray-50 rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200 text-center">
-                        <p className="text-gray-500 font-medium mb-2 italic">Thinking of the answer?</p>
-                        <p className="text-gray-400 text-xs">This is a short-answer question. Press 'Reveal Answer' when you're ready.</p>
-                    </div>
-                )}
-            </div>
-
-            <AnimatePresence>
-                {isSubmitted && (
-                    <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        className="mt-8 sm:mt-10 overflow-hidden"
-                    >
-                        <div className="p-4 sm:p-6 bg-indigo-50/50 rounded-xl sm:rounded-2xl border border-indigo-100 flex gap-3 sm:gap-4">
-                            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-sm">
-                                <Info className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-500" />
-                            </div>
-                            <div>
-                                <h4 className="font-black text-xs sm:text-sm text-indigo-900 mb-1 uppercase tracking-wider">The Insight</h4>
-                                <p className="text-indigo-800/80 text-xs sm:text-sm leading-relaxed font-medium">
-                                    {question.explanation}
-                                </p>
-                            </div>
+                                    {isSubmitted && (
+                                        <div className="flex-shrink-0 ml-3 sm:ml-4">
+                                            {isCorrect && <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-500" />}
+                                            {isWrong && <XCircle className="w-5 h-5 sm:w-6 sm:h-6 text-rose-500" />}
+                                        </div>
+                                    )}
+                                </motion.button>
+                            );
+                        })
+                    ) : (
+                        <div className="p-6 sm:p-8 bg-gray-50 rounded-xl sm:rounded-2xl border-2 border-dashed border-gray-200 text-center">
+                            <p className="text-gray-500 font-medium mb-2 italic">Thinking of the answer?</p>
+                            <p className="text-gray-400 text-xs">This is a short-answer question. Press 'Reveal Answer' when you're ready.</p>
                         </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        </motion.div>
-    </AnimatePresence>
+                    )}
+                </div>
+
+                <AnimatePresence>
+                    {isSubmitted && (
+                        <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            className="mt-8 sm:mt-10 overflow-hidden"
+                        >
+                            <div className="p-4 sm:p-6 bg-indigo-50/50 rounded-xl sm:rounded-2xl border border-indigo-100 flex gap-3 sm:gap-4">
+                                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                                    <Info className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-500" />
+                                </div>
+                                <div>
+                                    <h4 className="font-black text-xs sm:text-sm text-indigo-900 mb-1 uppercase tracking-wider">The Insight</h4>
+                                    <p className="text-indigo-800/80 text-xs sm:text-sm leading-relaxed font-medium">
+                                        {question.explanation}
+                                    </p>
+                                </div>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </motion.div>
+        </AnimatePresence>
     );
 };
 
@@ -531,8 +533,8 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
             subjectId,
             // Restore the original session identity on page refresh so events
             // continue under the same sessionId and the persisted queue is found.
-            sessionId:  initialState.sessionId        ?? null,
-            createdAt:  initialState.sessionCreatedAt ?? null,
+            sessionId: initialState.sessionId ?? null,
+            createdAt: initialState.sessionCreatedAt ?? null,
         });
     }
     // eventQueueRef: in-memory mirror of the persisted event queue.
@@ -617,7 +619,7 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
     useEffect(() => {
         localStorage.setItem(storageKey, JSON.stringify({
             questionCount, score, streak, showResults, muted, lastCorrect,
-            sessionId:        sessionRef.current.sessionId,
+            sessionId: sessionRef.current.sessionId,
             sessionCreatedAt: sessionRef.current.createdAt,
         }));
     }, [questionCount, score, streak, showResults, muted, lastCorrect, storageKey]);
@@ -667,19 +669,19 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
             eventQueueRef.current.push(ev);
             enqueueEvent(sessionRef.current.sessionId, ev);
             ingest({
-                eventId:          _genEventId(),
-                sessionId:        sessionRef.current.sessionId,
-                timestamp:        ev.timestamp,
-                source:           LEARNING_SOURCE.QUIZ,
-                eventType:        LEARNING_EVENT_TYPE.ITEM_INTERACTED,
-                subjectId:        subjectId,
-                materialId:       null,
-                contentId:        question?.id?.toString() ?? null,
-                difficulty:       null,
-                responseTimeMs:   null,
-                schemaVersion:    LEARNING_EVENT_SCHEMA_VERSION,
-                contentIndex:     questionCount,
-                interactionType:  'option_selected',
+                eventId: _genEventId(),
+                sessionId: sessionRef.current.sessionId,
+                timestamp: ev.timestamp,
+                source: LEARNING_SOURCE.QUIZ,
+                eventType: LEARNING_EVENT_TYPE.ITEM_INTERACTED,
+                subjectId: subjectId,
+                materialId: null,
+                contentId: question?.id?.toString() ?? null,
+                difficulty: null,
+                responseTimeMs: null,
+                schemaVersion: LEARNING_EVENT_SCHEMA_VERSION,
+                contentIndex: questionCount,
+                interactionType: 'option_selected',
                 interactionValue: option,
             });
         }
@@ -716,21 +718,21 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
         eventQueueRef.current.push(ev);
         enqueueEvent(sessionRef.current.sessionId, ev);
         ingest({
-            eventId:        _genEventId(),
-            sessionId:      sessionRef.current.sessionId,
-            timestamp:      ev.timestamp,
-            source:         LEARNING_SOURCE.QUIZ,
-            eventType:      LEARNING_EVENT_TYPE.ITEM_ANSWERED,
-            subjectId:      subjectId,
-            materialId:     null,
-            contentId:      question.id?.toString() ?? null,
-            difficulty:     null,
+            eventId: _genEventId(),
+            sessionId: sessionRef.current.sessionId,
+            timestamp: ev.timestamp,
+            source: LEARNING_SOURCE.QUIZ,
+            eventType: LEARNING_EVENT_TYPE.ITEM_ANSWERED,
+            subjectId: subjectId,
+            materialId: null,
+            contentId: question.id?.toString() ?? null,
+            difficulty: null,
             responseTimeMs: responseTimeMs,
-            schemaVersion:  LEARNING_EVENT_SCHEMA_VERSION,
+            schemaVersion: LEARNING_EVENT_SCHEMA_VERSION,
             selectedOption,
             isCorrect,
-            score:          nextScore,
-            streak:         nextStreak,
+            score: nextScore,
+            streak: nextStreak,
         });
     }, [selectedOption, isSubmitted, question, muted, score, streak, questionCount, subjectId]);
 
@@ -950,7 +952,7 @@ const StaticQuizView = ({ questions, isExpanded, subjectId, materialId, quizData
         sessionRef.current = createQuizSession('static', {
             subjectId,
             materialId,
-            quizId:    quizDataId             ?? null,
+            quizId: quizDataId ?? null,
             // Restore original session identity on refresh so events continue under
             // the same sessionId and the persisted queue is found by getSessionEvents.
             sessionId: initialSaved.sessionId ?? null,
@@ -966,6 +968,8 @@ const StaticQuizView = ({ questions, isExpanded, subjectId, materialId, quizData
     const completedEmittedRef = useRef(initialSaved.showResults ?? false);
 
     useSubmitLockRelease(submitLockRef, isSubmitted);
+
+    const currentQuestion = questions[currentQuestionIndex] || null;
 
     // Release nextLock when the question index advances in state. This allows the user to
     // select an option and submit on the next question. For the final question, this effect
@@ -1018,7 +1022,7 @@ const StaticQuizView = ({ questions, isExpanded, subjectId, materialId, quizData
         }
     }, [currentQuestionIndex, selectedOption, isSubmitted, score, showResults, streak, muted, storageKey, questions.length]);
 
-    const currentQuestion = questions[currentQuestionIndex];
+
 
     const selectOption = useCallback((option) => {
         // Block during active submit or next processing — either lock means a state
@@ -1051,9 +1055,11 @@ const StaticQuizView = ({ questions, isExpanded, subjectId, materialId, quizData
         applyScoring(isCorrect, { setScore, setStreak, muted });
         // Push exactly once per question — submitLockRef guarantees this.
         responsesRef.current.push({
-            questionId: currentQuestion.id,
+            questionId:     currentQuestion.id,
             isCorrect,
-            difficulty: currentQuestion.difficulty ?? 'medium',
+            difficulty:     currentQuestion.difficulty ?? 'medium',
+            topicName:      currentQuestion.topicName   ?? null,
+            selectedAnswer: selectedOption,
         });
         // Write responses immediately so a refresh between submit and the persist
         // useEffect re-run cannot lose this entry.
@@ -1075,6 +1081,25 @@ const StaticQuizView = ({ questions, isExpanded, subjectId, materialId, quizData
         });
         eventQueueRef.current.push(ev);
         enqueueEvent(sessionRef.current.sessionId, ev);
+        if (subjectId) {
+            ingest({
+                eventId:        _genEventId(),
+                sessionId:      sessionRef.current.sessionId,
+                timestamp:      ev.timestamp,
+                source:         LEARNING_SOURCE.QUIZ,
+                eventType:      LEARNING_EVENT_TYPE.ITEM_ANSWERED,
+                subjectId,
+                materialId:     materialId ?? null,
+                contentId:      currentQuestion.id?.toString() ?? null,
+                difficulty:     null,
+                responseTimeMs: null,
+                schemaVersion:  LEARNING_EVENT_SCHEMA_VERSION,
+                selectedOption,
+                isCorrect,
+                score:          nextScore,
+                streak:         nextStreak,
+            });
+        }
         setIsSubmitted(true);
     }, [selectedOption, isSubmitted, currentQuestion, muted, score, streak, currentQuestionIndex]);
 
@@ -1110,7 +1135,7 @@ const StaticQuizView = ({ questions, isExpanded, subjectId, materialId, quizData
                     responses: responsesRef.current,
                     startedAt: startedAtRef.current,
                     completedAt: new Date().toISOString(),
-                }).catch(() => {});
+                }).catch(() => { });
             }
             // nextLockRef intentionally NOT released here. showResults = true is the
             // permanent guard for this terminal state; releasing the lock would open a

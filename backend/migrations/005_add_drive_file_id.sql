@@ -1,0 +1,2 @@
+ALTER TABLE files
+ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255);

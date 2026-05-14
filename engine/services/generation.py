@@ -18,6 +18,14 @@ from .chunk_processing import map_chunks_sync, async_map_chunks, reduce_results
 
 logger = logging.getLogger("engine-generation")
 
+
+class RetryableGenerationError(Exception):
+    """Raised for transient LLM/Ollama failures that may succeed on retry."""
+
+
+class NonRetryableGenerationError(Exception):
+    """Raised for malformed or semantically invalid LLM outputs."""
+
 # Centralised, environment-aware Ollama configuration
 OLLAMA_BASE_URL = get_ollama_base_url()
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
@@ -163,6 +171,14 @@ def _stream_ollama_generate(payload: Dict[str, Any], *, timeout: int, material_t
         )
         raise
 
+    if not done_seen:
+        logger.warning(
+            "Ollama stream ended without done=true material_type=%s parts=%d chars=%d",
+            material_type,
+            len(parts),
+            sum(len(p) for p in parts),
+        )
+
     text = "".join(parts).strip()
     if not text:
         raise ValueError("Empty response from Ollama streaming API")
@@ -212,6 +228,39 @@ def _strip_markdown_fences(text: str) -> str:
     return cleaned
 
 
+def _extract_json_candidate(text: str) -> Optional[str]:
+    """Best-effort extraction of a JSON object substring from noisy text."""
+    if not text:
+        return None
+    cleaned = text.strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return cleaned[start : end + 1].strip()
+
+
+def safe_parse_llm_json(text: str) -> Dict[str, Any]:
+    """Parse JSON from LLM output without raising on malformed input."""
+    if not text or not str(text).strip():
+        return {"ok": False, "error": "empty_output", "snippet": ""}
+
+    cleaned = _strip_markdown_fences(str(text)).strip()
+    candidate = cleaned if cleaned.startswith("{") and cleaned.endswith("}") else _extract_json_candidate(cleaned)
+    if not candidate:
+        return {"ok": False, "error": "no_json_object", "snippet": cleaned[:400]}
+
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError as e:
+        return {"ok": False, "error": f"json_decode_error: {e}", "snippet": candidate[:400]}
+
+    if not isinstance(parsed, dict):
+        return {"ok": False, "error": "json_not_object", "snippet": candidate[:400]}
+
+    return {"ok": True, "data": parsed, "cleaned": candidate}
+
+
 def _extract_json_payload(text: str) -> str:
     """Extract JSON object from text while rejecting clearly invalid payloads."""
     cleaned = _strip_markdown_fences(text).strip()
@@ -228,6 +277,52 @@ def _extract_json_payload(text: str) -> str:
     return cleaned[start : end + 1]
 
 
+def _summarize_parsed_json(parsed: Dict[str, Any]) -> str:
+    """Return a concise summary of top-level and content keys for logs."""
+    if not isinstance(parsed, dict):
+        return "parsed_not_dict"
+
+    keys = sorted(parsed.keys())
+    content = parsed.get("content")
+    content_keys = sorted(content.keys()) if isinstance(content, dict) else []
+    return f"keys={keys} content_keys={content_keys}"
+
+
+def _coerce_flashcard_fields(parsed: Dict[str, Any]) -> bool:
+    """Normalize flashcard front/back list values into strings.
+
+    Returns True when any coercion occurs.
+    """
+    if not isinstance(parsed, dict):
+        return False
+
+    content = parsed.get("content")
+    if not isinstance(content, dict):
+        return False
+
+    cards = content.get("cards")
+    if not isinstance(cards, list):
+        return False
+
+    changed = False
+    for idx, card in enumerate(cards, start=1):
+        if not isinstance(card, dict):
+            continue
+
+        for field in ("front", "back"):
+            value = card.get(field)
+            if isinstance(value, list):
+                card[field] = " ".join(str(item) for item in value).strip()
+                logger.debug(
+                    "Flashcard field coerced from list material_type=flashcards card=%d field=%s",
+                    idx,
+                    field,
+                )
+                changed = True
+
+    return changed
+
+
 def _validate_non_empty_material(material_type: str, parsed: Dict[str, Any]) -> Optional[str]:
     """Check for empty cards/questions and return a warning message if detected.
 
@@ -236,17 +331,18 @@ def _validate_non_empty_material(material_type: str, parsed: Dict[str, Any]) -> 
     warning.
     """
     try:
+        content = (parsed or {}).get("content") or {}
         if material_type == "flashcards":
-            cards = (parsed or {}).get("cards") or []
+            cards = content.get("cards") or []
             if not cards:
                 return "Flashcards output has empty 'cards' list."
         elif material_type == "quiz":
-            questions = (parsed or {}).get("questions") or []
+            questions = content.get("questions") or []
             if not questions:
                 return "Quiz output has empty 'questions' list."
         elif material_type == "exam":
-            questions = (parsed or {}).get("questions") or []
-            answers = (parsed or {}).get("answer_sheet") or []
+            questions = content.get("questions") or []
+            answers = content.get("answer_sheet") or []
             if not questions:
                 return "Exam output has empty 'questions' list."
             if not answers:
@@ -259,8 +355,9 @@ def _validate_non_empty_material(material_type: str, parsed: Dict[str, Any]) -> 
 def _validate_mode_specific_constraints(material_type: str, parsed: Dict[str, Any]) -> None:
     """Validate constraints that are stricter than schema shape validation."""
     if material_type == "exam":
-        questions = parsed.get("questions") or []
-        answer_sheet = parsed.get("answer_sheet") or []
+        content = parsed.get("content") or {}
+        questions = content.get("questions") or []
+        answer_sheet = content.get("answer_sheet") or []
         for idx, q in enumerate(questions, start=1):
             if str(q.get("answer_space") or "").strip() == "":
                 raise ValueError(f"Exam question {idx} must include non-empty answer_space")
@@ -270,13 +367,15 @@ def _validate_mode_specific_constraints(material_type: str, parsed: Dict[str, An
             raise ValueError("Exam answer_sheet question_id values must match questions numbering (1..N)")
 
     if material_type == "flashcards":
-        cards = parsed.get("cards") or []
+        content = parsed.get("content") or {}
+        cards = content.get("cards") or []
         for idx, card in enumerate(cards, start=1):
             if not str(card.get("front") or "").strip() or not str(card.get("back") or "").strip():
                 raise ValueError(f"Flashcard {idx} must include non-empty front/back")
 
     if material_type == "quiz":
-        questions = parsed.get("questions") or []
+        content = parsed.get("content") or {}
+        questions = content.get("questions") or []
         for idx, q in enumerate(questions, start=1):
             question_text = str(q.get("question") or "").strip()
             if not question_text:
@@ -469,6 +568,7 @@ def build_prompt(
     difficulty_override: Optional[str] = None,
     student_profile: Optional[Dict[str, Any]] = None,
     difficulty: str = "intermediate",
+    adaptive_weak_concepts: Optional[List[str]] = None,
 ) -> str:
     """Build a structured prompt for the LLM based on material type."""
     
@@ -568,17 +668,27 @@ def build_prompt(
         actual_diff = str(difficulty_override).strip() if difficulty_override and str(difficulty_override).strip() else difficulty
         if actual_diff:
             base_instructions += f" Adapt the complexity to {actual_diff} level."
-            
+
         json_structure = {
             "type": "flashcards",
             "content": {
                 "cards": [
                     {"front": "Question/Term", "back": "Answer/Definition"}
                 ]
-            },
-            "metadata": {"difficulty": "intermediate", "count": 5, "version": "v1"}
+            }
         }
-        base_instructions += f"\nOutput MUST be a JSON object following this structure: {json.dumps(json_structure)}"
+        json_format_instructions = (
+            "Return ONLY valid JSON. Output must be a single JSON object and nothing else. "
+            "No markdown, no code fences, no commentary."
+        )
+        base_instructions += (
+            "\nOutput MUST be a JSON object following this structure: "
+            f"{json.dumps(json_structure)}"
+        )
+        base_instructions += (
+            "\nReturn JSON with a NON-EMPTY cards array (min 3 items)."
+            "\nDo NOT return empty arrays under any condition."
+        )
 
     elif material_type == "exam":
         exam_count = count if isinstance(count, int) and count > 0 else 5
@@ -608,6 +718,14 @@ def build_prompt(
         base_instructions = f"Process the given context and generate {material_type} in {language}."
 
     topic_focus = f"\nFocus specifically on the topic: '{topic}'." if topic else ""
+
+    # Quiz already injects weak concepts via student_profile.weak_topics; apply
+    # the adaptive hint for all other material types that reach this branch.
+    if adaptive_weak_concepts and material_type != "quiz":
+        base_instructions += (
+            f"\nFocus on these weak areas the student needs to improve: "
+            f"{', '.join(adaptive_weak_concepts)}."
+        )
 
     prompt = (
         f"System instructions:\n{base_instructions}{topic_focus}\n{json_format_instructions}\n\n"
@@ -845,6 +963,7 @@ def generate_study_material(
     user_id: Optional[str] = None,
     count: Optional[int] = None,
     difficulty: str = "intermediate",
+    adaptive_weak_concepts: Optional[List[str]] = None,
 ) -> Union[str, Dict[str, Any]]:
     """Combine chunks into context and call Ollama to generate study material."""
     if not chunks:
@@ -867,6 +986,14 @@ def generate_study_material(
         except Exception as e:
             logger.warning("Student profile lookup failed for user_id=%s: %s", user_id, e)
 
+    # Adaptive path: inject resolved weak concepts so build_prompt uses them.
+    # For quiz: populate student_profile.weak_topics (the key build_prompt reads).
+    # For other types: build_prompt uses adaptive_weak_concepts directly.
+    if adaptive_weak_concepts:
+        if student_profile is None:
+            student_profile = {}
+        student_profile["weak_topics"] = adaptive_weak_concepts
+
     prompt = build_prompt(
         material_type,
         context,
@@ -876,6 +1003,7 @@ def generate_study_material(
         difficulty_override=difficulty,
         student_profile=student_profile,
         difficulty=difficulty,
+        adaptive_weak_concepts=adaptive_weak_concepts,
     )
 
     payload: Dict[str, Any] = {
@@ -887,6 +1015,38 @@ def generate_study_material(
     else:
         payload["format"] = "json"
 
+    strict_flashcards_suffix = (
+        "\n\nIMPORTANT: You MUST return at least 3 flashcards. "
+        "If the context is sparse, still produce at least 3 cards by summarizing "
+        "the most important distinct points. Return ONLY valid JSON."
+    )
+    repair_flashcards_suffix = (
+        "\n\nOutput MUST contain at least 3 flashcards. "
+        "Previous output was invalid. Return ONLY valid JSON."
+    )
+    strict_prompt_enabled = False
+    empty_cards_attempts = 0
+
+    def _attempt_flashcards_repair() -> Optional[Dict[str, Any]]:
+        payload["prompt"] = prompt + repair_flashcards_suffix
+        repaired_text = _stream_ollama_generate(payload, timeout=timeout, material_type=material_type)
+        logger.debug(
+            "LLM repair raw output material_type=%s chars=%d head=%r",
+            material_type,
+            len(repaired_text),
+            repaired_text[:500],
+        )
+        parse_result = safe_parse_llm_json(repaired_text)
+        if not parse_result.get("ok"):
+            logger.warning(
+                "LLM repair JSON parse failed material_type=%s error=%s snippet=%s",
+                material_type,
+                parse_result.get("error"),
+                parse_result.get("snippet"),
+            )
+            return None
+        return parse_result.get("data") or {}
+
     for attempt in range(retries):
         try:
             logger.info(
@@ -897,118 +1057,237 @@ def generate_study_material(
                 timeout,
             )
             req_started = time.perf_counter()
+            if material_type == "flashcards" and strict_prompt_enabled:
+                payload["prompt"] = prompt + strict_flashcards_suffix
+            else:
+                payload["prompt"] = prompt
+
             generated_text = _stream_ollama_generate(payload, timeout=timeout, material_type=material_type)
             req_ended = time.perf_counter()
 
             if not generated_text.strip():
-                if attempt < retries - 1:
-                    logger.info(
-                        "LLM generation empty output material_type=%s attempt=%d/%d -> retrying",
-                        material_type,
-                        attempt + 1,
-                        retries,
-                    )
-                    continue
-                raise RuntimeError(f"Empty output from Ollama for material_type={material_type}")
+                logger.error(
+                    "LLM generation returned empty output material_type=%s attempt=%d/%d",
+                    material_type,
+                    attempt + 1,
+                    retries,
+                )
+                raise RetryableGenerationError("empty_output")
 
             duration_ms = int((req_ended - req_started) * 1000)
             logger.info(
-                "LLM generation done material_type=%s duration_ms=%s response_chars=%d",
+                "LLM generation done material_type=%s attempt=%d/%d duration_ms=%s response_chars=%d",
                 material_type,
+                attempt + 1,
+                retries,
                 duration_ms,
                 len(generated_text),
+            )
+            logger.debug(
+                "LLM generation raw output material_type=%s chars=%d head=%r",
+                material_type,
+                len(generated_text),
+                generated_text[:500],
             )
 
             if material_type == "summary":
                 return generated_text
 
-            try:
-                cleaned = _strip_markdown_fences(generated_text)
-                parsed_json = json.loads(cleaned)
-
-
-                from .schemas import ExamOutput, QuizOutput, FlashcardsOutput
-                from pydantic import ValidationError
-
-                try:
-                    if material_type == "quiz":
-                        parsed_json = QuizOutput(**parsed_json).model_dump()
-                    elif material_type == "exam":
-                        parsed_json = ExamOutput(**parsed_json).model_dump()
-                    elif material_type == "flashcards":
-                        parsed_json = FlashcardsOutput(**parsed_json).model_dump()
-
-                    _validate_mode_specific_constraints(material_type, parsed_json)
-
-                    empty_warning = _validate_non_empty_material(material_type, parsed_json)
-                    if empty_warning:
-                        logger.info(
-                            "LLM generation produced empty content material_type=%s warning=%s",
-                            material_type,
-                            empty_warning,
-                        )
-                        if attempt < retries - 1:
-                            continue
-                        return {
-                            "error": "Empty content from LLM",
-                            "details": empty_warning,
-                            "raw": generated_text,
-                            "parsed": parsed_json,
-                        }
-                except ValidationError as ve:
-                    logger.error(
-                        "LLM generation structural validation failed material_type=%s error=%s",
-                        material_type,
-                        ve,
-                    )
-                    if attempt == retries - 1:
-                        return {"error": "Invalid structure from LLM", "raw": generated_text, "details": str(ve)}
-                    continue
-
-                return parsed_json
-            except json.JSONDecodeError as e:
+            parse_result = safe_parse_llm_json(generated_text)
+            if not parse_result.get("ok"):
                 logger.error(
-                    "Failed to parse JSON for material_type=%s error=%s text_prefix=%s",
+                    "LLM JSON parse failed material_type=%s error=%s snippet=%s",
                     material_type,
-                    e,
-                    generated_text[:200],
+                    parse_result.get("error"),
+                    parse_result.get("snippet"),
                 )
-                if attempt < retries - 1:
-                    continue
-                return {"error": "Invalid JSON format from LLM", "raw": generated_text}
+                raise NonRetryableGenerationError(str(parse_result.get("error")))
 
-        except ValueError as e:
-            logger.info(
-                "Ollama streaming produced no usable output material_type=%s attempt=%d/%d error=%s",
+            parsed_json = parse_result.get("data") or {}
+            logger.debug(
+                "LLM parsed JSON summary material_type=%s summary=%s",
                 material_type,
-                attempt + 1,
-                retries,
-                e,
+                _summarize_parsed_json(parsed_json),
             )
-            if attempt == retries - 1:
-                raise RuntimeError(f"Empty/invalid streaming output for material_type={material_type}") from e
-            continue
-        except Timeout:
+            if material_type == "flashcards":
+                content = parsed_json.get("content") if isinstance(parsed_json, dict) else None
+                cards = content.get("cards") if isinstance(content, dict) else None
+                if isinstance(cards, list):
+                    logger.info(
+                        "LLM parsed flashcards pre_schema card_count=%d attempt=%d/%d",
+                        len(cards),
+                        attempt + 1,
+                        retries,
+                    )
+                else:
+                    logger.info(
+                        "LLM parsed flashcards pre_schema card_count=missing attempt=%d/%d",
+                        attempt + 1,
+                        retries,
+                    )
+
+            from .schemas import ExamOutput, QuizOutput, FlashcardsOutput
+            from pydantic import ValidationError
+
+            try:
+                if material_type == "quiz":
+                    parsed_json = QuizOutput(**parsed_json).model_dump()
+                elif material_type == "exam":
+                    parsed_json = ExamOutput(**parsed_json).model_dump()
+                elif material_type == "flashcards":
+                    if _coerce_flashcard_fields(parsed_json):
+                        logger.debug(
+                            "Flashcard list coercion applied material_type=%s attempt=%d/%d",
+                            material_type,
+                            attempt + 1,
+                            retries,
+                        )
+                    parsed_json = FlashcardsOutput(**parsed_json).model_dump()
+
+                _validate_mode_specific_constraints(material_type, parsed_json)
+
+                empty_warning = _validate_non_empty_material(material_type, parsed_json)
+                if empty_warning:
+                    logger.error(
+                        "LLM generation produced empty content material_type=%s warning=%s",
+                        material_type,
+                        empty_warning,
+                    )
+                    if material_type == "flashcards":
+                        repaired_json = _attempt_flashcards_repair()
+                        if repaired_json is not None:
+                            try:
+                                if _coerce_flashcard_fields(repaired_json):
+                                    logger.debug(
+                                        "Flashcard list coercion applied during repair material_type=%s attempt=%d/%d",
+                                        material_type,
+                                        attempt + 1,
+                                        retries,
+                                    )
+                                parsed_json = FlashcardsOutput(**repaired_json).model_dump()
+                                _validate_mode_specific_constraints(material_type, parsed_json)
+                                empty_warning = _validate_non_empty_material(material_type, parsed_json)
+                                if empty_warning:
+                                    empty_cards_attempts += 1
+                                    strict_prompt_enabled = True
+                                    raise RetryableGenerationError(empty_warning)
+                            except (ValidationError, ValueError) as repair_err:
+                                empty_cards_attempts += 1
+                                strict_prompt_enabled = True
+                                raise RetryableGenerationError(f"validation_error: {repair_err}")
+                        else:
+                            empty_cards_attempts += 1
+                            strict_prompt_enabled = True
+                            raise RetryableGenerationError(empty_warning)
+                    else:
+                        raise RetryableGenerationError(empty_warning)
+            except ValidationError as ve:
+                logger.error(
+                    "LLM generation structural validation failed material_type=%s error=%s",
+                    material_type,
+                    ve,
+                )
+                if material_type == "flashcards":
+                    repaired_json = _attempt_flashcards_repair()
+                    if repaired_json is not None:
+                        try:
+                            if _coerce_flashcard_fields(repaired_json):
+                                logger.debug(
+                                    "Flashcard list coercion applied during repair material_type=%s attempt=%d/%d",
+                                    material_type,
+                                    attempt + 1,
+                                    retries,
+                                )
+                            parsed_json = FlashcardsOutput(**repaired_json).model_dump()
+                            _validate_mode_specific_constraints(material_type, parsed_json)
+                            empty_warning = _validate_non_empty_material(material_type, parsed_json)
+                            if empty_warning:
+                                empty_cards_attempts += 1
+                                strict_prompt_enabled = True
+                                raise RetryableGenerationError(empty_warning)
+                        except (ValidationError, ValueError) as repair_err:
+                            empty_cards_attempts += 1
+                            strict_prompt_enabled = True
+                            raise RetryableGenerationError(f"validation_error: {repair_err}")
+                    else:
+                        empty_cards_attempts += 1
+                        strict_prompt_enabled = True
+                        raise RetryableGenerationError(f"validation_error: {ve}")
+                else:
+                    logger.info(
+                        "LLM generation classification material_type=%s decision=fatal reason=%s",
+                        material_type,
+                        f"validation_error: {ve}",
+                    )
+                    raise NonRetryableGenerationError(f"validation_error: {ve}")
+
+            if material_type == "flashcards":
+                cards = (parsed_json.get("content") or {}).get("cards") or []
+                logger.info(
+                    "LLM generation flashcards parsed card_count=%d attempt=%d/%d",
+                    len(cards),
+                    attempt + 1,
+                    retries,
+                )
+                parsed_json["metadata"] = {
+                    "difficulty": difficulty,
+                    "count": len(cards),
+                    "version": "v1",
+                    "generated_at": int(time.time()),
+                }
+
+            return parsed_json
+
+        except (Timeout, RequestException, OSError, RetryableGenerationError) as err:
             logger.warning(
-                "Ollama generation request timed out material_type=%s attempt=%d/%d",
-                material_type,
-                attempt + 1,
-                retries,
-            )
-            if attempt == retries - 1:
-                raise
-        except RequestException as err:
-            logger.warning(
-                "Ollama generation request failed material_type=%s attempt=%d/%d error=%s",
+                "Retryable generation failure material_type=%s attempt=%d/%d error=%s",
                 material_type,
                 attempt + 1,
                 retries,
                 err,
             )
-            if hasattr(err, 'response') and err.response is not None:
+            logger.info(
+                "LLM generation classification material_type=%s attempt=%d/%d decision=retryable reason=%s",
+                material_type,
+                attempt + 1,
+                retries,
+                getattr(err, "args", [str(err)])[0],
+            )
+            if hasattr(err, "response") and err.response is not None:
                 logger.error("Ollama error response body=%s", err.response.text)
             if attempt == retries - 1:
-                raise
+                if material_type == "flashcards" and empty_cards_attempts >= retries:
+                    logger.error(
+                        "LLM generation classification material_type=%s decision=fatal reason=llm_unstable_empty_generation",
+                        material_type,
+                    )
+                    return {
+                        "type": "flashcards",
+                        "content": {"cards": []},
+                        "metadata": {
+                            "difficulty": difficulty,
+                            "count": 0,
+                            "version": "v1",
+                            "generated_at": int(time.time()),
+                            "reason": "llm_unstable_empty_generation",
+                        },
+                    }
+                raise RetryableGenerationError(str(err)) from err
+            time.sleep(OLLAMA_REQUEST_RETRY_DELAY_SECONDS)
+        except ValueError as e:
+            logger.error(
+                "Non-retryable generation failure material_type=%s error=%s",
+                material_type,
+                e,
+            )
+            logger.info(
+                "LLM generation classification material_type=%s decision=fatal reason=%s",
+                material_type,
+                str(e),
+            )
+            raise NonRetryableGenerationError(str(e)) from e
+        except NonRetryableGenerationError:
+            raise
 
     raise RuntimeError("All generation retry attempts failed")
 

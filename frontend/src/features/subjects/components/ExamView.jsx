@@ -5,6 +5,8 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { MaterialService } from '@/services/MaterialService';
 import AnalyticsService from '@/services/AnalyticsService';
+import { ingestBatch } from '@/learning/adaptiveRuntime';
+import { LEARNING_SOURCE, LEARNING_EVENT_TYPE, LEARNING_EVENT_SCHEMA_VERSION } from '@/learning/learningEventSchema';
 
 function cn(...inputs) {
     return twMerge(clsx(inputs));
@@ -192,6 +194,16 @@ const PrintableExam = ({ exam }) => {
     );
 };
 
+function _genEventId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Data normaliser
 // ---------------------------------------------------------------------------
@@ -245,6 +257,7 @@ const ExamView = ({ examData: rawExamData, examId: propExamId, subjectId, isExpa
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState('');
     const hasAutoSubmitted = useRef(false);
+    const sessionIdRef = useRef(_genEventId());
     const [remainingSeconds, setRemainingSeconds] = useState(null);
     const [isSavingAttempt, setIsSavingAttempt] = useState(false);
     const [lastSavedAt, setLastSavedAt] = useState(null);
@@ -260,6 +273,7 @@ const ExamView = ({ examData: rawExamData, examId: propExamId, subjectId, isExpa
         setIsSubmitting(false);
         setStartedAt(null);
         hasAutoSubmitted.current = false;
+        sessionIdRef.current = _genEventId();
         setRemainingSeconds(null);
 
         if (!examData || !Array.isArray(examData.questions) || examData.questions.length === 0) return;
@@ -342,13 +356,49 @@ const ExamView = ({ examData: rawExamData, examId: propExamId, subjectId, isExpa
             setResult(examResult);
 
             if (subjectId && examResult) {
+                const submissionTimestamp = new Date().toISOString();
+                const examEvents = exam.questions.map((q) => {
+                    const detail = (examResult.details || []).find((d) => d.questionId === q.id);
+                    const qAnswer = answers[q.id] || {};
+                    const selectedAnswer = qAnswer.answerText ||
+                        (Array.isArray(qAnswer.selectedAnswers) && qAnswer.selectedAnswers.length > 0
+                            ? qAnswer.selectedAnswers.map((i) => q.options?.[i]).filter(Boolean).join(', ')
+                            : '');
+                    return {
+                        eventId:        _genEventId(),
+                        sessionId:      sessionIdRef.current,
+                        timestamp:      submissionTimestamp,
+                        source:         LEARNING_SOURCE.EXAM,
+                        eventType:      LEARNING_EVENT_TYPE.ITEM_ANSWERED,
+                        subjectId,
+                        materialId:     examId ?? null,
+                        contentId:      String(q.id),
+                        difficulty:     null,
+                        responseTimeMs: null,
+                        schemaVersion:  LEARNING_EVENT_SCHEMA_VERSION,
+                        selectedAnswer,
+                        isCorrect:      detail?.isCorrect ?? null,
+                        partialCredit:  null,
+                        grade:          null,
+                    };
+                });
+                ingestBatch(examEvents);
+
                 AnalyticsService.recordExamAttempt({
                     subjectId,
-                    materialId: examId,
-                    score:           examResult.score   ?? 0,
-                    maxScore:        examResult.total   ?? exam.questions.length,
+                    materialId:      examId,
+                    score:           examResult.score ?? 0,
+                    maxScore:        examResult.total ?? exam.questions.length,
                     durationSeconds: startedAt ? Math.round((Date.now() - startedAt.getTime()) / 1000) : null,
                     startedAt:       startedAt?.toISOString(),
+                    details:         (examResult.details || []).map((d) => ({
+                        questionId: d.questionId,
+                        isCorrect:  d.isCorrect,
+                    })),
+                    examQuestions:   exam.questions.map((q) => ({
+                        id:    q.id,
+                        topic: q.topic || q.topicName || q.topic_name || q.category || 'General',
+                    })),
                 }).catch(() => {});
             }
         } catch (err) {
@@ -443,6 +493,7 @@ const ExamView = ({ examData: rawExamData, examId: propExamId, subjectId, isExpa
     };
 
     const resetAttempt = () => {
+        sessionIdRef.current = _genEventId();
         setAnswers({});
         setCurrentIndex(0);
         setFlagged({});

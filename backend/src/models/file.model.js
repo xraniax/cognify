@@ -5,12 +5,12 @@ class File {
     /**
      * Track a new file upload linked to a material.
      */
-    static async create(userId, subjectId, materialId, filename, originalName, mimeType, sizeBytes, path) {
+    static async create(userId, subjectId, materialId, filename, originalName, mimeType, sizeBytes, path, driveFileId = null) {
         const result = await query(
-            `INSERT INTO files (user_id, subject_id, material_id, filename, original_name, mime_type, size_bytes, path)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `INSERT INTO files (user_id, subject_id, material_id, filename, original_name, mime_type, size_bytes, path, drive_file_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              RETURNING *`,
-            [userId, subjectId, materialId, filename, originalName, mimeType, sizeBytes, path]
+            [userId, subjectId, materialId, filename, originalName, mimeType, sizeBytes, path, driveFileId]
         );
         return result.rows[0];
     }

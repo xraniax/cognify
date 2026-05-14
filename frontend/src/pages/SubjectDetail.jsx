@@ -262,7 +262,7 @@ const SubjectDetail = () => {
             const hasContent = !!material.content;
 
             if (hasFile) {
-                const fileUrl = `${BASE_URL}/${material.file_path}`;
+                const fileUrl = `${BASE_URL}/api/files/${material.id}`;
                 if (material.file_path.toLowerCase().endsWith('.pdf')) {
                     return (
                         <div className="flex-1 h-full w-full flex flex-col" style={{ background: 'var(--c-canvas)' }}>

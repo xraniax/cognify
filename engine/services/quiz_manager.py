@@ -10,6 +10,7 @@ Responsibilities:
 api.py routes are thin controllers that call into this module only.
 """
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,12 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger("engine-quiz-manager")
 
 _DIFFICULTY_LEVELS = ["beginner", "intermediate", "advanced"]
+
+# Avg response time (seconds) above which the student is considered to be
+# struggling with pacing, so difficulty is nudged down by one step.
+_HIGH_RESPONSE_TIME_THRESHOLD = float(
+    os.getenv("STUDENT_HIGH_RESPONSE_TIME_THRESHOLD", "30.0")
+)
 
 
 def _ensure_list(value) -> list:
@@ -46,15 +53,17 @@ def resolve_quiz_difficulty(
         return ui_difficulty
 
     base_idx = _DIFFICULTY_LEVELS.index(ui_difficulty)
-    
+
     # Initial question
     if last_answer_correct is None:
         accuracy = float(student_profile.get("accuracy", 0.5))
+        avg_response_time = float(student_profile.get("avg_response_time", 0.0))
+        idx = base_idx
         if accuracy >= 0.8:
-            return _DIFFICULTY_LEVELS[min(2, base_idx + 1)]
-        elif accuracy <= 0.4:
-            return _DIFFICULTY_LEVELS[max(0, base_idx - 1)]
-        return ui_difficulty
+            idx = min(2, base_idx + 1)
+        elif accuracy <= 0.4 or avg_response_time > _HIGH_RESPONSE_TIME_THRESHOLD:
+            idx = max(0, base_idx - 1)
+        return _DIFFICULTY_LEVELS[idx]
 
     history = session_state.get("difficulty_history") or []
     if history:
@@ -65,6 +74,7 @@ def resolve_quiz_difficulty(
 
     streak_count = int(session_state.get("streak_count", 0))
     accuracy = float(student_profile.get("accuracy", 0.5))
+    avg_response_time = float(student_profile.get("avg_response_time", 0.0))
 
     next_idx = prev_idx
 
@@ -74,10 +84,14 @@ def resolve_quiz_difficulty(
     else:
         next_idx -= 1
 
-    # Bias
+    # Bias from accuracy
     if accuracy >= 0.85 and next_idx < 2 and streak_count >= 1:
         next_idx += 1
     elif accuracy <= 0.35 and next_idx > 0:
+        next_idx -= 1
+
+    # Bias from response time: high avg response time signals struggle → nudge down
+    if avg_response_time > _HIGH_RESPONSE_TIME_THRESHOLD and next_idx > 0:
         next_idx -= 1
 
     # Clamp bounds to base ± 1 (anchor constraints)
@@ -126,7 +140,8 @@ def _fetch_chunk_texts(
     return texts
 
 
-def _extract_concept_names(concepts: List[Any]) -> List[str]:
+def _extract_concept_names(concepts: List[Any], db=None) -> List[str]:
+    from .concept_resolver import normalize_concept
     names: List[str] = []
     for concept in concepts:
         if isinstance(concept, dict):
@@ -136,13 +151,11 @@ def _extract_concept_names(concepts: List[Any]) -> List[str]:
         else:
             raw = None
         if raw:
-            name = str(raw).strip()
-            if name != raw:
-                logger.debug("[CONCEPT] name sanitized %r → %r", raw, name)
+            name = normalize_concept(str(raw), db=db)
             if name:
                 names.append(name)
             else:
-                logger.warning("[CONCEPT] dropped empty name after strip raw=%r", raw)
+                logger.warning("[CONCEPT] dropped invalid concept raw=%r", raw)
     return names
 
 
@@ -150,44 +163,43 @@ def _select_target_concept(
     subject_id: str,
     difficulty: str,
     weak_concepts: List[str],
+    strong_concepts: Optional[List[str]] = None,
     last_concept: Optional[str] = None,
+    db=None,
 ) -> str:
-    from .knowledge_graph_service import get_concepts_by_difficulty, get_subject_graph
+    from .knowledge_graph_service import get_or_build_concepts
 
-    concepts = get_concepts_by_difficulty(subject_id, difficulty)
-    concept_names = _extract_concept_names(concepts)
+    concepts = get_or_build_concepts(subject_id, difficulty, db=db)
+    concept_names = _extract_concept_names(concepts, db=db)
     logger.info(
-        "_select_target_concept subject_id=%s difficulty=%s graph_concepts=%d last_concept=%r",
-        subject_id, difficulty, len(concept_names), last_concept,
+        "_select_target_concept subject_id=%s difficulty=%s graph_concepts=%d "
+        "weak=%d strong=%d last_concept=%r",
+        subject_id, difficulty, len(concept_names),
+        len(weak_concepts), len(strong_concepts or []), last_concept,
     )
-
-    # Widen to all graph tiers when the target difficulty band is empty.
-    if not concept_names:
-        graph = get_subject_graph(subject_id)
-        if graph:
-            for cat in ("core_concepts", "supporting_concepts", "minor_concepts"):
-                concept_names = _extract_concept_names(graph.get(cat) or [])
-                if concept_names:
-                    break
 
     if not concept_names:
         raise ValueError(f"No concepts available for subject_id={subject_id}")
 
-    # Prefer weak concepts; rotate away from last_concept to avoid back-to-back repeats.
+    # Priority: weak > neutral > strong.
+    # Concepts mastered (strong) are deprioritized — only selected when no
+    # weaker or neutral alternative exists.
     weak_set = set(weak_concepts)
-    weak_matches = [name for name in concept_names if name in weak_set]
-    if weak_matches:
-        if last_concept and len(weak_matches) > 1:
-            rotated = [c for c in weak_matches if c != last_concept]
-            return rotated[0] if rotated else weak_matches[0]
-        return weak_matches[0]
+    strong_set = set(strong_concepts or [])
 
-    # No weak match: skip last_concept when alternatives exist.
-    if last_concept and len(concept_names) > 1:
-        non_last = [n for n in concept_names if n != last_concept]
-        return non_last[0] if non_last else concept_names[0]
+    weak_pool    = [n for n in concept_names if n in weak_set]
+    neutral_pool = [n for n in concept_names if n not in weak_set and n not in strong_set]
+    strong_pool  = [n for n in concept_names if n in strong_set and n not in weak_set]
 
-    return concept_names[0]
+    # Build prioritized list: weak first, then neutral, then strong.
+    prioritized = weak_pool + neutral_pool + strong_pool or concept_names
+
+    # Rotate away from last_concept to avoid back-to-back repeats.
+    if last_concept and len(prioritized) > 1:
+        rotated = [c for c in prioritized if c != last_concept]
+        return rotated[0] if rotated else prioritized[0]
+
+    return prioritized[0]
 
 
 def _get_domain_concepts(subject_id: str) -> Optional[set]:
@@ -205,44 +217,7 @@ def _get_domain_concepts(subject_id: str) -> Optional[set]:
     return names if names else None
 
 
-def _filter_student_profile_to_domain(
-    student: Dict[str, Any],
-    subject_id: str,
-) -> Dict[str, Any]:
-    """
-    Return a copy of the student profile with weak/strong concepts restricted to
-    concepts present in the current subject's knowledge graph.  Global accuracy
-    is kept unchanged — only the concept lists are domain-scoped.
-    """
-    domain = _get_domain_concepts(subject_id)
-    weak_all: List[str] = list(student.get("weak_concepts") or [])
-    strong_all: List[str] = list(student.get("strong_concepts") or [])
 
-    if domain is None:
-        logger.warning(
-            "[ADAPTIVE_DOMAIN] subject=%s no knowledge graph — keeping unfiltered concepts "
-            "weak=%d strong=%d",
-            subject_id, len(weak_all), len(strong_all),
-        )
-        return student
-
-    weak_filtered  = [c for c in weak_all  if c in domain]
-    strong_filtered = [c for c in strong_all if c in domain]
-    excluded_weak   = [c for c in weak_all  if c not in domain]
-    excluded_strong = [c for c in strong_all if c not in domain]
-
-    logger.info(
-        "[ADAPTIVE_DOMAIN] subject=%s "
-        "weak_filtered=%s excluded_weak=%s "
-        "strong_filtered=%s excluded_strong=%s",
-        subject_id, weak_filtered, excluded_weak, strong_filtered, excluded_strong,
-    )
-
-    return {
-        **student,
-        "weak_concepts": weak_filtered,
-        "strong_concepts": strong_filtered,
-    }
 
 
 def next_question_only(
@@ -261,15 +236,14 @@ def next_question_only(
     Persists an initial session record so subsequent submit calls have a
     baseline to advance from.
     """
-    from .student_model import get_student
+    from .student_model import get_subject_student
     from .generation import generate_validated_quiz_question
     from .redis_client import get_quiz_session, update_quiz_session
 
     ui_difficulty = "intermediate"  # Can be parameterized via API later
     session = get_quiz_session(user_id, subject_id) or _default_session(ui_difficulty)
     session["difficulty_history"] = _ensure_list(session.get("difficulty_history"))
-    student = get_student(user_id)
-    student = _filter_student_profile_to_domain(student, subject_id)
+    student = get_subject_student(user_id, subject_id)
 
     difficulty = resolve_quiz_difficulty(
         mode="adaptive",
@@ -280,13 +254,16 @@ def next_question_only(
     )
 
     session["difficulty_history"] = [difficulty]
-    # weak_concepts is loaded from the canonical Redis SET (student model, DB 1).
-    # It is never stored in the session hash.
-    weak_concepts = list(student.get("weak_concepts") or [])
+    # weak/strong_concepts are loaded from canonical Redis SETs (student model, DB 1).
+    # They are never stored in the session hash.
+    weak_concepts   = list(student.get("weak_concepts") or [])
+    strong_concepts = list(student.get("strong_concepts") or [])
 
     target_concept = _select_target_concept(
         subject_id, difficulty, weak_concepts,
+        strong_concepts=strong_concepts,
         last_concept=session.get("last_concept"),
+        db=db,
     )
 
     distractor_pool = []
@@ -340,7 +317,8 @@ def submit_answer_and_get_next(
       3. Reload student profile so the next question reflects the updated accuracy.
       4. Retrieve context chunks and generate the next question.
     """
-    from .student_model import update_student_performance, get_student
+    from .learning_event_router import handle_learning_event
+    from .student_model import get_subject_student
     from .generation import generate_validated_quiz_question
     from .redis_client import get_quiz_session, update_quiz_session
 
@@ -356,15 +334,16 @@ def submit_answer_and_get_next(
         )
 
     # Persist answer to the student model; concept=None skips concept-level tracking.
-    update_student_performance(
+    handle_learning_event(
         user_id=user_id,
-        is_correct=is_correct,
-        response_time=float(response_time),
         concept=current_concept,
+        is_correct=is_correct,
+        source="quiz",
+        response_time=float(response_time),
+        subject_id=subject_id,
     )
     # Reload updated student profile (accuracy now reflects this answer).
-    student = get_student(user_id)
-    student = _filter_student_profile_to_domain(student, subject_id)
+    student = get_subject_student(user_id, subject_id)
 
     # Step 2: Update session state
     session["total"] = int(session.get("total", 0)) + 1
@@ -373,9 +352,10 @@ def submit_answer_and_get_next(
     else:
         session["streak_count"] = 0
 
-    # weak_concepts is loaded from the canonical Redis SET (student model, DB 1).
-    # It is never stored in the session hash.
-    weak_concepts = list(student.get("weak_concepts") or [])
+    # weak/strong_concepts are loaded from canonical Redis SETs (student model, DB 1).
+    # They are never stored in the session hash.
+    weak_concepts   = list(student.get("weak_concepts") or [])
+    strong_concepts = list(student.get("strong_concepts") or [])
     ui_diff = session.get("ui_difficulty", "intermediate")
 
     # Step 3: Call resolver
@@ -394,7 +374,9 @@ def submit_answer_and_get_next(
     # Step 4: Generate the next question.
     target_concept = _select_target_concept(
         subject_id, difficulty, weak_concepts,
+        strong_concepts=strong_concepts,
         last_concept=current_concept,
+        db=db,
     )
 
     distractor_pool = []
