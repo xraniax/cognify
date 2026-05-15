@@ -17,9 +17,10 @@ class User {
             hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
         }
 
+        const status = authProvider === 'local' ? 'UNVERIFIED' : 'ACTIVE';
         const result = await query(
-            'INSERT INTO users (email, password_hash, name, role, auth_provider, provider_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, name, role, status, last_login_at, created_at, avatar_url, settings, achievements',
-            [email, hashedPassword, name, role, authProvider, providerId]
+            'INSERT INTO users (email, password_hash, name, role, auth_provider, provider_id, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, email, name, role, status, last_login_at, created_at, avatar_url, settings, achievements',
+            [email, hashedPassword, name, role, authProvider, providerId, status]
         );
         return result.rows[0];
     }
@@ -35,7 +36,7 @@ class User {
         );
 
         if (existingByProvider.rows[0]) {
-            return existingByProvider.rows[0];
+            return { user: existingByProvider.rows[0], isNew: false };
         }
 
         // If not found by provider, check by email (to link accounts)
@@ -46,11 +47,12 @@ class User {
                 'UPDATE users SET auth_provider = $1, provider_id = $2 WHERE id = $3 RETURNING id, email, name, role, status, last_login_at, created_at, avatar_url, settings, achievements',
                 [provider, providerId, existingByEmail.id]
             );
-            return result.rows[0];
+            return { user: result.rows[0], isNew: false };
         }
 
         // Otherwise create new user
-        return await this.create(email, null, name, 'user', provider, providerId);
+        const newUser = await this.create(email, null, name, 'user', provider, providerId);
+        return { user: newUser, isNew: true };
     }
 
     /**
@@ -67,6 +69,14 @@ class User {
     static async findById(id) {
         const result = await query(
             'SELECT id, email, name, role, status, created_at, last_login_at, last_active_at, reset_token_hash, reset_token_expires, avatar_url, settings, achievements FROM users WHERE id = $1',
+            [id]
+        );
+        return result.rows[0];
+    }
+
+    static async findByIdWithPassword(id) {
+        const result = await query(
+            'SELECT id, email, name, role, status, password_hash FROM users WHERE id = $1',
             [id]
         );
         return result.rows[0];
@@ -152,6 +162,42 @@ class User {
     }
 
     /**
+     * Create a 6-digit verification OTP.
+     */
+    static async createVerificationToken(id) {
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const tokenHash = crypto.createHash('sha256').update(otp).digest('hex');
+        
+        // Valid for 24 hours
+        const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+        await query(
+            'UPDATE users SET verification_token_hash = $1, verification_token_expires = $2 WHERE id = $3',
+            [tokenHash, expires, id]
+        );
+        return otp;
+    }
+
+    /**
+     * Verify the OTP and activate the account.
+     */
+    static async verifyEmailToken(id, otp) {
+        const tokenHash = crypto.createHash('sha256').update(otp).digest('hex');
+        const user = await query(
+            'SELECT * FROM users WHERE id = $1 AND verification_token_hash = $2 AND verification_token_expires > NOW()',
+            [id, tokenHash]
+        );
+
+        if (!user.rows[0]) return false;
+
+        await query(
+            "UPDATE users SET status = 'ACTIVE', verification_token_hash = NULL, verification_token_expires = NULL WHERE id = $1",
+            [id]
+        );
+        return true;
+    }
+
+    /**
      * Fetch all users for admin management.
      * Includes material counts and storage estimation.
      */
@@ -211,11 +257,61 @@ class User {
     }
 
     /**
+     * Count users exceeding a specific storage limit.
+     */
+    static async countExceedingStorage(limitBytes) {
+        // We use the same complex subquery logic as in findAll to get the actual usage
+        // This is necessary because storage_usage_bytes isn't a physical column
+        const res = await query(
+            `WITH user_usage AS (
+                SELECT u.id,
+                ((SELECT COALESCE(SUM(f.size_bytes), 0)::bigint FROM files f WHERE f.user_id = u.id) + 
+                 (SELECT COALESCE(SUM(OCTET_LENGTH(COALESCE(m.content, ''))), 0)::bigint FROM materials m WHERE m.user_id = u.id AND UPPER(m.status) != 'FAILED')
+                ) as usage
+                FROM users u
+                WHERE u.role != 'admin'
+            )
+            SELECT COUNT(*)::int as count FROM user_usage WHERE usage > $1`,
+            [limitBytes]
+        );
+        return res.rows[0].count;
+    }
+
+    /**
      * Compare provided password with stored hash
      */
     static async comparePassword(password, hashedPassword) {
         if (!hashedPassword) return false;
         return bcrypt.compare(password, hashedPassword);
+    }
+
+    /**
+     * Count users by role.
+     */
+    static async countByRole(role) {
+        const res = await query('SELECT COUNT(*)::int as count FROM users WHERE role = $1', [role]);
+        return res.rows[0].count;
+    }
+
+    /**
+     * Get total count of users for pagination.
+     */
+    static async getTotalCount() {
+        const result = await query('SELECT COUNT(*)::int as count FROM users');
+        return result.rows[0].count;
+    }
+
+    /**
+     * Get aggregate storage budget stats for over-provisioning analysis.
+     */
+    static async getStorageBudget() {
+        const res = await query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE storage_limit_bytes IS NULL AND role != 'admin')::int as default_quota_user_count,
+                COALESCE(SUM(storage_limit_bytes) FILTER (WHERE storage_limit_bytes IS NOT NULL AND role != 'admin'), 0)::bigint as custom_quota_total_bytes
+            FROM users
+        `);
+        return res.rows[0];
     }
 }
 

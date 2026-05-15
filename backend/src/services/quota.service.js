@@ -54,7 +54,11 @@ class QuotaService {
      * Throws an error with a clear message if not allowed.
      */
     static async checkUploadAllowance(userId, incomingSizeBytes) {
-        const stats = await this.getUserStorageStats(userId);
+        const [stats, globalStats, controls] = await Promise.all([
+            this.getUserStorageStats(userId),
+            this.getGlobalStorageStats(),
+            SettingsService.getStorageControls()
+        ]);
 
         // 1. Suspension Check
         if (stats.status === 'SUSPENDED') {
@@ -64,7 +68,16 @@ class QuotaService {
             throw error;
         }
 
-        // 2. Capacity Check
+        // 2. Global Capacity Check
+        const maxClusterBytes = controls.max_cluster_size_bytes || (1024 * 1024 * 1024 * 10); // Default 10GB
+        if (globalStats.totalUsedBytes + incomingSizeBytes > maxClusterBytes) {
+            const error = new Error('Upload rejected: the platform has reached its maximum storage capacity. Please contact an administrator.');
+            error.statusCode = 403;
+            error.code = 'STORAGE_FULL';
+            throw error;
+        }
+
+        // 3. Individual User Quota Check
         const remainingBytes = stats.limitBytes - stats.usedBytes;
         if (incomingSizeBytes > remainingBytes) {
             const incomingMb = (incomingSizeBytes / (1024 * 1024)).toFixed(2);
@@ -72,13 +85,27 @@ class QuotaService {
             const usedMb = (stats.usedBytes / (1024 * 1024)).toFixed(2);
             const limitMb = (stats.limitBytes / (1024 * 1024)).toFixed(2);
 
+            // Trigger Admin Alert
+            import('./alert.service.js').then(m => m.default.triggerQuotaExceeded(userId, incomingMb, remainingMb)).catch(() => {});
+
             const error = new Error(`Upload rejected: your file is ${incomingMb}MB but your remaining quota is ${remainingMb}MB (Used: ${usedMb}MB / Total: ${limitMb}MB).`);
             error.statusCode = 403;
             error.code = 'QUOTA_EXCEEDED';
             throw error;
         }
 
-        return true;
+        // 4. Near-Limit Detection (90%)
+        const usageRatio = (stats.usedBytes + incomingSizeBytes) / stats.limitBytes;
+        const isNearLimit = usageRatio >= 0.9;
+
+        if (isNearLimit) {
+            const usedMb = ((stats.usedBytes + incomingSizeBytes) / (1024 * 1024)).toFixed(2);
+            const limitMb = (stats.limitBytes / (1024 * 1024)).toFixed(2);
+            // Trigger Admin Warning
+            import('./alert.service.js').then(m => m.default.triggerQuotaWarning(userId, usedMb, limitMb)).catch(() => {});
+        }
+
+        return { allowed: true, warning: isNearLimit };
     }
 
     /**

@@ -22,7 +22,14 @@ from typing import AsyncIterator, Dict, Any, List, Optional
 
 import httpx
 
-from .ollama_config import get_ollama_base_url, get_ollama_generation_model
+from .ollama_config import (
+    get_ollama_base_url,
+    get_ollama_generation_model,
+    get_dynamic_timeout,
+    _stream_ollama_generate,
+    OLLAMA_GENERATE_URL,
+    OLLAMA_GENERATION_MODEL,
+)
 from .concept_planner import create_summary_plan, SummaryPlan
 from .chunk_processing import map_chunks_sync, async_map_chunks, reduce_results
 
@@ -33,24 +40,30 @@ OLLAMA_BASE_URL = get_ollama_base_url()
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
 OLLAMA_GENERATION_MODEL = get_ollama_generation_model(required=True)
 
-OLLAMA_GENERATION_TIMEOUT = int(os.getenv("OLLAMA_GENERATION_TIMEOUT", "300"))
+OLLAMA_GENERATION_TIMEOUT = int(os.getenv("OLLAMA_GENERATION_TIMEOUT", "600"))
 OLLAMA_REQUEST_RETRIES = int(os.getenv("OLLAMA_REQUEST_RETRIES", "4"))
 OLLAMA_REQUEST_RETRY_DELAY_SECONDS = float(os.getenv("OLLAMA_REQUEST_RETRY_DELAY_SECONDS", "2"))
 
 # Summary-specific context limits — larger than the shared 15K to accommodate
 # post-MAP synthesis material.  MAP summaries are already compressed so 30K
 # gives the REDUCE stage enough room without hitting Ollama context limits.
+# Threshold for switching between "One-Shot" (fast) and "Map-Reduce" (comprehensive).
+# Increased to 100k characters so almost all common 10-60 page PDFs stay in the fast path.
 SUMMARY_MAX_CONTEXT_CHARS = int(os.getenv("SUMMARY_MAX_CONTEXT_CHARS", "30000"))
 
-# MAP stage configuration.
+# Target size for coalescing chunks during the MAP phase. 4500 chars (approx 3 chunks) 
+# reduces sequential overhead of LLM calls significantly on slower hardware.
+MAP_BLOCK_CHARS = int(os.getenv("MAP_BLOCK_CHARS", "4500"))
+
+# Absolute max chunks to retrieve to prevent OOM/timeouts on massive subjects.
 MAP_MAX_CHUNKS = int(os.getenv("MAP_MAX_CHUNKS", "80"))
-MAP_CONCURRENCY = int(os.getenv("MAP_CONCURRENCY", "2"))
-STREAM_MAP_MAX_CHUNKS = int(os.getenv("STREAM_MAP_MAX_CHUNKS", "20"))
+MAP_CONCURRENCY = int(os.getenv("MAP_CONCURRENCY", "1"))
+STREAM_MAP_MAX_CHUNKS = int(os.getenv("STREAM_MAP_MAX_CHUNKS", "30"))
 
 # Per-chunk MAP timeout.  MAP prompts are short extractions — they don't need
-# the full 300 s generation budget.  A stuck chunk releases its concurrency
+# the full generation budget.  A stuck chunk releases its concurrency
 # slot after this many seconds, unblocking the rest of the batch.
-MAP_CHUNK_TIMEOUT_SECONDS = int(os.getenv("MAP_CHUNK_TIMEOUT_SECONDS", "90"))
+MAP_CHUNK_TIMEOUT_SECONDS = int(os.getenv("MAP_CHUNK_TIMEOUT_SECONDS", "180"))
 
 # Retry delay for MAP chunks specifically. Shorter than the shared generation
 # delay (2 s default) because holding an executor thread idle hurts concurrency.
@@ -123,56 +136,113 @@ def _build_summary_system_prompt() -> str:
 
 # ── User Prompt ──────────────────────────────────────────────────────────────
 
+def map_mode_to_difficulty(summary_mode: Optional[str]) -> str:
+    """Map a summary mode identifier to a canonical difficulty level."""
+    if not summary_mode:
+        return "intermediate"
+    
+    mapping = {
+        "key_concepts": "introductory",
+        "teach_me_mode": "introductory",
+        "concise_summary": "intermediate",
+        "detailed_explanation": "advanced",
+        "exam_ready_notes": "advanced",
+    }
+    return mapping.get(summary_mode, "intermediate")
+
+
 def build_summary_prompt(
     context: str,
     language: str = "en",
     difficulty: str = "intermediate",
     topic: Optional[str] = None,
+    summary_mode: Optional[str] = None,
     plan_block: str = "",
 ) -> str:
-    """Build the user-facing REDUCE prompt, injecting a difficulty-specific depth strategy.
+    """Build the user-facing REDUCE prompt, injecting a mode-specific depth strategy.
 
-    The system prompt holds the invariant contract (grounding, structure, multi-doc rules).
-    This function injects the depth frame: beginner targets understanding what and why,
-    intermediate targets how it works, advanced targets complete coverage of all material.
-    An optional plan_block (from concept_planner) is injected between the depth strategy
-    and the context to direct the LLM's attention to the most important concepts.
+    This function injects the depth frame or learning style based on summary_mode.
+    If summary_mode is not selected, it falls back to the canonical depth strategies
+    driven by the difficulty parameter. An optional plan_block (from concept_planner)
+    can be injected to direct the LLM's attention to the most important concepts.
     """
+    # 1. If difficulty is "adaptive" and no mode is set, default to teach_me_mode.
+    #    The engine does not have a real adaptive algorithm for summaries (only for quizzes).
+    #    "Teach Me Mode" is the closest semantic match: it adapts to the learner
+    #    by using simple language, analogies, and a progressive tutor style.
+    if difficulty == "adaptive" and not summary_mode:
+        summary_mode = "teach_me_mode"
+        logger.info("[TRACE][SYNC] adaptive summary defaulted to teach_me_mode")
+
+    # 2. Sync difficulty with summary_mode if difficulty is default/ambiguous
+    if summary_mode and difficulty in ("intermediate", "adaptive"):
+        difficulty = map_mode_to_difficulty(summary_mode)
+        logger.info("[TRACE][SYNC] Mapped summary_mode '%s' to difficulty '%s'", summary_mode, difficulty)
+
     lang_phrase = f" Write in {language}." if language and language.lower() != "en" else ""
 
+    # 2. Derive Depth Signal from difficulty
     if difficulty in ("introductory", "beginner", "easy"):
-        depth_strategy = (
-            "DEPTH STRATEGY: BEGINNER\n"
-            "Coverage: 1-2 essential concepts per topic cluster. "
-            "Skip sub-concepts, mechanisms, algorithms, and edge cases.\n"
-            "Explanation: surface-level — what each concept is and why it matters. "
-            "No internal workings or causal chains. Assume no prior knowledge.\n"
-            "Examples: only those explicitly in the source that need no background to understand.\n"
-            "Terms: only those that would block comprehension without a definition."
+        depth_signal = (
+            "DEPTH STRATEGY: INTRODUCTORY\n"
+            "Coverage: 1-2 essential concepts per topic cluster. Skip sub-concepts.\n"
+            "Explanation: Surface-level summary of what and why."
         )
     elif difficulty in ("advanced", "hard"):
-        depth_strategy = (
+        depth_signal = (
             "DEPTH STRATEGY: ADVANCED\n"
-            "Coverage: every concept in the source without exception. "
-            "Each concept gets its own explanation block — no merging of unrelated concepts.\n"
-            "Explanation: exhaustive — internal workings, mechanisms, dependencies, causal chains. "
-            "Preserve all distinctions and sequences exactly as described in the source.\n"
-            "Examples: all examples present in the source plus applications implied by the mechanisms.\n"
-            "Terms: all domain-specific terms, defined strictly as used in the source."
+            "Coverage: Exhaustive coverage of all material, preserving all nuances."
         )
-    else:  # intermediate / default
-        depth_strategy = (
+    else:
+        depth_signal = (
             "DEPTH STRATEGY: INTERMEDIATE\n"
-            "Coverage: all major concepts; skip minor sub-variants that do not change understanding.\n"
-            "Explanation: moderate depth — how concepts work and relate, key dependencies and contrasts, "
-            "without exhaustive low-level detail.\n"
-            "Examples: those that clearly illustrate key concepts; skip trivial or duplicate ones.\n"
-            "Terms: those a reader needs to follow the explanation but would not already know."
+            "Coverage: All major concepts with moderate depth."
         )
 
+    # 3. Derive Mode-specific Instruction
+    mode_instruction = ""
+    if summary_mode == "key_concepts":
+        mode_instruction = (
+            "MODE: KEY CONCEPTS\n"
+            "Goal: Extract ONLY essential points and definitions.\n"
+            "Format: Bullet-point format for rapid revision.\n"
+            "Constraint: No filler content, no elaborate reasoning. Focus on 'the what'."
+        )
+    elif summary_mode == "concise_summary":
+        mode_instruction = (
+            "MODE: CONCISE SUMMARY\n"
+            "Goal: Balanced compression of content.\n"
+            "Format: Short, highly structured paragraphs.\n"
+            "Constraint: Explain the core concepts without exhaustive detail."
+        )
+    elif summary_mode == "detailed_explanation":
+        mode_instruction = (
+            "MODE: DETAILED EXPLANATION\n"
+            "Goal: Step-by-step reasoning and context.\n"
+            "Format: Comprehensive sections with depth.\n"
+            "Constraint: Include reasoning, background context, and all supporting details."
+        )
+    elif summary_mode == "exam_ready_notes":
+        mode_instruction = (
+            "MODE: EXAM READY NOTES\n"
+            "Goal: Optimization for exam preparation.\n"
+            "Format: Headings + definitions + formulas + quick-recall facts.\n"
+            "Constraint: Use a highly structured revision format."
+        )
+    elif summary_mode == "teach_me_mode":
+        mode_instruction = (
+            "MODE: TEACH ME (TUTOR STYLE)\n"
+            "Goal: Progressive learning through simple language.\n"
+            "Format: Conversational, tutor-style explanation.\n"
+            "Constraint: Use analogies and simple language to explain complex ideas."
+        )
+
+    # Combine signals
+    combined_strategy = f"{mode_instruction}\n{depth_signal}" if mode_instruction else depth_signal
     plan_section = f"{plan_block}\n" if plan_block else ""
+
     prompt = (
-        f"{depth_strategy}{lang_phrase}\n\n"
+        f"{combined_strategy}{lang_phrase}\n\n"
         f"{plan_section}"
         f"Text to summarize:\n---\n{context}\n---\n\n"
         f"Summary:"
@@ -189,12 +259,44 @@ def _build_summary_context(chunks: List[str]) -> str:
 
 # ── MAP Stage ────────────────────────────────────────────────────────────────
 
-def _build_map_prompt(chunk_text: str, language: str, difficulty: str) -> str:
-    """Build a difficulty-aware MAP prompt for a single chunk.
+def _build_map_prompt(
+    chunk_text: str,
+    language: str,
+    difficulty: str,
+    summary_mode: Optional[str] = None,
+) -> str:
+    """Build a mode-aware or difficulty-aware MAP prompt for a single chunk.
 
-    Beginner MAP extracts only key ideas; advanced MAP preserves details.
+    Modes leverage semantic goals; legacy difficulty extracts based on depth.
     """
-    if difficulty in ("introductory", "beginner", "easy"):
+    # 1. Mode-based semantic extraction
+    if summary_mode == "key_concepts":
+        extract_level = (
+            "Extract ONLY the 2-3 most essential concepts and their basic definitions. "
+            "Ignore all supporting details, reasoning, or examples."
+        )
+    elif summary_mode == "concise_summary":
+        extract_level = (
+            "Extract all major facts and concepts, but compress them significantly. "
+            "Keep the core ideas but discard minor nuances."
+        )
+    elif summary_mode == "detailed_explanation":
+        extract_level = (
+            "Extract all facts, concepts, details, and context. "
+            "Preserve causal relationships and reasoning chains for later synthesis."
+        )
+    elif summary_mode == "exam_ready_notes":
+        extract_level = (
+            "Extract all formulas, definitions, and key facts. "
+            "Identify content likely to appear in an exam."
+        )
+    elif summary_mode == "teach_me_mode":
+        extract_level = (
+            "Extract concepts in a way that highlights analogies and simple explanations. "
+            "Identify the 'why' and 'how' behind each point."
+        )
+    # 2. Fallback to legacy difficulty-based extraction
+    elif difficulty in ("introductory", "beginner", "easy"):
         extract_level = (
             "Extract ONLY the 2-3 most important ideas from the following text. "
             "Skip details, examples, and supporting evidence."
@@ -226,6 +328,7 @@ def _map_summarize_chunk(
     difficulty: str,
     timeout: int,
     retries: int,
+    summary_mode: Optional[str] = None,
 ) -> str:
     """Summarize a single chunk for the MAP stage.
 
@@ -237,22 +340,29 @@ def _map_summarize_chunk(
     Falls back to the caller timeout only when MAP_CHUNK_TIMEOUT_SECONDS is
     unset or larger than the caller value.
     """
-    from .generation import _stream_ollama_generate
+
 
     # Use the tighter MAP-specific timeout to bound executor thread hold time.
     effective_timeout = min(timeout, MAP_CHUNK_TIMEOUT_SECONDS)
 
-    prompt = _build_map_prompt(chunk_text, language, difficulty)
+    prompt = _build_map_prompt(chunk_text, language, difficulty, summary_mode)
     payload: Dict[str, Any] = {
         "model": OLLAMA_GENERATION_MODEL,
         "prompt": prompt,
+        "options": {
+            "num_predict": 512,      # Cap output to prevent chatty MAP summaries
+            "temperature": 0.1,      # Deterministic extraction
+            "top_k": 20,
+            "top_p": 0.9,
+            "num_ctx": 4096,         # MAP chunks are small, so 4k is plenty
+        },
         "keep_alive": -1,
     }
 
     prompt_chars = len(prompt)
     logger.info(
-        "[SUMMARY][MAP_CHUNK] model=%s prompt_chars=%d chunk_chars=%d timeout=%d difficulty=%s",
-        OLLAMA_GENERATION_MODEL, prompt_chars, len(chunk_text), effective_timeout, difficulty,
+        "[SUMMARY][MAP_CHUNK] model=%s prompt_chars=%d chunk_chars=%d timeout=%d difficulty=%s mode=%s",
+        OLLAMA_GENERATION_MODEL, prompt_chars, len(chunk_text), effective_timeout, difficulty, summary_mode,
     )
 
     for attempt in range(retries):
@@ -282,6 +392,36 @@ def _map_summarize_chunk(
     return ""
 
 
+
+def _prepare_eligible_chunks(
+    chunks: List[str],
+    max_chunks: int,
+) -> List[str]:
+    """Filter, coalesce, and cap chunks for MAP processing."""
+    raw_eligible = [c for c in chunks if len(c.strip()) >= _MIN_CHUNK_CHARS]
+
+    coalesced = []
+    current_block = []
+    current_len = 0
+    for chunk in raw_eligible:
+        if current_len + len(chunk) > MAP_BLOCK_CHARS and current_block:
+            coalesced.append("\n\n".join(current_block))
+            current_block = [chunk]
+            current_len = len(chunk)
+        else:
+            current_block.append(chunk)
+            current_len += len(chunk)
+    if current_block:
+        coalesced.append("\n\n".join(current_block))
+
+    if len(coalesced) > max_chunks:
+        logger.warning("[SUMMARY][MAP] capping %d blocks to %d", len(coalesced), max_chunks)
+        coalesced = coalesced[:max_chunks]
+
+    return coalesced
+
+
+
 def generate_map_summaries(
     chunks: List[str],
     language: str = "en",
@@ -289,6 +429,7 @@ def generate_map_summaries(
     timeout: int = OLLAMA_GENERATION_TIMEOUT,
     retries: int = OLLAMA_REQUEST_RETRIES,
     max_chunks: Optional[int] = None,
+    summary_mode: Optional[str] = None,
 ) -> List[str]:
     """MAP stage: summarize chunks with bounded concurrency (sync/Celery path).
 
@@ -297,12 +438,55 @@ def generate_map_summaries(
     def process_fn(chunk: str) -> str:
         return _map_summarize_chunk(chunk, language, difficulty, timeout, retries)
 
-    return map_chunks_sync(
-        chunks,
-        process_fn,
-        concurrency=MAP_CONCURRENCY,
-        max_chunks=max_chunks or MAP_MAX_CHUNKS,
+    map_stage_start = time.perf_counter()
+    cap = max_chunks or MAP_MAX_CHUNKS
+    eligible = _prepare_eligible_chunks(chunks, cap)
+    if not eligible:
+        return []
+
+    total_input_chars = sum(len(c) for c in eligible)
+    concurrency = min(len(eligible), MAP_CONCURRENCY) if eligible else 1
+
+    logger.info(
+        "[SUMMARY][MAP_START] total_chunks=%d eligible=%d total_chars=%d cap=%d concurrency=%d difficulty=%s mode=%s",
+        len(chunks), len(eligible), total_input_chars, cap, concurrency, difficulty, summary_mode,
     )
+
+    results = [None] * len(eligible)
+    chunk_timings = [0] * len(eligible)
+
+    def _run_chunk(idx_chunk):
+        idx, chunk = idx_chunk
+        chunk_start = time.perf_counter()
+        logger.info("[SUMMARY][MAP] chunk %d/%d chars=%d", idx + 1, len(eligible), len(chunk))
+        summary = _map_summarize_chunk(chunk, language, difficulty, timeout, retries, summary_mode=summary_mode)
+        chunk_ms = int((time.perf_counter() - chunk_start) * 1000)
+        if summary:
+            logger.info("[SUMMARY][MAP] chunk %d/%d DONE ms=%d out_chars=%d", idx + 1, len(eligible), chunk_ms, len(summary))
+        else:
+            logger.warning("[SUMMARY][MAP] chunk %d/%d EMPTY ms=%d", idx + 1, len(eligible), chunk_ms)
+        return idx, summary or "", chunk_ms
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = pool.map(_run_chunk, enumerate(eligible))
+        for idx, summary, chunk_ms in futures:
+            results[idx] = summary
+            chunk_timings[idx] = chunk_ms
+
+    mapped = [s for s in results if s]
+    map_total_ms = int((time.perf_counter() - map_stage_start) * 1000)
+    valid_timings = [t for t in chunk_timings if t > 0]
+    avg_ms = int(sum(valid_timings) / len(valid_timings)) if valid_timings else 0
+
+    logger.info(
+        "[SUMMARY][MAP_END] processed=%d/%d total_ms=%d avg_ms=%d min_ms=%d max_ms=%d output=%d",
+        len(eligible), len(chunks), map_total_ms, avg_ms,
+        min(valid_timings) if valid_timings else 0,
+        max(valid_timings) if valid_timings else 0,
+        len(mapped),
+    )
+    return mapped
+
 
 
 async def _async_map_summaries(
@@ -313,6 +497,7 @@ async def _async_map_summaries(
     retries: int = OLLAMA_REQUEST_RETRIES,
     max_chunks: Optional[int] = None,
     progress_queue: Optional[asyncio.Queue] = None,
+    summary_mode: Optional[str] = None,
 ) -> List[str]:
     """Async MAP stage for the streaming path."""
     def process_fn(chunk: str) -> str:
@@ -327,6 +512,42 @@ async def _async_map_summaries(
     )
 
 
+    async def _map_one(idx: int, chunk: str):
+        nonlocal completed_count
+        async with sem:
+            result = await loop.run_in_executor(
+                None, _map_summarize_chunk, chunk, language, difficulty, timeout, retries, summary_mode,
+            )
+            completed_count += 1
+            if progress_queue is not None:
+                await progress_queue.put(f"map {completed_count}/{len(eligible)}")
+            return idx, result or ""
+
+    tasks = [_map_one(i, c) for i, c in enumerate(eligible)]
+    gathered = await asyncio.gather(*tasks, return_exceptions=True)
+
+    ordered = [None] * len(eligible)
+    for item in gathered:
+        if isinstance(item, Exception):
+            logger.warning("[SUMMARY][ASYNC_MAP] chunk failed: %s", item)
+            continue
+        idx, summary = item
+        ordered[idx] = summary
+
+    mapped = [s for s in ordered if s]
+    map_ms = int((time.perf_counter() - map_start) * 1000)
+    logger.info(
+        "[SUMMARY][ASYNC_MAP_END] total_ms=%d input=%d output=%d concurrency=%d",
+        map_ms, len(eligible), len(mapped), concurrency,
+    )
+
+    if progress_queue is not None:
+        await progress_queue.put(None)
+
+    return mapped
+
+
+
 # ── Streaming Summary Generation ─────────────────────────────────────────────
 
 async def generate_summary_stream(
@@ -334,6 +555,7 @@ async def generate_summary_stream(
     topic: Optional[str] = None,
     language: str = "en",
     difficulty: str = "intermediate",
+    summary_mode: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """Stream summary tokens from Ollama with MAP/REDUCE pipeline.
 
@@ -354,8 +576,8 @@ async def generate_summary_stream(
     """
     overall_start = time.perf_counter()
     logger.info(
-        "[SUMMARY][STREAM_START] chunks=%d difficulty=%s topic=%s",
-        len(chunks), difficulty, topic,
+        "[SUMMARY][STREAM_START] chunks=%d difficulty=%s mode=%s topic=%s",
+        len(chunks), difficulty, summary_mode, topic,
     )
 
     if not chunks:
@@ -369,6 +591,7 @@ async def generate_summary_stream(
             "[SUMMARY][MAP_SKIP] total_chars=%d <= max_context=%d",
             total_chars, SUMMARY_MAX_CONTEXT_CHARS,
         )
+        yield "[PROGRESS] Generating one-shot summary..."
     else:
         map_start = time.perf_counter()
         logger.info(
@@ -384,6 +607,7 @@ async def generate_summary_stream(
                 chunks, language, difficulty,
                 OLLAMA_GENERATION_TIMEOUT, OLLAMA_REQUEST_RETRIES,
                 progress_queue=progress_queue,
+                summary_mode=summary_mode,
             )
         )
 
@@ -418,7 +642,7 @@ async def generate_summary_stream(
         plan_block = ""
 
     context = _build_summary_context(chunks)
-    prompt = build_summary_prompt(context, language, difficulty, topic, plan_block=plan_block)
+    prompt = build_summary_prompt(context, language, difficulty, topic, summary_mode, plan_block=plan_block)
 
     # Use adaptive context sizing to avoid allocating unnecessary VRAM.
     # 1 token ≈ 3 chars, plus 1024 tokens buffer for generation.
@@ -431,14 +655,19 @@ async def generate_summary_stream(
         "system": _build_summary_system_prompt(),
         "keep_alive": -1,
         "options": {
-            "num_ctx": adaptive_num_ctx
+            "num_ctx": adaptive_num_ctx,
+            "num_predict": 2048,
+            "temperature": 0.7,
         }
     }
 
     reduce_prompt_chars = len(prompt)
+    # Stability patch: dynamic timeout
+    dynamic_timeout = get_dynamic_timeout(0) # Summary reduce uses default or adaptive
+    
     logger.info(
-        "[SUMMARY][REDUCE_START] model=%s prompt_chars=%d context_chars=%d timeout=%d",
-        OLLAMA_GENERATION_MODEL, reduce_prompt_chars, len(context), OLLAMA_GENERATION_TIMEOUT,
+        "[SUMMARY][REDUCE_START] model=%s prompt_chars=%d context_chars=%d timeout=%s",
+        OLLAMA_GENERATION_MODEL, reduce_prompt_chars, len(context), str(dynamic_timeout),
     )
 
     retries = OLLAMA_REQUEST_RETRIES
@@ -450,13 +679,19 @@ async def generate_summary_stream(
         attempt_succeeded = False
 
         try:
-            async with httpx.AsyncClient(timeout=OLLAMA_GENERATION_TIMEOUT) as client:
+            start_time = time.time()
+            logger.info("[OLLAMA] [SUMMARY_REDUCE] Generation started", extra={
+                "attempt": attempt,
+                "timestamp": start_time,
+                "timeout": str(dynamic_timeout)
+            })
+            async with httpx.AsyncClient(timeout=dynamic_timeout) as client:
                 async with client.stream("POST", OLLAMA_GENERATE_URL, json=payload) as resp:
                     resp.raise_for_status()
                     logger.info(
                         "[SUMMARY][REDUCE_HTTP_OK] attempt=%d/%d status=%d ttfb_ms=%d",
                         attempt, retries, resp.status_code,
-                        int((time.perf_counter() - reduce_start) * 1000),
+                        int((time.time() - start_time) * 1000),
                     )
 
                     async for line in resp.aiter_lines():
@@ -484,12 +719,11 @@ async def generate_summary_stream(
                             yield piece
 
                         if chunk.get("done") is True:
-                            reduce_ms = int((time.perf_counter() - reduce_start) * 1000)
-                            overall_ms = int((time.perf_counter() - overall_start) * 1000)
-                            throughput = (token_count / (reduce_ms / 1000)) if reduce_ms > 0 else 0
+                            duration = time.time() - start_time
+                            overall_ms = int((time.time() - overall_start) * 1000)
                             logger.info(
-                                "[SUMMARY][REDUCE_DONE] attempt=%d/%d ms=%d tokens=%d chars=%d tok/s=%.1f total_ms=%d",
-                                attempt, retries, reduce_ms, token_count, total_chars_out, throughput, overall_ms,
+                                "[SUMMARY][REDUCE_DONE] attempt=%d/%d ms=%d tokens=%d chars=%d tok/s=%.1f overall_ms=%d",
+                                attempt, retries, int(duration * 1000), token_count, total_chars_out, (token_count/duration if duration > 0 else 0), overall_ms,
                             )
                             attempt_succeeded = True
                             return
@@ -544,6 +778,7 @@ def generate_summary(
     topic: Optional[str] = None,
     language: str = "en",
     difficulty: str = "intermediate",
+    summary_mode: Optional[str] = None,
     timeout: int = OLLAMA_GENERATION_TIMEOUT,
     retries: int = OLLAMA_REQUEST_RETRIES,
 ) -> str:
@@ -551,19 +786,48 @@ def generate_summary(
 
     Runs MAP/REDUCE in a blocking fashion and returns the full summary text.
     """
-    from .generation import _stream_ollama_generate
-
     if not chunks:
         return "Not enough context to generate summary."
 
-    # ── MAP ──
-    logger.info("[SUMMARY][SYNC] starting MAP for %d chunks, difficulty=%s", len(chunks), difficulty)
-    mapped = generate_map_summaries(
-        chunks, language, difficulty, timeout, retries,
-        max_chunks=MAP_MAX_CHUNKS,
+    # ── Pre-flight check ──
+    total_chars = sum(len(c) for c in chunks)
+    logger.info(
+        "[SUMMARY][SYNC] total_chars=%d threshold=%d chunks=%d",
+        total_chars, SUMMARY_MAX_CONTEXT_CHARS, len(chunks),
     )
-    if mapped:
-        chunks = mapped
+
+    # Guard: if the document has almost no text (e.g. a scanned image with minimal OCR),
+    # there is nothing meaningful to summarize. Return a clear, helpful message immediately
+    # instead of burning 10+ minutes on LLM calls that will produce empty output.
+    _MIN_SUMMARY_CHARS = 200
+    if total_chars < _MIN_SUMMARY_CHARS:
+        logger.warning(
+            "[SUMMARY][SYNC_SKIP] total_chars=%d < min=%d — document has too little text to summarize",
+            total_chars, _MIN_SUMMARY_CHARS,
+        )
+        return (
+            "This document doesn't contain enough readable text to generate a summary. "
+            "If it's a scanned image or PDF, try re-uploading with OCR enabled."
+        )
+
+    # ── MAP ── (only when content genuinely exceeds the one-shot threshold)
+    if total_chars > SUMMARY_MAX_CONTEXT_CHARS:
+        logger.info(
+            "[SUMMARY][SYNC_MAP] total_chars=%d > threshold=%d — running MAP",
+            total_chars, SUMMARY_MAX_CONTEXT_CHARS,
+        )
+        mapped = generate_map_summaries(
+            chunks, language, difficulty, timeout, retries,
+            max_chunks=MAP_MAX_CHUNKS,
+            summary_mode=summary_mode,
+        )
+        if mapped:
+            chunks = mapped
+    else:
+        logger.info(
+            "[SUMMARY][SYNC_MAP_SKIP] total_chars=%d <= threshold=%d — using one-shot path",
+            total_chars, SUMMARY_MAX_CONTEXT_CHARS,
+        )
 
     # ── REDUCE ──
     try:
@@ -573,7 +837,7 @@ def generate_summary(
         plan_block = ""
 
     context = _build_summary_context(chunks)
-    prompt = build_summary_prompt(context, language, difficulty, topic, plan_block=plan_block)
+    prompt = build_summary_prompt(context, language, difficulty, topic, summary_mode, plan_block=plan_block)
 
     payload: Dict[str, Any] = {
         "model": OLLAMA_GENERATION_MODEL,
@@ -587,8 +851,9 @@ def generate_summary(
                 "[SUMMARY][SYNC_REDUCE] attempt=%d/%d timeout=%d",
                 attempt + 1, retries, timeout,
             )
+            dynamic_timeout = get_dynamic_timeout(0)
             start = time.perf_counter()
-            text = _stream_ollama_generate(payload, timeout=timeout, material_type="summary")
+            text = _stream_ollama_generate(payload, timeout=dynamic_timeout, material_type="summary")
             ms = int((time.perf_counter() - start) * 1000)
 
             if not text.strip():

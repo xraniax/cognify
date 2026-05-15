@@ -12,9 +12,10 @@ import httpx
 import requests
 from requests.exceptions import RequestException, Timeout
 
-from .ollama_config import get_ollama_base_url, get_ollama_generation_model
+from .ollama_config import get_ollama_base_url, get_ollama_generation_model, get_dynamic_timeout
 from .summary_pipeline import _build_summary_system_prompt
 from .chunk_processing import map_chunks_sync, async_map_chunks, reduce_results
+from .exceptions import NonRetriableGenerationError
 
 logger = logging.getLogger("engine-generation")
 
@@ -385,10 +386,14 @@ def _validate_mode_specific_constraints(material_type: str, parsed: Dict[str, An
             if not isinstance(options, list) or len(options) < 2:
                 raise ValueError(f"Quiz question {idx} options must be a list with at least 2 choices")
             
-            correct_answer = q.get("correct_answer")
-            if not isinstance(correct_answer, int):
+            correct_answer_raw = q.get("correct_answer")
+            if isinstance(correct_answer_raw, str) and correct_answer_raw.strip().lstrip('-').isdigit():
+                correct_answer = int(correct_answer_raw.strip())
+            elif isinstance(correct_answer_raw, int):
+                correct_answer = correct_answer_raw
+            else:
                 raise ValueError(f"Quiz question {idx} correct_answer must be an integer index")
-            
+
             if not (0 <= correct_answer < len(options)):
                 raise ValueError(f"Quiz question {idx} correct_answer index out of range")
 
@@ -964,6 +969,8 @@ def generate_study_material(
     count: Optional[int] = None,
     difficulty: str = "intermediate",
     adaptive_weak_concepts: Optional[List[str]] = None,
+    subject_id: Optional[str] = None,
+    options: Optional[Dict[str, Any]] = None,
 ) -> Union[str, Dict[str, Any]]:
     """Combine chunks into context and call Ollama to generate study material."""
     if not chunks:
@@ -1392,7 +1399,7 @@ def generate_single_quiz_question(
 
             question = str(parsed.get("question") or "").strip()
             options = parsed.get("options") or []
-            correct_answer = parsed.get("correct_answer")
+            correct_answer_raw = parsed.get("correct_answer")
             explanation = str(parsed.get("explanation") or "").strip()
 
             if not question:
@@ -1402,7 +1409,12 @@ def generate_single_quiz_question(
             options = [str(o).strip() for o in options]
             if any(not o for o in options):
                 raise ValueError("All options must be non-empty")
-            if not isinstance(correct_answer, int):
+            # Accept both int and numeric string for correct_answer
+            if isinstance(correct_answer_raw, str) and correct_answer_raw.strip().lstrip('-').isdigit():
+                correct_answer = int(correct_answer_raw.strip())
+            elif isinstance(correct_answer_raw, int):
+                correct_answer = correct_answer_raw
+            else:
                 raise ValueError("correct_answer must be an integer index")
             if not 0 <= correct_answer < len(options):
                 raise ValueError("correct_answer index out of range")

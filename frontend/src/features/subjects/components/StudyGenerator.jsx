@@ -39,10 +39,12 @@ const DIFFICULTIES = [
 ];
 
 const EXAM_TYPES = [
-    { id: 'mcq',        label: 'Multiple Choice' },
-    { id: 'essay',      label: 'Written Response' },
-    { id: 'fill_blank', label: 'Fill in the Blank' },
-    { id: 'matching',   label: 'Matching' },
+    { id: 'single_choice',   label: 'Single Choice' },
+    { id: 'multiple_select', label: 'Multiple Select' },
+    { id: 'short_answer',    label: 'Short Answer' },
+    { id: 'problem',         label: 'Problem Solving' },
+    { id: 'fill_blank',      label: 'Fill in the Blank' },
+    { id: 'matching',        label: 'Matching' },
 ];
 
 const COLOR_MAP = {
@@ -63,7 +65,13 @@ const StudyGenerator = ({
 }) => {
     const [difficulty, setDifficulty] = React.useState('Inter');
     const [count, setCount] = React.useState(10);
-    const [examTypes, setExamTypes] = React.useState(['mcq', 'essay']);
+    const [examTypes, setExamTypes] = React.useState(['single_choice', 'short_answer']);
+
+    const maxQuestions = genType === 'mock_exam' ? 10 : 50;
+
+    React.useEffect(() => {
+        if (count > maxQuestions) setCount(maxQuestions);
+    }, [genType, maxQuestions, count]);
 
     const activeType = TYPES.find(t => t.id === genType) || TYPES[0];
     const showCount = genType !== 'summary';
@@ -87,7 +95,7 @@ const StudyGenerator = ({
         );
     };
 
-    const clampCount = (val) => Math.min(50, Math.max(3, val));
+    const clampCount = (val) => Math.min(maxQuestions, Math.max(3, val));
 
     return (
         <section className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -162,7 +170,7 @@ const StudyGenerator = ({
                                 <Minus className="w-3 h-3" />
                             </button>
                             <input
-                                type="range" min="3" max="50" step="1"
+                                type="range" min="3" max={maxQuestions} step="1"
                                 value={count}
                                 onChange={(e) => setCount(parseInt(e.target.value))}
                                 className="flex-1 accent-indigo-600 h-1.5 rounded-lg appearance-none bg-gray-200 cursor-pointer"
@@ -175,7 +183,7 @@ const StudyGenerator = ({
                             </button>
                         </div>
                         <div className="flex justify-between text-[9px] text-gray-300 font-bold px-0.5">
-                            <span>3</span><span>50</span>
+                            <span>3</span><span>{maxQuestions}</span>
                         </div>
                     </div>
                 )}
@@ -208,10 +216,12 @@ const StudyGenerator = ({
                     disabled={isGenerating || selectedCount === 0}
                     className="w-full py-3 rounded-xl font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
-                        background: selectedCount === 0 || isGenerating ? undefined : 'linear-gradient(135deg, var(--c-primary), #4F46E5)',
-                        backgroundColor: selectedCount === 0 || isGenerating ? '#e5e7eb' : undefined,
-                        color: selectedCount === 0 || isGenerating ? '#9ca3af' : 'white',
-                        boxShadow: selectedCount > 0 && !isGenerating ? '0 4px 14px -2px rgba(99, 102, 241, 0.4)' : 'none',
+                        background: selectedCount === 0 || isGenerating ? '#e5e7eb' : 'rgba(255, 255, 255, 0.65)',
+                        backdropFilter: selectedCount === 0 || isGenerating ? undefined : 'blur(12px)',
+                        color: selectedCount === 0 || isGenerating ? '#9ca3af' : '#5B21B6',
+                        borderColor: selectedCount > 0 && !isGenerating ? 'rgba(124, 58, 237, 0.3)' : 'transparent',
+                        borderWidth: '1px',
+                        boxShadow: selectedCount > 0 && !isGenerating ? '0 4px 16px rgba(124, 58, 237, 0.1), inset 0 1px 0 rgba(255, 255, 255, 1)' : 'none',
                     }}
                 >
                     {isGenerating ? (

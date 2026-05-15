@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import axios from 'axios';
 import engineClient from './engine.client.js';
 import Material from '../models/material.model.js';
 import { COMPLETED } from '../constants/status.enum.js';
@@ -14,6 +15,7 @@ const EXAM_CACHE_LIMIT = 500;
 const FORBIDDEN_TOKENS = /\b(almost|correct|incorrect)\b/i;
 const MAX_GENERATION_ATTEMPTS = 10;
 const MAX_REGEN_ROUNDS = 5;
+const OVERFETCH_FACTOR = 1.5;
 const SUPPORTED_TYPES = [
     'single_choice',
     'multiple_select',
@@ -236,7 +238,7 @@ const normalizeQuestionsFromModel = (parsed) => {
     if (Array.isArray(parsed)) return parsed;
     if (Array.isArray(parsed.questions)) return parsed.questions;
     if (Array.isArray(parsed.items)) return parsed.items;
-    
+
     // Fallback: search for any array value inside the object
     if (typeof parsed === 'object') {
         // e.g. { "exam_questions": [...] }
@@ -338,53 +340,62 @@ const regenerateQuestions = async ({
     return regenerated.slice(0, missing);
 };
 
+const buildTypeDistribution = (types, total) => {
+    const base = Math.floor(total / types.length);
+    const remainder = total % types.length;
+    return types.map((t, i) => ({ type: t, count: base + (i < remainder ? 1 : 0) }));
+};
+
 const buildPrompt = ({ numberOfQuestions, difficulty, topics, types, existingQuestions, context }) => {
     const contextStr = context ? `Use the following context to generate questions:\n---\n${context}\n---\n` : '';
     const blocked = existingQuestions.length > 0
         ? `Avoid duplicating these already accepted questions:\n${existingQuestions.map((q) => `- ${q}`).join('\n')}\n`
         : '';
-        
+
+    const distribution = buildTypeDistribution(types, numberOfQuestions);
+    const distributionStr = distribution.map(({ type, count }) => `  - ${count} question${count !== 1 ? 's' : ''} of type "${type}"`).join('\n');
+
     const systemInstruction = `You are a strict JSON generator for an exam testing system.
-You MUST output ONLY a valid JSON object matching the requested schema. 
+You MUST output ONLY a valid JSON object matching the requested schema.
 Do not output any conversational text, formatting, or markdown code blocks around the JSON.
 Your JSON must strictly use double quotes for keys and string values.
 If you are unsure of a field, provide a sensible default rather than omitting it.`;
 
+    const typeToSchema = {
+        "single_choice": {"id": "1", "question": "Single choice question?", "type": "single_choice", "options": ["A", "B", "C", "D"], "correctAnswers": [0], "explanation": "..." },
+        "multiple_select": {"id": "2", "question": "Multiple select question?", "type": "multiple_select", "options": ["A", "B", "C", "D"], "correctAnswers": [0, 1], "explanation": "..." },
+        "short_answer": {"id": "3", "question": "Short answer question?", "type": "short_answer", "acceptedAnswers": ["Answer text"], "explanation": "..." },
+        "problem": {"id": "4", "question": "Problem solving question?", "type": "problem", "acceptedAnswers": ["Answer text"], "explanation": "..." },
+        "fill_blank": {"id": "5", "question": "The capital of France is ___.", "type": "fill_blank", "blankAnswers": ["Paris"], "explanation": "..." },
+        "matching": {"id": "6", "question": "Match each term to its definition.", "type": "matching", "pairs": [{"left": "Term", "right": "Definition"}], "explanation": "..." }
+    };
+
+    let hintQuestions = [];
+    if (distribution && distribution.length > 0) {
+        distribution.forEach((d, i) => {
+            if (typeToSchema[d.type]) {
+                hintQuestions.push({ ...typeToSchema[d.type], id: String(i + 1) });
+            }
+        });
+    } else {
+        hintQuestions = Object.values(typeToSchema);
+    }
+
+    const schemaHint = {
+        questions: hintQuestions
+    };
+
     const userPrompt = `
 Generate EXACTLY ${numberOfQuestions} exam questions as strict JSON.
 
-Allowed types: ${types.join(', ')}
-Only use the following types EXACTLY: ${types.join(', ')}.
-Do NOT generate any other types.
+You MUST spread questions across ALL of the following types using this exact distribution:
+${distributionStr}
+Do NOT generate any other types. Do NOT use only one type.
 Difficulty: ${difficulty}
 Topics: ${topics.join(', ')}
 
-Output format:
-{
-  "questions": [
-    {
-      "type": "TYPE_FROM_ALLOWED_TYPES",
-      "question": "Detailed question based ONLY on the provided context",
-
-      // For single_choice or multiple_select ONLY:
-      "options": ["Option 1", "Option 2"],
-      "correctAnswers": [0],
-
-      // For short_answer / problem / scenario ONLY:
-      "acceptedAnswers": ["Answer text"],
-
-      // For fill_blank ONLY:
-      "blankAnswers": ["Answer for blank"],
-
-      // For matching ONLY:
-      "pairs": [{"left": "Concept", "right": "Definition"}],
-
-      "explanation": "Short pedagogic explanation based on context",
-      "difficulty": "easy | medium | hard",
-      "topic": "Topic name"
-    }
-  ]
-}
+Output format (this is just an example template, adjust array sizes to respect requested COUNT):
+${JSON.stringify(schemaHint, null, 2)}
 
 Rules:
 1) Return ONLY JSON, no markdown.
@@ -440,7 +451,88 @@ const getDifficultyForProgress = (currentCount, targetTotal, curve) => {
     return 'Intermediate'; // Default/Inter
 };
 
+const EXAM_ENGINE_SUBJECT_ID = process.env.EXAM_ENGINE_SUBJECT_ID || '00000000-0000-0000-0000-000000000000';
+
 class ExamService {
+    /**
+     * Standardizes any exam format (Engine, Fallback, DB) into a unified internal structure.
+     * Enforces the "Hard Contract" for all downstream consumers (grading, frontend).
+     */
+    static _normalizeExam(raw) {
+        if (!raw || typeof raw !== 'object') return { questions: [], answer_sheet: [] };
+
+        let content = raw;
+        // Handle nested ai_generated_content or content wrappers
+        if (raw.ai_generated_content && typeof raw.ai_generated_content === 'object') {
+            content = raw.ai_generated_content;
+        } else if (raw.content && typeof raw.content === 'object') {
+            content = raw.content;
+        }
+
+        // Extract questions from any known variation
+        let questions = content.questions || content.items || (Array.isArray(content) ? content : []);
+        if (content.result && content.result.questions) questions = content.result.questions;
+        if (!Array.isArray(questions)) questions = [];
+
+        // Extract answer sheet
+        const answerSheet = content.answer_sheet || (content.result && content.result.answer_sheet) || [];
+
+        // Helper: Convert text or mixed answers into canonical indices
+        const _resolveAnswerToIndices = (q, rawAnswer) => {
+            if (rawAnswer === undefined || rawAnswer === null) return null;
+            const answers = Array.isArray(rawAnswer) ? rawAnswer : [rawAnswer];
+
+            // If it's not a choice-based question, indices don't apply.
+            if (!['single_choice', 'multiple_select'].includes(q.type)) return answers;
+
+            const indices = answers.map(val => {
+                // 1. If it's a string, try to find it in options as a VALUE first
+                if (typeof val === 'string' && q.options) {
+                    const normOpt = q.options.map(o => String(o).trim().toLowerCase());
+                    const idx = normOpt.indexOf(val.trim().toLowerCase());
+                    if (idx !== -1) return idx;
+                }
+                
+                // 2. If it's a number or a string that's a number, try it as an INDEX
+                const num = Number(val);
+                if (Number.isInteger(num) && num >= 0 && num < (q.options?.length || 0)) {
+                    return num;
+                }
+                
+                return null;
+            }).filter(v => v !== null);
+
+
+            return indices.length > 0 ? indices : null;
+        };
+
+        // Merge answer sheet into questions (Source of Truth for Grading)
+        if (Array.isArray(answerSheet) && answerSheet.length > 0) {
+            const sheetMap = new Map(answerSheet.map(a => [String(a.question_id || a.id), a]));
+            questions = questions.map(q => {
+                const sheetItem = sheetMap.get(String(q.id));
+                if (sheetItem) {
+                    return {
+                        ...q,
+                        // Priority: answer_sheet > existing correctAnswers
+                        correctAnswers: _resolveAnswerToIndices(q, sheetItem.answer) || q.correctAnswers,
+                        acceptedAnswers: !['single_choice', 'multiple_select'].includes(q.type)
+                            ? (Array.isArray(sheetItem.answer) ? sheetItem.answer : [sheetItem.answer])
+                            : q.acceptedAnswers,
+                        explanation: sheetItem.explanation || q.explanation
+                    };
+                }
+                return q;
+            });
+        }
+
+        return {
+            ...raw,
+            type: 'exam',
+            questions, // Standardized flat structure for grading/rendering
+            answer_sheet: Array.isArray(answerSheet) ? answerSheet : []
+        };
+    }
     static async generateExam(userId, payload) {
         cleanupCache();
         cleanupAttemptCache();
@@ -453,16 +545,16 @@ class ExamService {
         }
         const fallbackDifficulty = normalizeDifficulty(payload.difficulty);
         const fallbackTopic = payload.topics[0];
-        
+
         // --- NEW: RAG Retrieval Stage ---
         let context = '';
         try {
             const retrieveRes = await engineClient.post('/retrieve', {
                 subject_id: payload.subject_id,
                 topic: fallbackTopic,
-                top_k: 3,
+                top_k: 20,
             }, { timeout: 300000 });
-            
+
             if (retrieveRes.data?.chunks) {
                 context = retrieveRes.data.chunks.map(c => c.content).join('\n\n').substring(0, 2500);
                 console.info(`[ExamService] RAG: Retrieved ${retrieveRes.data.chunks.length} chunks for context. Truncated to 2500 chars.`);
@@ -479,9 +571,9 @@ class ExamService {
             attempts += 1;
             const missing = targetCount - accepted.length;
             const currentDifficulty = getDifficultyForProgress(accepted.length, targetCount, payload.difficulty);
-            
+
             const batch = await requestQuestionBatch({
-                numberOfQuestions: missing,
+                numberOfQuestions: Math.ceil(missing * OVERFETCH_FACTOR),
                 difficulty: currentDifficulty,
                 topics: payload.topics,
                 allowedTypes,
@@ -541,16 +633,20 @@ class ExamService {
             createdAt,
         };
 
+        const examData = this._normalizeExam({
+            ...exam,
+            questions: fullQuestions,
+        });
+
         examCache.set(examId, {
             userId,
             subjectId: payload.subject_id,
             createdAtMs: Date.now(),
             startedAt: createdAt.toISOString(),
-            exam: {
-                ...exam,
-                questions: fullQuestions,
-            },
+            exam: examData.exam || examData, // Use normalized structure
         });
+
+        const materialExam = examData.exam || examData;
 
         // --- NEW: Persist to Materials table so it appears in history ---
         try {
@@ -570,7 +666,7 @@ class ExamService {
                 [userId, exam.title, 'exam']
             );
             if (materialRecord.rows[0]) {
-                await Material.updateAIResult(materialRecord.rows[0].id, userId, exam, {
+                await Material.updateAIResult(materialRecord.rows[0].id, userId, materialExam, {
                     materialType: 'exam',
                     count: payload.numberOfQuestions,
                 });
@@ -606,50 +702,63 @@ class ExamService {
             ])
         );
 
+        // --- MANDATORY NORMALIZATION LAYER ---
+        const normalizedExam = this._normalizeExam(record.exam);
+        const questionsToGrade = normalizedExam.questions || [];
+
         // Process questions: some may require async semantic grading
-        const detailsPromises = record.exam.questions.map(async (question) => {
-            const answer = answerMap.get(question.id) || { selectedAnswers: [], answerText: '' };
+        console.log(`[ExamService] SUBMITTING EXAM: ${payload.examId}, questions: ${questionsToGrade.length}`);
+        const detailsPromises = questionsToGrade.map(async (question) => {
+            const answer = answerMap.get(String(question.id)) || { selectedAnswers: [], answerText: '' };
+
             const selectedAnswers = answer.selectedAnswers;
             const correctAnswers = [...(question.correctAnswers || [])].sort((a, b) => a - b);
 
             let isCorrect = false;
             let isAlmost = false;
             let aiExplanation = null;
+            let aiScoreComponents = null;
 
             if (question.type === 'single_choice') {
-                isCorrect = selectedAnswers[0] === correctAnswers[0];
+                isCorrect = Number(selectedAnswers[0]) === Number(correctAnswers[0]);
             } else if (['short_answer', 'problem', 'scenario'].includes(question.type)) {
                 // TRY SEMANTIC GRADING via Engine
                 const userInput = answer.answerText;
                 const referenceAnswer = (question.acceptedAnswers || [])[0] || 'No reference answer provided.';
-                
+
                 if (!userInput) {
                     isCorrect = false;
                 } else {
                     try {
                         const engineUrl = process.env.ENGINE_URL || 'http://engine:8000';
-                        const evalRes = await axios.post(`${engineUrl}/evaluate-answer`, {
-                            question: question.question,
-                            correct_answer: referenceAnswer,
-                            user_answer: userInput
+                        const evalRes = await axios.post(`${engineUrl}/scoring/score`, {
+                            rubric: {
+                                question_id: String(question.id),
+                                question_text: question.question,
+                                reference_answer: referenceAnswer,
+                                concepts: [], // Future refinement
+                                score_scale: "0-1"
+                            },
+                            answer: {
+                                student_id: userId,
+                                question_id: String(question.id),
+                                answer_text: userInput
+                            }
                         }, { timeout: 300000 });
-                        
+
                         const evalData = evalRes.data;
-                        // Use a threshold for correctness if the AI is too conservative with the boolean
-                        isCorrect = evalData.is_correct || (evalData.score >= 0.85);
-                        isAlmost = evalData.is_almost || (evalData.score >= 0.5 && evalData.score < 0.85);
-                        aiExplanation = evalData.explanation;
+                        // Map engine normalized_score (0-1) to correctness
+                        isCorrect = evalData.normalized_score >= 0.8;
+                        isAlmost = evalData.normalized_score >= 0.4 && evalData.normalized_score < 0.8;
+                        aiExplanation = evalData.feedback || evalData.grading_explanation;
+                        aiScoreComponents = evalData.component_breakdown;
                     } catch (err) {
-                        console.error('[ExamService] Semantic evaluation failed, falling back to string match:', err.message);
-                        // FALLBACK: Simple string match
-                        const normalizedInput = normalizeText(userInput);
-                        const normalizedTargets = (question.acceptedAnswers || []).map(normalizeText);
-                        isCorrect = normalizedTargets.includes(normalizedInput);
-                        if (!isCorrect && normalizedInput) {
-                            isAlmost = normalizedTargets.some((target) =>
-                                target.includes(normalizedInput) || normalizedInput.includes(target)
-                            );
-                        }
+                        console.error('[ExamService] Semantic evaluation failed:', {
+                            message: err.message,
+                            stack: err.stack,
+                            questionId: question.id
+                        });
+                        throw new Error('Semantic grading unavailable');
                     }
                 }
             } else if (question.type === 'fill_blank') {
@@ -669,24 +778,28 @@ class ExamService {
                 isCorrect = totalPairs > 0 && matches === totalPairs;
                 isAlmost = !isCorrect && matches > 0;
             } else {
-                const selectedSet = new Set(selectedAnswers);
-                const correctSet = new Set(correctAnswers);
-                const exact = selectedAnswers.length === correctAnswers.length
-                    && selectedAnswers.every((v, i) => v === correctAnswers[i]);
-                const overlap = [...selectedSet].some((v) => correctSet.has(v));
+                const sNum = selectedAnswers.map(Number);
+                const cNum = correctAnswers.map(Number);
+                const exact = sNum.length === cNum.length
+                    && sNum.every((v, i) => v === cNum[i]);
+                const overlap = sNum.some((v) => cNum.includes(v));
                 isCorrect = exact;
                 isAlmost = !exact && overlap;
             }
 
             return {
-                questionId: question.id,
+                questionId: String(question.id),
                 isCorrect,
                 ...(isAlmost ? { isAlmost: true } : {}),
+                userAnswer: selectedAnswers,
+                userAnswerText: answer.answerText,
                 correctAnswers,
+                correctAnswerText: (question.acceptedAnswers || [])[0],
                 acceptedAnswers: question.acceptedAnswers,
                 blankAnswers: question.blankAnswers,
                 pairs: question.pairs,
                 explanation: aiExplanation || question.explanation,
+                scoreComponents: aiScoreComponents,
             };
         });
 
@@ -771,20 +884,20 @@ class ExamService {
         try {
             const dbRes = await query('SELECT id, subject_id, title, type, ai_generated_content, created_at FROM materials WHERE id = $1 AND user_id = $2', [examId, userId]);
             if (dbRes.rows.length === 0) return null;
-            
+
             const mat = dbRes.rows[0];
             if (mat.type !== 'exam' && mat.type !== 'mock_exam') return null;
 
             let contentObj;
             try {
                 contentObj = typeof mat.ai_generated_content === 'string' ? JSON.parse(mat.ai_generated_content) : mat.ai_generated_content;
-            } catch(e) {
+            } catch (e) {
                 return null;
             }
-            
-            let questions = contentObj?.questions || contentObj?.items || contentObj || [];
-            if (contentObj?.result && contentObj?.result?.questions) questions = contentObj.result.questions;
-            if (!Array.isArray(questions)) questions = Object.values(questions);
+
+            const normalized = this._normalizeExam(contentObj);
+            const questions = normalized.questions;
+
 
             record = {
                 userId,

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from uuid import UUID
 from sqlalchemy import select
 import time
@@ -10,34 +10,34 @@ from utils.logging import get_job_logger
 QUIZ_TOP_K = int(os.getenv("QUIZ_TOP_K", "10"))
 ENABLE_RERANKING_PER_TASK = os.getenv("ENABLE_RERANKING_PER_TASK", "true").lower() == "true"
 
-try:
-    from models import Chunk, Document
-except ImportError:
-    from ..models import Chunk, Document
+from models import Chunk, Document
 
 from .embeddings import embed_step
 from .embedding_cache import get_cache
 
+
+from sqlalchemy import func
 
 def retrieve_chunks_by_topic(
     session: Session,
     subject_id: UUID,
     topic: Optional[str] = None,
     top_k: int = 5,
+    material_ids: Optional[List[UUID]] = None,
     job_id: Optional[str] = None,
     rerank: bool = True,
     task_type: Optional[str] = None,
     source_filenames: Optional[List[str]] = None
-) -> List[Chunk]:
+) -> List[tuple]:
     """
     Retrieve the top_k most relevant chunks for a given topic within a subject.
-    If topic is None, returns all chunks for the subject.
-    If source_filenames is provided, restricts retrieval to those engine Documents
-    (matched by Document.filename within the subject).
-
+    Optionally filter by material_ids (UUIDs) or source_filenames.
+    Returns a list of (Chunk, similarity_score) tuples.
+    
     Performance optimization: Topic embeddings are cached to avoid redundant HTTP calls.
     """
-    # Normalize subject_id to UUID when provided as string.
+
+    # ... (same UUID normalization logic)
     normalized_subject_id = subject_id
     if isinstance(subject_id, str):
         try:
@@ -45,27 +45,41 @@ def retrieve_chunks_by_topic(
         except ValueError:
             return []
 
-    # Always enforce bounded retrieval size.
     safe_top_k = top_k if isinstance(top_k, int) and top_k > 0 else 5
-
     log = get_job_logger(job_id, "engine-retrieval")
 
-    # Build filename filter when selected files are provided.
-    # Document.filename stores basename(file_path) from the backend upload.
     fn_filter = [f for f in (source_filenames or []) if f and isinstance(f, str)]
+    
+    # Ensure material_ids are UUID objects if present
+    m_ids = []
+    if material_ids:
+        for mid in material_ids:
+            if isinstance(mid, str):
+                try: m_ids.append(UUID(mid))
+                except: pass
+            elif isinstance(mid, UUID):
+                m_ids.append(mid)
 
-    # If no topic, return a bounded, deterministic sample (most recent chunks first).
+    log.info(f"RETRIEVAL FILTERS | subject_id={normalized_subject_id} | material_ids={m_ids} | topic={topic} | file_filter={fn_filter}")
+
     if not topic:
-        q = session.query(Chunk).join(Document)\
+        query = session.query(Chunk).options(joinedload(Chunk.document)).join(Document)\
             .filter(Document.subject_id == normalized_subject_id)
-        if fn_filter:
-            q = q.filter(Document.filename.in_(fn_filter))
-        return q.order_by(Chunk.created_at.desc(), Chunk.id.desc()).limit(safe_top_k).all()
+            
+        if m_ids:
+            query = query.filter(Document.material_id.in_(m_ids))
+        elif fn_filter:
+            query = query.filter(Document.filename.in_(fn_filter))
+            
+        chunks = query.order_by(Chunk.created_at.desc(), Chunk.id.desc())\
+            .limit(safe_top_k)\
+            .all()
+        log.info(f"RETRIEVAL: No-topic fallback retrieved {len(chunks)} chunks")
+        return [(c, 0.0) for c in chunks]
 
     log.info(f"STEP: RETRIEVAL STARTED for subject {subject_id}, topic='{topic}', task={task_type}, file_filter={len(fn_filter)}")
     start_time = time.perf_counter()
 
-    # Get topic embedding (cached)
     cache = get_cache()
     topic_embedding = cache.get(topic)
 
@@ -75,26 +89,51 @@ def retrieve_chunks_by_topic(
             cache.set(topic, topic_embedding)
 
     if topic_embedding:
-        q = session.query(Chunk).join(Document)\
-            .filter(Document.subject_id == normalized_subject_id)
-        if fn_filter:
-            q = q.filter(Document.filename.in_(fn_filter))
-        chunks = q.order_by(Chunk.embedding.cosine_distance(topic_embedding)).limit(safe_top_k).all()
-    else:
-        q = session.query(Chunk).join(Document)\
-            .filter(Document.subject_id == normalized_subject_id)
-        if fn_filter:
-            q = q.filter(Document.filename.in_(fn_filter))
-        chunks = q.order_by(Chunk.created_at.desc(), Chunk.id.desc()).limit(safe_top_k).all()
+        # Calculate cosine distance and convert to similarity (1 - distance)
+        distance_col = Chunk.embedding.cosine_distance(topic_embedding)
+        
+        query = session.query(Chunk, (1 - distance_col).label("similarity"))\
+            .options(joinedload(Chunk.document))\
+            .join(Document)\
+            .filter(Document.subject_id == normalized_subject_id)\
+            .filter(Chunk.embedding.isnot(None))
 
-    log.info(f"STEP: RETRIEVAL SUCCESS for subject {subject_id} (duration: {time.perf_counter() - start_time:.2f}s, retrieved: {len(chunks)})")
-    return chunks
+        if m_ids:
+            query = query.filter(Document.material_id.in_(m_ids))
+        elif fn_filter:
+            query = query.filter(Document.filename.in_(fn_filter))
+            
+        results = query.order_by(distance_col)\
+            .limit(safe_top_k)\
+            .all()
+        
+        chunks_with_scores = [(r[0], float(r[1])) for r in results if r[1] is not None]
+
+
+    else:
+        query = session.query(Chunk).options(joinedload(Chunk.document)).join(Document)\
+            .filter(Document.subject_id == normalized_subject_id)
+
+        if m_ids:
+            query = query.filter(Document.material_id.in_(m_ids))
+        elif fn_filter:
+            query = query.filter(Document.filename.in_(fn_filter))
+
+        chunks = query.order_by(Chunk.created_at.desc(), Chunk.id.desc())\
+            .limit(safe_top_k)\
+            .all()
+        chunks_with_scores = [(c, 0.0) for c in chunks]
+
+
+    log.info(f"STEP: RETRIEVAL SUCCESS for subject {subject_id} (duration: {time.perf_counter() - start_time:.2f}s, retrieved: {len(chunks_with_scores)})")
+    return chunks_with_scores
 
 def retrieve_sequential_chunks(
     session: Session,
     subject_id: UUID,
     limit: Optional[int] = None,
-    source_filenames: Optional[List[str]] = None
+    source_filenames: Optional[List[str]] = None,
+    material_ids: Optional[List[UUID]] = None
 ) -> List[Chunk]:
     """
     Retrieve all chunks for a subject sequentially for full-document analysis (e.g. Map-Reduce).
@@ -109,16 +148,38 @@ def retrieve_sequential_chunks(
             return []
 
     fn_filter = [f for f in (source_filenames or []) if f and isinstance(f, str)]
+    
+    # Ensure material_ids are UUID objects if present
+    m_ids = []
+    if material_ids:
+        for mid in material_ids:
+            if isinstance(mid, str):
+                try: m_ids.append(UUID(mid))
+                except: pass
+            elif isinstance(mid, UUID):
+                m_ids.append(mid)
+
+    log = get_job_logger(None, "engine-retrieval-seq")
+    log.info(f"RETRIEVAL FILTERS (SEQ) | subject_id={normalized_subject_id} | material_ids={m_ids} | file_filter={fn_filter} | limit={limit}")
 
     query = session.query(Chunk).join(Document)\
         .filter(Document.subject_id == normalized_subject_id)
 
-    if fn_filter:
+    if m_ids:
+        query = query.filter(Document.material_id.in_(m_ids))
+    elif fn_filter:
         query = query.filter(Document.filename.in_(fn_filter))
+        
+    # Log SQL for diagnostic
+    from sqlalchemy.dialects import postgresql
+    compiled = query.statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    log.info(f"RETRIEVAL QUERY (SEQ): {compiled}")
 
     query = query.order_by(Chunk.created_at.asc(), Chunk.id.asc())
 
     if limit:
         query = query.limit(limit)
 
-    return query.all()
+    results = query.all()
+    log.info(f"SEQUENTIAL RETRIEVAL: Found {len(results)} chunks")
+    return results

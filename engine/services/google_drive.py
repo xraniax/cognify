@@ -1,6 +1,9 @@
 import os
 import logging
+import httplib2
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+from googleapiclient.errors import HttpError
+from google.auth.exceptions import RefreshError
 import io
 import tempfile
 import time
@@ -13,6 +16,28 @@ from .google_client import (
 )
 
 logger = logging.getLogger("engine-google-drive")
+
+def _handle_drive_error(e: Exception, context: str):
+    """Classify and log Google Drive API errors distinctly."""
+    error_str = str(e).lower()
+    
+    if isinstance(e, httplib2.ServerNotFoundError) or "unable to find the server" in error_str:
+        logger.error(f"{context} - DNS resolution failure. The container could not resolve Google's API servers. Exception: {e}")
+    elif isinstance(e, RefreshError):
+        if "invalid_grant" in error_str:
+            logger.error(f"{context} - Auth failure: invalid_grant. The refresh token or grant is expired, revoked, or malformed. Exception: {e}")
+        else:
+            logger.error(f"{context} - Credentials failure: Cannot refresh token. Exception: {e}")
+    elif isinstance(e, HttpError):
+        status = e.status_code
+        if status in (401, 403):
+            logger.error(f"{context} - Quota or Auth issue (HTTP {status}). The service account may lack permissions or exceeded quota. Exception: {e}")
+        else:
+            logger.error(f"{context} - Google API error (HTTP {status}). Exception: {e}")
+    elif "malformed" in error_str or isinstance(e, ValueError):
+        logger.error(f"{context} - Potentially malformed credentials or data. Exception: {e}")
+    else:
+        logger.exception(f"{context} - Unhandled exception")
 
 async def upload_file_to_drive(file, filename: str) -> str:
     """Read the uploaded file asynchronously and upload to Google Drive."""
@@ -50,8 +75,8 @@ async def upload_file_to_drive(file, filename: str) -> str:
     except (GoogleDriveConfigError, GoogleDriveNotConfiguredError):
         raise
     except Exception as e:
-        logger.error(f"Google Drive upload failed: {str(e)}")
-        raise RuntimeError(f"Google Drive upload failed: {str(e)}") from e
+        _handle_drive_error(e, "Google Drive upload failed")
+        raise RuntimeError(f"Google Drive upload failed: {e}") from e
 
 
 async def upload_file_to_drive_from_bytes(content: bytes, filename: str, *, request_id: str | None = None) -> str:
@@ -111,8 +136,8 @@ async def upload_file_to_drive_from_bytes(content: bytes, filename: str, *, requ
     except (GoogleDriveConfigError, GoogleDriveNotConfiguredError):
         raise
     except Exception as e:
-        logger.error(f"Google Drive upload failed: {str(e)}")
-        raise RuntimeError(f"Google Drive upload failed: {str(e)}") from e
+        _handle_drive_error(e, "Google Drive upload failed")
+        raise RuntimeError(f"Google Drive upload failed: {e}") from e
 
 def download_file_from_drive(file_id: str, *, request_id: str | None = None) -> str:
     """Download a file from Google Drive into a temporary file."""
@@ -167,5 +192,43 @@ def download_file_from_drive(file_id: str, *, request_id: str | None = None) -> 
     except (GoogleDriveConfigError, GoogleDriveNotConfiguredError):
         raise
     except Exception as e:
-        logger.error(f"Failed to download file from Drive (ID: {file_id}): {str(e)}")
-        raise RuntimeError(f"Failed to download file from Drive: {str(e)}") from e
+        _handle_drive_error(e, f"Failed to download file from Drive (ID: {file_id})")
+        raise RuntimeError(f"Failed to download file from Drive: {e}") from e
+def delete_file_from_drive(file_id: str) -> bool:
+    """Delete a file from Google Drive by ID. Returns True if successful."""
+    try:
+        service = get_drive_service()
+        service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+        logger.info(f"Deleted file from Google Drive: {file_id}")
+        return True
+    except (GoogleDriveConfigError, GoogleDriveNotConfiguredError):
+        raise
+    except Exception as e:
+        _handle_drive_error(e, f"Failed to delete file from Google Drive (ID: {file_id})")
+        return False
+
+
+def list_files_in_folder() -> list:
+    """Retrieve all files from the configured Google Drive folder."""
+    try:
+        folder_id = get_google_drive_folder_id()
+        service = get_drive_service()
+        
+        query = f"'{folder_id}' in parents and trashed = false"
+        logger.info(f"Listing files in Google Drive folder: {folder_id}")
+        
+        results = service.files().list(
+            q=query,
+            fields="files(id, name, mimeType, size, webViewLink, thumbnailLink)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
+        
+        files = results.get('files', [])
+        logger.info(f"Found {len(files)} files in Google Drive folder.")
+        return files
+    except (GoogleDriveConfigError, GoogleDriveNotConfiguredError):
+        raise
+    except Exception as e:
+        _handle_drive_error(e, "Failed to list files in Google Drive folder")
+        raise RuntimeError(f"Failed to list files in Google Drive folder: {e}") from e

@@ -105,7 +105,7 @@ async def _generate_embeddings_batch(
     return results
 
 async def embed_step_async(
-    texts: List[str], *, timeout: int = 15, retries: int = 3, request_id: Optional[str] = None
+    texts: List[str], *, timeout: int = 120, retries: int = 3, request_id: Optional[str] = None
 ) -> List[Optional[List[float]]]:
     """Async embeddings for Celery tasks. Recommended for large batches (non-blocking).
     
@@ -137,7 +137,7 @@ async def embed_step_async(
 
 
 def embed_step(
-    texts: List[str], *, timeout: int = 15, retries: int = 3, request_id: Optional[str] = None
+    texts: List[str], *, timeout: int = 120, retries: int = 3, request_id: Optional[str] = None
 ) -> List[Optional[List[float]]]:
     """Synchronous wrapper for FastAPI routes. Uses asyncio.run() in non-loop contexts.
     

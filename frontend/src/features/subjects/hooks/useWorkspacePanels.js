@@ -43,25 +43,40 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
 
     const enhancedTabs = useMemo(() => tabs.map(tab => {
         if (tab.id === 'generator') return { ...tab, isDeleted: false };
-        const exists = (materials || []).some(m => String(m.id) === String(tab.id));
-        return { ...tab, isDeleted: !exists };
+        const material = (materials || []).find(m => String(m.id) === String(tab.id));
+        return {
+            ...tab,
+            isDeleted: !material,
+            material: material || tab.material
+        };
     }), [tabs, materials]);
 
     // ── Global Tab Open Listener ──────────────────────────────────────────────
     useEffect(() => {
-        const handleOpen = (e) => {
-            const { id, type } = e.detail;
-            const material = (materials || []).find(m => String(m.id) === String(id));
-            if (!material) return;
+        const openTab = (material, id, type, page) => {
             setTabs(prev => {
-                if (prev.some(t => String(t.id) === String(id))) return prev;
-                return [...prev, { id: String(id), title: material.title, type, material }];
+                const existing = prev.find(t => String(t.id) === String(id));
+                if (existing) {
+                    return prev.map(t => String(t.id) === String(id) ? { ...t, requestedPage: page } : t);
+                }
+                return [...prev, { id: String(id), title: material.title, type, material, requestedPage: page }];
             });
             setActiveTabId(String(id));
         };
+
+        const handleOpen = async (e) => {
+            const { id, type, page } = e.detail;
+            let material = (materials || []).find(m => String(m.id) === String(id));
+            if (!material) {
+                const refreshed = await fetchMaterials().catch(() => []);
+                material = (refreshed || []).find(m => String(m.id) === String(id));
+            }
+            if (!material) return;
+            openTab(material, id, type, page);
+        };
         window.addEventListener('open-material', handleOpen);
         return () => window.removeEventListener('open-material', handleOpen);
-    }, [materials, setTabs, setActiveTabId]);
+    }, [materials, fetchMaterials, setTabs, setActiveTabId]);
 
     // ── Selection ─────────────────────────────────────────────────────────────
     const [selectedUploads, setSelectedUploads] = useState([]);
@@ -130,7 +145,35 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
             },
         });
         setIsModalOpen(true);
-    }, [fetchMaterials]);
+    }, [fetchMaterials, clearMaterialMetadata]);
+
+    const handleBulkDelete = useCallback(() => {
+        const count = selectedUploads.length;
+        if (count === 0) return;
+
+        setModalConfig({
+            title: 'Move Multiple to Trash?',
+            message: `Are you sure you want to move ${count} selected item${count !== 1 ? 's' : ''} to the trash? They can be recovered later.`,
+            type: 'warning',
+            confirmText: 'Move all to Trash',
+            onConfirm: async () => {
+                try {
+                    await MaterialService.bulkDelete(selectedUploads);
+                    selectedUploads.forEach(id => clearMaterialMetadata(id));
+                    await fetchMaterials();
+                    setSelectedUploads([]);
+                    toast.success(`${count} documents removed`);
+                } catch {
+                    toast.error('Failed to delete materials');
+                } finally {
+                    setIsModalOpen(false);
+                }
+            },
+        });
+        setIsModalOpen(true);
+    }, [selectedUploads, fetchMaterials, clearMaterialMetadata]);
+
+    const handleTrashSelected = handleBulkDelete;
 
     // ── Panel visibility ──────────────────────────────────────────────────────
     const [filePanelCollapsed, setFilePanelCollapsed] = useState(false);
@@ -168,6 +211,8 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
         setIsModalOpen,
         modalConfig,
         handleDeleteUpload,
+        handleDeleteUpload,
+        handleTrashSelected,
         // Panel visibility
         filePanelCollapsed,
         setFilePanelCollapsed,

@@ -7,9 +7,9 @@ import api, { API_URL, authFetch } from '@/services/api';
  */
 
 export const MaterialService = {
-    // Retrieval & Collections
-    getHistory: () => api.get('/materials/history'),
-    getTrash: () => api.get('/materials/trash'),
+    // Retrieval & Collections - now support pagination params
+    getHistory: (params = {}) => api.get('/materials/history', { params }),
+    getTrash: (params = {}) => api.get('/materials/trash', { params }),
     getSettings: () => api.get('/materials/settings'),
     getOne: (id) => api.get(`/materials/${id}`),
 
@@ -20,6 +20,7 @@ export const MaterialService = {
     },
     rename: (id, title) => api.patch(`/materials/${id}`, { title }),
     delete: (id) => api.delete(`/materials/${id}`),
+    bulkDelete: (ids) => api.post('/materials/bulk-delete', { ids }),
     restore: (id) => api.post(`/materials/${id}/restore`),
     permanentDelete: (id) => api.delete(`/materials/${id}/permanent`),
     emptyTrash: () => api.delete('/materials/trash'),
@@ -51,6 +52,10 @@ export const MaterialService = {
     sync: (id, signal) => api.get(`/materials/${id}/sync`, { signal }),
 
     chat: (materialIds, question) => api.post('/materials/chat-combined', { materialIds, question }),
+
+    unifiedChat: (subjectId, question, history, materialIds = []) => 
+        api.post('/chat', { subjectId, question, conversation_history: history, materialIds }),
+
 
     /**
      * streamMaterial — Standardized cancellable async primitive for AI streams.
@@ -97,8 +102,15 @@ export const MaterialService = {
 
                         try {
                             const parsed = JSON.parse(jsonStr);
-                            if (parsed.chunk) onChunk(parsed.chunk);
-                            if (parsed.is_final) {
+                            const status = String(parsed?.status || '').toUpperCase();
+                            const isTerminalStatus = status === 'SUCCESS' || status === 'FAILURE' || status === 'REVOKED';
+                            const isContentChunk = parsed.is_final || status === 'SUCCESS' || status === 'FAILURE';
+
+                            if (parsed.chunk && isContentChunk) onChunk(parsed.chunk);
+
+                            // Defensive terminal detection:
+                            // some stream producers may send terminal statuses even if is_final is omitted.
+                            if (parsed.is_final || isTerminalStatus) {
                                 onComplete();
                                 return;
                             }

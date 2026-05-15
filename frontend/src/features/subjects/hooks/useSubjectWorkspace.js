@@ -50,7 +50,11 @@ export const useSubjectWorkspace = (subjectId) => {
     const panels = useWorkspacePanels({ subjectId, materials });
 
     // 2. Chat
-    const chat = useWorkspaceChat({ uploads, selectedUploads: panels.selectedUploads });
+    const chat = useWorkspaceChat({ 
+        subjectId: normalizedId, 
+        selectedUploads: panels.selectedUploads 
+    });
+
 
     // 3. Generation Control
     // Holds the user's selected generator mode ('summary', 'flashcards', 'mock_exam')
@@ -103,6 +107,7 @@ export const useSubjectWorkspace = (subjectId) => {
     const jobProgress = materialGen.jobProgress;
     const retryGeneration = materialGen.retryGeneration;
     const generationStartTime = materialGen.generationStartTime;
+    const stopGeneration = materialGen.stopGenerationMaterial;
 
     // ── Unified API Surface for SubjectDetail.jsx ─────────────────────────────
     return {
@@ -118,5 +123,8 @@ export const useSubjectWorkspace = (subjectId) => {
         handleGenerate,
         retryGeneration,
         generationStartTime,
+        generatingMaterialId: materialGen.generatingMaterialId,
+        streamProgress: materialGen.streamProgress,
+        stopMaterialGeneration: stopGeneration,
     };
 };

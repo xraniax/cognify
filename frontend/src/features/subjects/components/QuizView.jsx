@@ -124,7 +124,6 @@ const mapQuestion = (q) => {
     // 2. Index-based: correctAnswers (array of indices), correctIndex
     let correctAnswer = q.correct_answer ?? q.answer ?? q.correctAnswer ?? '';
 
-    // If we have correctAnswers as an array of indices, map to the option value
     if (Array.isArray(q.correctAnswers) && q.correctAnswers.length > 0 && options.length > 0) {
         const idx = parseInt(q.correctAnswers[0], 10);
         if (!isNaN(idx) && options[idx]) {
@@ -152,7 +151,6 @@ const mapQuestion = (q) => {
 const extractQuizQuestions = (data) => {
     if (!data) return [];
 
-    // 0. String handling
     if (typeof data === 'string') {
         try {
             const parsed = JSON.parse(data);
@@ -169,7 +167,6 @@ const extractQuizQuestions = (data) => {
 
     if (Array.isArray(data)) return data.map(mapQuestion);
 
-    // 2. Contains standard properties
     const arrayField =
         data.questions ||
         data.quiz ||
@@ -294,7 +291,7 @@ const QuestionCard = ({ question, selectedOption, isSubmitted, isExpanded, onSel
 };
 
 // ---------------------------------------------------------------------------
-// Shared results screen
+// Results screen — Premium Polish version
 // ---------------------------------------------------------------------------
 const ResultsScreen = ({ score, total, onReset }) => {
     const percentage = Math.round((score / total) * 100);
@@ -302,47 +299,49 @@ const ResultsScreen = ({ score, total, onReset }) => {
 
     return (
         <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="max-w-2xl mx-auto py-12 px-6"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="max-w-2xl mx-auto py-16 px-6"
         >
             {isPerfect && <ConfettiComponent />}
-            <div className="bg-white rounded-[2rem] shadow-2xl shadow-indigo-100/50 border border-gray-100 p-10 text-center relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 to-purple-500" />
-
+            <div className="rounded-[4rem] border-8 border-white bg-white shadow-2xl p-12 text-center relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-full h-4 bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500" />
+                
                 <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: "spring", damping: 12 }}
-                    className="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-6"
+                    initial={{ rotate: -20, scale: 0 }}
+                    animate={{ rotate: 0, scale: 1 }}
+                    transition={{ type: "spring", damping: 10, stiffness: 200 }}
+                    className="w-32 h-32 bg-indigo-50 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 shadow-inner group-hover:rotate-6 transition-transform"
                 >
-                    <Trophy className={cn("w-12 h-12", isPerfect ? "text-amber-500" : "text-indigo-500")} />
+                    <Trophy className={cn("w-16 h-16", isPerfect ? "text-amber-500" : "text-indigo-600")} />
                 </motion.div>
-
-                <h2 className="text-3xl font-black text-gray-900 mb-2">Quiz Complete!</h2>
-                <p className="text-gray-500 mb-8 font-medium">
-                    {isPerfect ? "Flawless victory! You knew every single answer." : "You've mastered some new knowledge today."}
+                
+                <h2 className="text-4xl font-black text-indigo-950 mb-3 tracking-tight">Quiz Complete!</h2>
+                <p className="text-gray-400 font-bold uppercase tracking-[0.2em] text-xs mb-10">
+                    {isPerfect ? "Absolute Legend! You mastered it all." : "Great job! Your knowledge is growing fast."}
                 </p>
 
-                <div className="grid grid-cols-2 gap-4 mb-10">
-                    <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100 mt-2">
-                        <div className="text-4xl font-black text-indigo-600 mb-1">{score}/{total}</div>
-                        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">Correct Answers</div>
+                <div className="grid grid-cols-2 gap-6 mb-12">
+                    <div className="bg-indigo-50/50 rounded-[2.5rem] p-8 border-4 border-white shadow-sm transition-transform hover:scale-105">
+                        <div className="text-5xl font-black text-indigo-600 mb-2">{score}/{total}</div>
+                        <div className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Mastered</div>
                     </div>
-                    <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100 mt-2 relative overflow-hidden">
-                        {isPerfect && <div className="absolute inset-0 bg-gradient-to-r from-amber-200/20 to-orange-200/20 animate-pulse" />}
-                        <div className="text-4xl font-black text-purple-600 mb-1 relative z-10">{percentage}%</div>
-                        <div className="text-xs font-bold text-gray-400 uppercase tracking-widest relative z-10">Overall Score</div>
+                    <div className="bg-pink-50/50 rounded-[2.5rem] p-8 border-4 border-white shadow-sm transition-transform hover:scale-105 relative overflow-hidden">
+                        {isPerfect && <div className="absolute inset-0 bg-white/20 animate-pulse" />}
+                        <div className="text-5xl font-black text-pink-600 mb-2 relative z-10">{percentage}%</div>
+                        <div className="text-[10px] font-black text-pink-300 uppercase tracking-widest relative z-10">Success Rate</div>
                     </div>
                 </div>
 
-                <button
-                    onClick={onReset}
-                    className="flex items-center gap-2 px-8 py-4 bg-gray-900 text-white rounded-2xl font-bold hover:bg-black transition-all mx-auto shadow-lg shadow-gray-200"
-                >
-                    <RotateCcw className="w-5 h-5" />
-                    Try Again
-                </button>
+                <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                    <button
+                        onClick={onReset}
+                        className="flex items-center justify-center gap-3 px-10 py-5 bg-indigo-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200 hover:scale-105 active:scale-95"
+                    >
+                        <RotateCcw className="w-5 h-5" />
+                        Retry Mission
+                    </button>
+                </div>
             </div>
         </motion.div>
     );
@@ -409,13 +408,13 @@ const QuizHeader = ({ current, total, streak, muted, setMuted, isExpanded }) => 
                     </motion.div>
                 )}
             </AnimatePresence>
-            <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-4 w-full bg-white rounded-full overflow-hidden shadow-inner border-2 border-indigo-50 p-1">
                 <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${progress}%` }}
                     className={cn(
-                        "h-full transition-colors duration-500",
-                        streak >= 3 ? "bg-gradient-to-r from-orange-400 to-rose-500" : "bg-gradient-to-r from-indigo-500 to-purple-500"
+                        "h-full rounded-full transition-colors duration-500 shadow-sm",
+                        streak >= 3 ? "bg-gradient-to-r from-orange-400 to-rose-500" : "bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"
                     )}
                 />
             </div>
@@ -487,7 +486,7 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
     // Load persisted session state once at mount
     const [initialState] = useState(() => {
         try {
-            const raw = localStorage.getItem(`cognify_adaptive_quiz_${subjectId}`);
+            const raw = localStorage.getItem(storageKey);
             return raw ? JSON.parse(raw) : {};
         } catch {
             return {};
@@ -765,7 +764,7 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
                     { isCorrect: lastCorrect, responseTime }
                 );
             } catch {
-                // Submission failed — proceed to results anyway
+                // proceed anyway
             } finally {
                 setLoading(false);
                 setQuestionCount(next);
@@ -1010,7 +1009,6 @@ const StaticQuizView = ({ questions, isExpanded, subjectId, materialId, quizData
         enqueueEvent(sessionRef.current.sessionId, ev);
     }, [showResults, score, streak]); // eslint-disable-line react-hooks/exhaustive-deps -- questions.length/startedAtRef stable; completedEmittedRef prevents re-emission
 
-    // Persist state
     useEffect(() => {
         if (questions.length > 0) {
             localStorage.setItem(storageKey, JSON.stringify({
@@ -1230,6 +1228,7 @@ const StaticQuizView = ({ questions, isExpanded, subjectId, materialId, quizData
             <QuizDebugPanel sessionRef={sessionRef} eventQueueRef={eventQueueRef} />
         </div>
     );
+
 };
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Reorder, AnimatePresence, motion } from 'framer-motion';
-import { X, Pin, FileText, Sparkles, BrainCircuit, Layers, CheckCircle2, Trash2, BarChart2, Maximize2 } from 'lucide-react';
+import { X, Pin, FileText, Sparkles, BrainCircuit, Layers, CheckCircle2, Trash2, BarChart2, Maximize2, Cloud } from 'lucide-react';
 import { morphIn } from '@/utils/motion';
 
 // ── Tab type → visual identity ──────────────────────────────
@@ -64,21 +64,22 @@ const WorkspaceTabs = ({ tabs, setTabs, activeTabId, setActiveTabId, renderTabCo
                             {tabs.map((tab) => {
                                 const isActive = activeTabId === tab.id;
                                 const cfg      = getTabConfig(tab);
-                                const Icon     = cfg.icon;
+                                const isDrive  = tab.material?.file_path?.includes("drive.google.com");
+                                const Icon     = isDrive ? Cloud : cfg.icon;
 
                                 return (
                                     <Reorder.Item
                                         key={tab.id}
                                         value={tab}
-                                        className="relative flex items-center gap-1.5 px-3 py-2 rounded-t-xl cursor-pointer select-none flex-shrink-0 group"
+                                        className="relative flex items-center gap-1.5 px-3 py-2 rounded-t-xl cursor-pointer select-none flex-shrink-0 group hover-lift"
                                         style={{
                                             background: isActive ? 'var(--c-surface)' : 'transparent',
-                                            borderTop:    isActive ? '1.5px solid var(--c-border-soft)' : '1.5px solid transparent',
-                                            borderLeft:   isActive ? '1.5px solid var(--c-border-soft)' : '1.5px solid transparent',
-                                            borderRight:  isActive ? '1.5px solid var(--c-border-soft)' : '1.5px solid transparent',
-                                            boxShadow:    isActive ? 'var(--shadow-xs)' : 'none',
+                                            borderTop:    isActive ? '1.5px solid rgba(124, 92, 252, 0.1)' : '1.5px solid transparent',
+                                            borderLeft:   isActive ? '1.5px solid rgba(124, 92, 252, 0.1)' : '1.5px solid transparent',
+                                            borderRight:  isActive ? '1.5px solid rgba(124, 92, 252, 0.1)' : '1.5px solid transparent',
+                                            boxShadow:    isActive ? '0 -4px 20px rgba(124, 92, 252, 0.05), var(--shadow-sm)' : 'none',
                                             transform:    isActive ? 'translateY(1px)' : 'translateY(0)',
-                                            transition: 'all 0.15s',
+                                            transition: 'all 0.25s var(--ease-out)',
                                         }}
                                         onClick={() => setActiveTabId(tab.id)}
                                     >
@@ -86,16 +87,20 @@ const WorkspaceTabs = ({ tabs, setTabs, activeTabId, setActiveTabId, renderTabCo
                                         {isActive && (
                                             <motion.div
                                                 layoutId={`tab-accent-${tab.id}`}
-                                                className="absolute top-0 left-2 right-2 h-[2.5px] rounded-full"
-                                                style={{ background: cfg.grad }}
+                                                className="absolute top-0 left-2 right-2 h-[3px] rounded-full"
+                                                style={{ background: cfg.grad, boxShadow: `0 2px 8px ${cfg.color}` }}
                                                 transition={{ type: 'spring', damping: 28, stiffness: 280 }}
                                             />
+                                        )}
+                                        {/* Glow overlay underneath */}
+                                        {isActive && (
+                                            <div className="glow-overlay" style={{ '--glow-x': '50%', '--glow-y': '-10px', '--glow-opacity': '0.6' }} />
                                         )}
 
                                         {/* Icon */}
                                         <div
                                             className="flex-shrink-0 w-4 h-4 flex items-center justify-center"
-                                            style={{ color: isActive ? cfg.color : 'var(--c-text-placeholder)' }}
+                                            style={{ color: isActive ? (isDrive ? "var(--c-sky)" : cfg.color) : 'var(--c-text-placeholder)' }}
                                         >
                                             <Icon className="w-3.5 h-3.5" />
                                         </div>
@@ -104,12 +109,13 @@ const WorkspaceTabs = ({ tabs, setTabs, activeTabId, setActiveTabId, renderTabCo
                                         <span
                                             className="text-[11px] max-w-[120px] truncate transition-all"
                                             style={{
-                                                color:      isActive ? 'var(--c-text)' : 'var(--c-text-muted)',
+                                                color:      tab.isDeleted ? 'var(--c-danger)' : (isActive ? 'var(--c-text)' : 'var(--c-text-muted)'),
                                                 fontWeight: isActive ? 600 : 500,
                                                 textDecoration: tab.isDeleted ? 'line-through' : 'none',
-                                                opacity: tab.isDeleted ? 0.65 : 1,
+                                                textDecorationColor: tab.isDeleted ? 'var(--c-danger)' : 'inherit',
+                                                opacity: tab.isDeleted ? 0.85 : 1,
                                             }}
-                                            title={tab.isDeleted ? 'This file has been deleted' : tab.title}
+                                            title={tab.isDeleted ? 'This file has been moved to trash. Visit Trash to recover it.' : tab.title}
                                         >
                                             {tab.title}
                                         </span>
@@ -119,7 +125,7 @@ const WorkspaceTabs = ({ tabs, setTabs, activeTabId, setActiveTabId, renderTabCo
                                             {tab.pinned ? (
                                                 <Pin
                                                     className="w-2.5 h-2.5"
-                                                    style={{ color: isActive ? cfg.color : 'var(--c-text-placeholder)' }}
+                                                    style={{ color: isActive ? (isDrive ? 'var(--c-sky)' : cfg.color) : 'var(--c-text-placeholder)' }}
                                                 />
                                             ) : (
                                                 <motion.button

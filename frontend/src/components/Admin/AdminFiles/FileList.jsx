@@ -1,21 +1,22 @@
-import React, { useState } from 'react';
-import { 
+import React, { useState, useEffect } from 'react';
+import {
     File as FileIcon, Trash2, User, Book, Eye, Search,
-    Filter, LayoutGrid, LayoutList, CheckSquare, Square, 
-    Download, RefreshCw, X
+    Filter, LayoutGrid, LayoutList, CheckSquare, Square,
+    Download, RefreshCw, X, ChevronDown
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatBytes } from '@/utils/format';
 
-const formatBytes = (bytes) => {
-    if (!bytes || bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
 
-const FileList = ({ files, onDelete, filters, setFilters, settings, selectedIds, setSelectedIds, onBulkDelete }) => {
-    const [viewMode, setViewMode] = useState('table'); // 'table' or 'grid'
+const PAGE_SIZE = 5;
+
+const FileList = ({ files, onDelete, onDownload, filters, setFilters, settings, selectedIds, setSelectedIds, onBulkDelete }) => {
+    const [viewMode, setViewMode] = useState('table');
+    const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+    useEffect(() => { setVisibleCount(PAGE_SIZE); }, [files]);
+
+    const visibleFiles = files.slice(0, visibleCount);
 
     const handleSelectAll = () => {
         if (selectedIds.size === files.length) {
@@ -78,7 +79,7 @@ const FileList = ({ files, onDelete, filters, setFilters, settings, selectedIds,
                     {/* Hover Actions */}
                     <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 w-full justify-end bg-gradient-to-b from-white/90 to-transparent pb-10 pointer-events-none">
                         <div className="pointer-events-auto flex gap-1 bg-white/90 backdrop-blur-sm shadow-sm border border-gray-100 rounded-xl p-1 mr-8">
-                            <button className="p-2 text-gray-400 hover:text-indigo-500 rounded-lg transition-colors hover:bg-indigo-50" onClick={(e) => e.stopPropagation()}>
+                            <button className="p-2 text-gray-400 hover:text-indigo-500 rounded-lg transition-colors hover:bg-indigo-50" onClick={(e) => { e.stopPropagation(); onDownload(file.id, file.original_name); }}>
                                 <Download className="w-4 h-4" />
                             </button>
                             <button className="p-2 text-gray-400 hover:text-red-500 rounded-lg transition-colors hover:bg-red-50" onClick={(e) => { e.stopPropagation(); onDelete(file.id, file.original_name); }}>
@@ -217,7 +218,7 @@ const FileList = ({ files, onDelete, filters, setFilters, settings, selectedIds,
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-50">
-                                {files.map(file => {
+                                {visibleFiles.map(file => {
                                     const isSelected = selectedIds.has(file.id);
                                     return (
                                         <tr key={file.id} className={`transition-colors group ${isSelected ? 'bg-indigo-50/40' : 'hover:bg-gray-50/50'}`}>
@@ -267,7 +268,10 @@ const FileList = ({ files, onDelete, filters, setFilters, settings, selectedIds,
                                             </td>
                                             <td className="px-6 py-4">
                                                 <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button className="p-2 rounded-xl text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 transition-all">
+                                                    <button 
+                                                        onClick={() => onDownload(file.id, file.original_name)}
+                                                        className="p-2 rounded-xl text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
+                                                    >
                                                         <Download className="w-4 h-4" />
                                                     </button>
                                                     <button 
@@ -287,7 +291,20 @@ const FileList = ({ files, onDelete, filters, setFilters, settings, selectedIds,
                 </div>
             ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {files.map(file => <FileCard key={file.id} file={file} />)}
+                    {visibleFiles.map(file => <FileCard key={file.id} file={file} />)}
+                </div>
+            )}
+
+            {visibleCount < files.length && (
+                <div className="flex flex-col items-center gap-2 mt-4">
+                    <button
+                        onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
+                        className="px-8 py-3 bg-white border border-gray-100 rounded-full text-sm font-black text-gray-600 hover:text-indigo-600 hover:border-indigo-100 hover:shadow-lg hover:shadow-indigo-50/50 transition-all flex items-center gap-2"
+                    >
+                        <ChevronDown className="w-4 h-4" />
+                        Show {Math.min(PAGE_SIZE, files.length - visibleCount)} more
+                        <span className="text-gray-400 font-bold">({files.length - visibleCount} remaining)</span>
+                    </button>
                 </div>
             )}
 

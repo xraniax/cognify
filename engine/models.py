@@ -8,10 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
-try:
-    from database import Base
-except ImportError:
-    from .database import Base
+from database import Base
 
 
 class Document(Base):
@@ -21,7 +18,9 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id"), nullable=False, index=True)
+    material_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     filename = Column(String, nullable=False)
+
     file_path = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -54,6 +53,17 @@ class Chunk(Base):
     document = relationship("Document", back_populates="chunks")
 
 class Subject(Base):
+    """Links to app `subjects` table."""
     __tablename__ = "subjects"
-
     id = Column(UUID(as_uuid=True), primary_key=True)
+    name = Column(String)
+
+class Material(Base):
+    """Links to app `materials` table. Used to update generation status."""
+    __tablename__ = "materials"
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id"))
+    status = Column(String)
+    ai_generated_content = Column(Text)  # JSON-encoded string in Postgres
+    completed_at = Column(DateTime(timezone=True))
+    processed_at = Column(DateTime(timezone=True))

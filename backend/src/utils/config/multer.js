@@ -1,42 +1,44 @@
 import multer from 'multer';
 import path from 'path';
 import SettingsService from '../../services/settings.service.js';
+import QuotaService from '../../services/quota.service.js';
+import AlertService from '../../services/alert.service.js';
 
 import fs from 'fs';
 
 // Use shared upload path in containers; local dev can override via PDF_STORAGE_PATH.
-const destPath = process.env.PDF_STORAGE_PATH || '/app/data/uploads';
+const destPath = process.env.PDF_STORAGE_PATH || path.resolve('uploads');
 // Ensure the directory exists (crucial for freshly mounted NFS volumes or fresh clones)
 fs.mkdirSync(destPath, { recursive: true });
 
 /**
  * Multer disk storage configuration.
- * Files are saved to the defined destination directory with a timestamped, unique filename.
+ * Files are persisted to disk to act as a fallback, enabling admin download
+ * and correct metadata passing to processing pipelines.
  */
 const storage = multer.diskStorage({
-  destination: destPath,
-  filename: (req, file, cb) => {
-    // Sanitize the original filename to prevent directory traversal
-    const safeName = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
-    cb(null, `${file.fieldname}-${Date.now()}-${safeName}`);
+  destination: function (req, file, cb) {
+    cb(null, destPath);
   },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
 });
 
-const ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg']);
-
 /**
- * File filter: only allow supported document files.
+ * File filter: only allow supported document formats based on system rules.
  */
 const documentOnlyFilter = (req, file, cb) => {
-  const extOk = ALLOWED_EXTENSIONS.has(path.extname(file.originalname).toLowerCase());
+  const allowed = req.allowedMimeTypes || ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+  const mimeOk = allowed.includes(file.mimetype);
 
-  if (extOk) {
-    cb(null, true); // Accept file
+  if (mimeOk) {
+    cb(null, true);
   } else {
-    // Pass an error with a status code so errorHandler can render it correctly
-    const err = new Error(`Only supported document formats are allowed: ${[...ALLOWED_EXTENSIONS].join(', ')}.`);
+    const err = new Error(`File type prohibited. Allowed formats: ${allowed.join(', ')}.`);
     err.statusCode = 400;
-    cb(err, false); // Reject file
+    cb(err, false);
   }
 };
 
@@ -46,7 +48,35 @@ const documentOnlyFilter = (req, file, cb) => {
 export const documentUpload = async (req, res, next) => {
   try {
     const controls = await SettingsService.getStorageControls();
-    const maxSizeBytes = (controls?.max_file_size_mb || 10) * 1024 * 1024;
+    
+    // 1. Single File Size Limit (for that user or app default)
+    const userMaxFileSizeMb = req.user?.settings?.max_file_size_mb;
+    const effectiveLimitMb = userMaxFileSizeMb || controls?.max_file_size_mb || 10;
+    const maxSizeBytes = effectiveLimitMb * 1024 * 1024;
+    
+    // Fail Fast: Check Content-Length header before receiving any bytes
+    const contentLength = parseInt(req.headers['content-length'] || '0');
+    if (contentLength > 0) {
+      // Check Single File Limit
+      if (contentLength > maxSizeBytes) {
+        const errorMsg = `File too large (header). Max allowed size is ${effectiveLimitMb}MB.`;
+        return res.status(400).json({ status: 'error', message: errorMsg });
+      }
+      
+      // Check Total User Quota (Fail fast)
+      try {
+        await QuotaService.checkUploadAllowance(req.user.id, contentLength);
+      } catch (quotaErr) {
+        return res.status(quotaErr.statusCode || 403).json({ 
+          status: 'error', 
+          message: quotaErr.message,
+          code: quotaErr.code 
+        });
+      }
+    }
+
+    // Pass allowed types to the filter via the request object
+    req.allowedMimeTypes = controls?.allowed_types || ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 
     const upload = multer({
       storage,
@@ -54,15 +84,35 @@ export const documentUpload = async (req, res, next) => {
       limits: { fileSize: maxSizeBytes }
     }).single('file');
 
-    upload(req, res, function (err) {
+    upload(req, res, async function (err) {
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
-        const customErr = new Error(`File too large. Max allowed size is ${controls.max_file_size_mb}MB.`);
-        customErr.statusCode = 400;
-        return next(customErr);
+        const errorMsg = `File too large. Max allowed size is ${effectiveLimitMb}MB.`;
+        await AlertService.triggerUploadFailure(req.user?.id, req.file?.originalname || 'Unknown File', errorMsg);
+        return res.status(400).json({ status: 'error', message: errorMsg });
       } else if (err) {
+        await AlertService.triggerUploadFailure(req.user?.id, req.file?.originalname || 'Unknown File', err.message);
         return next(err);
       }
-      next();
+
+      if (!req.file) {
+        return next(); // No file uploaded, might be a text-only material
+      }
+
+      // Final Quota Check (Verify with actual received size)
+      try {
+        await QuotaService.checkUploadAllowance(req.user.id, req.file.size);
+        next();
+      } catch (quotaErr) {
+        // Clean up the uploaded file if quota check fails at the final step
+        if (req.file.path && fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+        return res.status(quotaErr.statusCode || 403).json({ 
+          status: 'error', 
+          message: quotaErr.message,
+          code: quotaErr.code 
+        });
+      }
     });
   } catch (error) {
     next(error);

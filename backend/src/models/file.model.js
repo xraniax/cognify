@@ -16,6 +16,19 @@ class File {
     }
 
     /**
+     * Track a new file from Google Drive.
+     */
+    static async create_with_drive(userId, subjectId, materialId, filename, originalName, mimeType, sizeBytes, path, driveFileId) {
+        const result = await query(
+            `INSERT INTO files (user_id, subject_id, material_id, filename, original_name, mime_type, size_bytes, path, drive_file_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING *`,
+            [userId, subjectId, materialId, filename, originalName, mimeType, sizeBytes, path, driveFileId]
+        );
+        return result.rows[0];
+    }
+
+    /**
      * Find a file by ID.
      */
     static async findById(id) {
@@ -99,6 +112,50 @@ class File {
     static async findByUserId(userId) {
         const result = await query('SELECT * FROM files WHERE user_id = $1', [userId]);
         return result.rows;
+    }
+
+    /**
+     * Update the drive_file_id for an existing file (e.g., after async upload to Drive).
+     */
+    static async updateDriveFileId(fileId, driveFileId) {
+        const result = await query(
+            'UPDATE files SET drive_file_id = $2 WHERE id = $1 RETURNING *',
+            [fileId, driveFileId]
+        );
+        return result.rows[0];
+    }
+
+    /**
+     * Get total count of files for pagination.
+     */
+    static async getTotalCount(filters = {}) {
+        let sql = 'SELECT COUNT(*)::int as count FROM files f WHERE 1=1';
+        const params = [];
+        let idx = 1;
+
+        if (filters.userId) {
+            sql += ` AND f.user_id::text ILIKE '%' || $${idx} || '%'`;
+            params.push(filters.userId);
+            idx++;
+        }
+        if (filters.subjectId) {
+            sql += ` AND f.subject_id::text ILIKE '%' || $${idx} || '%'`;
+            params.push(filters.subjectId);
+            idx++;
+        }
+        if (filters.minSizeMb) {
+            sql += ` AND f.size_bytes >= $${idx}`;
+            params.push(filters.minSizeMb * 1024 * 1024);
+            idx++;
+        }
+        if (filters.mimeType) {
+            sql += ` AND f.mime_type = $${idx}`;
+            params.push(filters.mimeType);
+            idx++;
+        }
+
+        const result = await query(sql, params);
+        return result.rows[0].count;
     }
 
     /**

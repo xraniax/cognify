@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, Layout, FileText, CheckCircle2, RotateCcw, BrainCircuit, Minus, Plus, ClipboardList, ArrowLeft } from 'lucide-react';
+import { Sparkles, Layout, FileText, CheckCircle2, RotateCcw, BrainCircuit, Minus, Plus, ClipboardList, ArrowLeft, Info, HelpCircle, Flame, Volume2, VolumeX, Keyboard, Key, Zap, Brain, Target, Heart, GraduationCap, Lightbulb } from 'lucide-react';
 import Skeleton from '@/components/ui/Skeleton';
 import GenerationLoadingOverlay from '@/components/ui/GenerationLoadingOverlay';
 import SummaryView from './SummaryView';
 import QuizView from './QuizView';
 import FlashcardsView from './FlashcardsView';
+import ExamView from './ExamView';
+import { extractExamData } from '@/features/subjects/utils/examUtils';
 
 // ─── Static config ────────────────────────────────────────────────────────────
 
@@ -16,6 +18,7 @@ const MATERIAL_TYPES = [
 ];
 
 const DIFFICULTIES = [
+    { id: 'adaptive', label: 'Adaptive', badge: 'NEW' },
     { id: 'Intro', label: 'Beginner'     },
     { id: 'Inter', label: 'Intermediate' },
     { id: 'Adv',   label: 'Advanced'     },
@@ -29,6 +32,48 @@ const EXAM_QUESTION_TYPES = [
     { id: 'fill_blank',      label: 'Fill in the Blank' },
     { id: 'matching',        label: 'Matching'        },
 ];
+
+const SUMMARY_MODES = [
+    { id: 'key_concepts', title: 'Key Concepts', icon: Key, description: 'Essential points and definitions', color: 'bg-blue-50 text-blue-600 border-blue-100' },
+    { id: 'concise_summary', title: 'Concise Summary', icon: Zap, description: 'Balanced compression of content', color: 'bg-amber-50 text-amber-600 border-amber-100' },
+    { id: 'detailed_explanation', title: 'Detailed Explanation', icon: Brain, description: 'Step-by-step reasoning and context', color: 'bg-purple-50 text-purple-600 border-purple-100' },
+    { id: 'exam_ready_notes', title: 'Exam Ready Notes', icon: Target, description: 'Optimized for rapid revision', color: 'bg-rose-50 text-rose-600 border-rose-100' },
+    { id: 'teach_me_mode', title: 'Teach Me Mode', icon: Heart, description: 'Analogies and simple language', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
+];
+
+const playSuccessSound = () => {
+    // Attempt to play the MP3 first
+    const audio = new Audio('/sounds/success.mp3');
+    audio.volume = 0.4;
+    
+    audio.play().catch(() => {
+        // Fallback: Synthesize a soft "success" tone using Web Audio API
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.type = 'sine';
+            const now = ctx.currentTime;
+            
+            // "Ding" sound: 880Hz (A5) -> 1320Hz (E6)
+            osc.frequency.setValueAtTime(880, now);
+            osc.frequency.exponentialRampToValueAtTime(1320, now + 0.1);
+            
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+
+            osc.start(now);
+            osc.stop(now + 0.5);
+            console.log('[Audio] Fallback synthesized tone played');
+        } catch (e) {
+            console.warn('[Audio] Fallback also failed:', e);
+        }
+    });
+};
 
 const clamp = (val, min, max) => Math.min(max, Math.max(min, val));
 
@@ -47,44 +92,75 @@ const MaterialsPanel = ({
     isExpanded,
     onRetry,
     generationStartTime,
+    streamProgress,
+    onStop,
 }) => {
-    const [count,      setCount]      = useState(10);
-    const [difficulty, setDifficulty] = useState('Inter');
-    const [examTypes,  setExamTypes]  = useState(['single_choice', 'multiple_select', 'short_answer']);
-    const [timeLimit,  setTimeLimit]  = useState(30);
-    const [topics,     setTopics]     = useState('');
+    // Merged state using redis-fix pattern but individual variables for legacy compatibility where needed or just full object
+    const [genOptions, setGenOptions] = useState({
+        count: 10,
+        difficulty: 'adaptive',
+        summary_mode: 'concise_summary',
+        topics: '',
+        examTypes: ['single_choice', 'multiple_select', 'short_answer'],
+        timeLimit: 30,
+        cardType: 'mixed'
+    });
+
     const [showAlert,  setShowAlert]  = useState(false);
     const alertTimer = useRef(null);
 
-    const showCount    = genType !== 'summary';
+    const isAdaptiveQuiz = genType === 'quiz' && genOptions.difficulty === 'adaptive';
+    const showCount    = genType !== 'summary' && !isAdaptiveQuiz;
     const showExamOpts = genType === 'mock_exam';
     const countLabel   = genType === 'flashcards' ? 'Cards' : 'Questions';
     const activeType   = MATERIAL_TYPES.find(t => t.id === genType) || MATERIAL_TYPES[0];
 
     const displayMessage = jobProgress?.message
-        || `Generating ${count} ${genType.replace('_', ' ')}…`;
+        || (isAdaptiveQuiz ? "Preparing Adaptive Session..." : `Generating ${genOptions.count} ${genType.replace('_', ' ')}…`);
 
     const onGenerate = () => {
         if (isGenerating) return;
+        // Adaptive quizzes don't strictly require sources if they can pull from subject knowledge.
+        if (selectedCount === 0 && !isAdaptiveQuiz) {
+            setShowAlert(true);
+            clearTimeout(alertTimer.current);
+            alertTimer.current = setTimeout(() => setShowAlert(false), 3500);
+            return;
+        }
         setShowAlert(false);
-        handleGenerate({
-            count,
-            difficulty,
-            examTypes,
-            timeLimit,
-            topics,
-            topic: '',
-        });
+        if (genType === 'mock_exam') {
+            const payload = { ...genOptions };
+            console.log("[EXAM SUBMIT]", payload);
+        }
+        // Workspace generator already tracks genType in state; only pass options.
+        handleGenerate(genOptions);
     };
+
+    const lastSuccessfulGenRef = useRef(null);
+
+    useEffect(() => {
+        // We only trigger if:
+        // 1. Generation JUST finished (isGenerating: true -> false)
+        // 2. We have a valid result
+        // 3. This specific result hasn't been notified yet
+        if (!isGenerating && genResult && genResult !== lastSuccessfulGenRef.current && generationStartTime) {
+            const duration = Date.now() - generationStartTime;
+            if (duration > 1500) { 
+                playSuccessSound();
+                lastSuccessfulGenRef.current = genResult;
+            }
+        }
+    }, [isGenerating, genResult, generationStartTime]);
 
     useEffect(() => () => clearTimeout(alertTimer.current), []);
 
     const toggleExamType = (id) => {
-        setExamTypes(prev =>
-            prev.includes(id)
-                ? prev.length > 1 ? prev.filter(t => t !== id) : prev
-                : [...prev, id]
-        );
+        setGenOptions(prev => {
+            const next = prev.examTypes.includes(id)
+                ? prev.examTypes.length > 1 ? prev.examTypes.filter(t => t !== id) : prev.examTypes
+                : [...prev.examTypes, id];
+            return { ...prev, examTypes: next };
+        });
     };
 
     return (
@@ -151,49 +227,95 @@ const MaterialsPanel = ({
                         </div>
                     </div>
 
-                    {/* Difficulty */}
+                    {/* Difficulty or Mode */}
                     <div>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2.5">Difficulty</p>
-                        <div className="flex gap-1.5">
-                            {DIFFICULTIES.map(({ id, label }) => (
-                                <button
-                                    key={id}
-                                    onClick={() => setDifficulty(id)}
-                                    className={`flex-1 py-2 rounded-xl text-[11px] font-bold border-2 transition-all ${
-                                        difficulty === id
-                                            ? 'bg-purple-600 border-purple-600 text-white shadow-sm'
-                                            : 'bg-white border-gray-100 text-gray-500 hover:border-purple-200'
-                                    }`}
-                                >
-                                    {label}
-                                </button>
-                            ))}
-                        </div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2.5">
+                            {genType === 'summary' ? 'Summary Mode' : 'Difficulty'}
+                        </p>
+                        
+                        {genType === 'summary' ? (
+                            <div className="grid grid-cols-1 gap-2.5">
+                                {SUMMARY_MODES.map(({ id, title, icon: Icon, description, color }) => {
+                                    const active = genOptions.summary_mode === id;
+                                    return (
+                                        <button
+                                            key={id}
+                                            onClick={() => setGenOptions(prev => ({ ...prev, summary_mode: id }))}
+                                            className={`group flex items-center gap-4 p-4 rounded-[1.5rem] border-2 text-left transition-all duration-300 ${
+                                                active
+                                                    ? 'border-indigo-400 bg-indigo-50 shadow-lg shadow-indigo-200/20'
+                                                    : 'border-gray-100 bg-white hover:border-indigo-200 hover:shadow-md'
+                                            }`}
+                                        >
+                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 ${
+                                                active 
+                                                    ? `bg-indigo-600 text-white scale-110 shadow-lg shadow-indigo-200` 
+                                                    : `bg-gray-50 text-gray-400 group-hover:${color.split(' ')[0]} group-hover:${color.split(' ')[1]}`
+                                            }`}>
+                                                <Icon className="w-5 h-5" />
+                                            </div>
+                                            <div className="flex-1">
+                                                <p className={`text-[13px] font-black tracking-tight ${active ? 'text-indigo-900' : 'text-gray-700'}`}>{title}</p>
+                                                <p className={`text-[11px] font-medium mt-0.5 leading-tight ${active ? 'text-indigo-500' : 'text-gray-400'}`}>{description}</p>
+                                            </div>
+                                            {active && (
+                                                <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                                            )}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-2 gap-1.5">
+                                {DIFFICULTIES.map(({ id, label, badge }) => (
+                                    <button
+                                        key={id}
+                                        onClick={() => setGenOptions(prev => ({ ...prev, difficulty: id }))}
+                                        className={`relative py-2 rounded-xl text-[11px] font-bold border-2 transition-all ${
+                                            genOptions.difficulty === id
+                                                ? 'bg-purple-600 border-purple-600 text-white shadow-sm'
+                                                : 'bg-white border-gray-100 text-gray-500 hover:border-purple-200'
+                                        }`}
+                                    >
+                                        {label}
+                                        {badge && (
+                                            <span className="absolute -top-1 -right-1 text-[7px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded-full shadow-sm">
+                                                {badge}
+                                            </span>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        
+                        {genOptions.difficulty === 'adaptive' && genType === 'quiz' && (
+                            <p className="text-[10px] text-purple-400 mt-2 italic font-medium">Questions will adapt to your performance level in a live session.</p>
+                        )}
                     </div>
 
-                    {/* Count — hidden for summary */}
+                    {/* Count — hidden for summary or adaptive quiz */}
                     {showCount && (
                         <div>
                             <div className="flex items-center justify-between mb-2.5">
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{countLabel}</p>
-                                <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">{count}</span>
+                                <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">{genOptions.count}</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
-                                    onClick={() => setCount(c => clamp(c - 1, 3, 30))}
+                                    onClick={() => setGenOptions(prev => ({ ...prev, count: clamp(prev.count - 1, 3, 30) }))}
                                     className="w-7 h-7 rounded-lg border-2 border-gray-100 bg-white flex items-center justify-center text-gray-400 hover:border-purple-300 hover:text-purple-600 transition-colors shrink-0"
                                 >
                                     <Minus className="w-3 h-3" />
                                 </button>
                                 <input
                                     type="range" min="3" max="30" step="1"
-                                    value={count}
-                                    onChange={e => setCount(parseInt(e.target.value))}
+                                    value={genOptions.count}
+                                    onChange={e => setGenOptions(prev => ({ ...prev, count: parseInt(e.target.value) }))}
                                     className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer bg-gray-200"
                                     style={{ accentColor: '#7C5CFC' }}
                                 />
                                 <button
-                                    onClick={() => setCount(c => clamp(c + 1, 3, 30))}
+                                    onClick={() => setGenOptions(prev => ({ ...prev, count: clamp(prev.count + 1, 3, 30) }))}
                                     className="w-7 h-7 rounded-lg border-2 border-gray-100 bg-white flex items-center justify-center text-gray-400 hover:border-purple-300 hover:text-purple-600 transition-colors shrink-0"
                                 >
                                     <Plus className="w-3 h-3" />
@@ -213,7 +335,7 @@ const MaterialsPanel = ({
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2.5">Question Types</p>
                                 <div className="grid grid-cols-2 gap-1.5">
                                     {EXAM_QUESTION_TYPES.map(({ id, label }) => {
-                                        const active = examTypes.includes(id);
+                                        const active = genOptions.examTypes.includes(id);
                                         return (
                                             <button
                                                 key={id}
@@ -238,12 +360,12 @@ const MaterialsPanel = ({
                             <div>
                                 <div className="flex items-center justify-between mb-2.5">
                                     <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Time Limit</p>
-                                    <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">{timeLimit} min</span>
+                                    <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">{genOptions.timeLimit} min</span>
                                 </div>
                                 <input
                                     type="range" min="5" max="120" step="5"
-                                    value={timeLimit}
-                                    onChange={e => setTimeLimit(parseInt(e.target.value, 10))}
+                                    value={genOptions.timeLimit}
+                                    onChange={e => setGenOptions(prev => ({ ...prev, timeLimit: parseInt(e.target.value, 10) }))}
                                     className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-gray-200"
                                     style={{ accentColor: '#7C5CFC' }}
                                 />
@@ -257,8 +379,8 @@ const MaterialsPanel = ({
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Focus Topics <span className="normal-case font-medium tracking-normal text-gray-300">(optional)</span></p>
                                 <input
                                     type="text"
-                                    value={topics}
-                                    onChange={e => setTopics(e.target.value)}
+                                    value={genOptions.topics}
+                                    onChange={e => setGenOptions(prev => ({ ...prev, topics: e.target.value }))}
                                     placeholder="e.g. Networks, OS, Databases"
                                     className="w-full px-3 py-2.5 rounded-xl text-xs font-medium border-2 border-gray-100 bg-white focus:border-purple-300 focus:outline-none transition-colors placeholder-gray-300"
                                 />
@@ -271,8 +393,14 @@ const MaterialsPanel = ({
                         <button
                             onClick={onGenerate}
                             disabled={isGenerating}
-                            className="w-full py-3.5 rounded-2xl font-black text-sm uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed text-white shadow-lg shadow-purple-200 hover:shadow-xl hover:shadow-purple-300 hover:scale-[1.01]"
-                            style={{ background: 'linear-gradient(135deg, #7C5CFC, #4F46E5)' }}
+                            className="w-full py-3.5 rounded-2xl font-black text-sm uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed border hover:scale-[1.01]"
+                            style={{ 
+                                background: 'rgba(255, 255, 255, 0.65)', 
+                                backdropFilter: 'blur(12px)',
+                                borderColor: 'rgba(124, 58, 237, 0.3)',
+                                color: '#5B21B6',
+                                boxShadow: '0 4px 16px rgba(124, 58, 237, 0.1), inset 0 1px 0 rgba(255, 255, 255, 1)'
+                            }}
                         >
                             {isGenerating ? (
                                 <>
@@ -282,7 +410,7 @@ const MaterialsPanel = ({
                             ) : (
                                 <>
                                     <Sparkles className="w-4 h-4" />
-                                    Generate {activeType.label}
+                                    {isAdaptiveQuiz ? "Start Adaptive Session" : `Generate ${activeType.label}`}
                                 </>
                             )}
                         </button>
@@ -305,59 +433,25 @@ const MaterialsPanel = ({
                         <GenerationLoadingOverlay
                             isGenerating={false}
                             genType={genType}
-                            count={count}
+                            count={genOptions.count}
                             error={genError}
                             onRetry={onRetry}
                             startTime={generationStartTime}
+                            progress={streamProgress}
+                            onStop={onStop}
                         />
                     )}
 
-                    {genResult ? (
-                        <div className="animate-in slide-in-from-bottom-4 duration-500">
-                            {(() => {
-                                let parsedResult = genResult;
-                                if (typeof genResult === 'string' && (genResult.trim().startsWith('{') || genResult.trim().startsWith('['))) {
-                                    try { parsedResult = JSON.parse(genResult); } catch { }
-                                }
-
-                                if (genType === 'summary') {
-                                    return <SummaryView summaryData={parsedResult} title="Draft Summary" isExpanded={isExpanded} />;
-                                }
-                                if (genType === 'quiz') {
-                                    return (
-                                        <div className="space-y-4">
-                                            <h3 className="text-base font-black text-gray-700 px-1">Quiz Preview</h3>
-                                            <div className="border rounded-[2rem] overflow-hidden shadow-lg" style={{ borderColor: 'rgba(124, 92, 252, 0.15)' }}>
-                                                <QuizView quizData={parsedResult} isExpanded={isExpanded} />
-                                            </div>
-                                        </div>
-                                    );
-                                }
-                                if (genType === 'flashcards') {
-                                    return (
-                                        <div className="space-y-4">
-                                            <h3 className="text-base font-black text-gray-700 px-1">Flashcard Preview</h3>
-                                            <div className="border rounded-[2rem] overflow-hidden shadow-lg" style={{ borderColor: 'rgba(124, 92, 252, 0.15)' }}>
-                                                <FlashcardsView flashcardsData={parsedResult} isExpanded={isExpanded} />
-                                            </div>
-                                        </div>
-                                    );
-                                }
-                                return (
-                                    <div className="border rounded-2xl p-6 text-sm whitespace-pre-wrap font-mono leading-relaxed" style={{ background: 'var(--c-surface)', borderColor: 'var(--c-border-soft)', color: 'var(--c-text)' }}>
-                                        {typeof parsedResult === 'object' ? JSON.stringify(parsedResult, null, 2) : String(parsedResult)}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                    ) : isGenerating ? (
+                    {isGenerating ? (
                         <GenerationLoadingOverlay
                             isGenerating={isGenerating}
                             genType={genType}
-                            count={count}
+                            count={genOptions.count}
                             error={genError}
                             onRetry={onRetry}
                             startTime={generationStartTime}
+                            progress={streamProgress}
+                            onStop={onStop}
                         />
                     ) : (
                         <div className="py-16 text-center space-y-4 opacity-40">

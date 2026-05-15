@@ -32,8 +32,16 @@ const protect = async (req, res, next) => {
         });
     }
 
-    if (process.env.NODE_ENV === 'test' && token === 'test-bypass-token') {
-        req.user = { id: 1, name: 'Test User', email: 'test@example.com' };
+    if (process.env.NODE_ENV === 'test' && token && token.startsWith('test-bypass-token')) {
+        if (token === 'test-bypass-token-admin') {
+            req.user = { id: 'admin-uuid', name: 'Test Admin', email: 'admin@example.com', role: 'admin', status: 'ACTIVE' };
+        } else if (token === 'test-bypass-token-user') {
+            req.user = { id: 'uuid-1', name: 'Test User', email: 'user@example.com', role: 'user', status: 'ACTIVE' };
+        } else if (token === 'test-bypass-token-suspended') {
+            req.user = { id: 'suspended-uuid', name: 'Suspended Test User', email: 'suspended@example.com', role: 'user', status: 'SUSPENDED' };
+        } else {
+            req.user = { id: 'uuid-1', name: 'Test User', email: 'test@example.com', role: 'user', status: 'ACTIVE' };
+        }
         return next();
     }
 
@@ -61,6 +69,17 @@ const protect = async (req, res, next) => {
                 status: 'error',
                 message: 'Your account has been suspended. Please contact support.',
                 code: 'ACCOUNT_SUSPENDED'
+            });
+        }
+
+        // We allow UNVERIFIED users to hit the verify endpoints ONLY
+        // Identify verification endpoints using req.path or req.originalUrl
+        const isVerificationEndpoint = req.path.includes('verify-email') || req.path.includes('resend-verification');
+        if (normalizeStatus(user.status) === 'UNVERIFIED' && !isVerificationEndpoint) {
+            return res.status(403).json({
+                status: 'error',
+                message: 'Please verify your email address to continue.',
+                code: 'ACCOUNT_UNVERIFIED'
             });
         }
 

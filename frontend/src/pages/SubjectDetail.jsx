@@ -2,140 +2,53 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BASE_URL } from '@/services/api';
 import {
-    PanelLeft,
-    PanelRight,
-    Upload,
-    BookOpen,
-    Lock,
-    Sparkles,
-    XCircle,
-    BarChart2,
-    Minimize2,
-    X as XIcon,
+    PanelLeft, PanelRight, Upload, BookOpen, Lock, Minimize2,
 } from 'lucide-react';
 import { requireAuth } from '@/utils/requireAuth';
 
-// Feature Components
 import WorkspaceLayout from '@/features/subjects/components/WorkspaceLayout';
 import WorkspaceTabs from '@/features/subjects/components/WorkspaceTabs';
 import FilePanel from '@/features/subjects/components/FilePanel';
-import MaterialsPanel from '@/features/subjects/components/MaterialsPanel';
 import ChatPanel from '@/features/subjects/components/ChatPanel';
 import UploadModal from '@/features/subjects/components/UploadModal';
-import QuizView from '@/features/subjects/components/QuizView';
-import FlashcardsView from '@/features/subjects/components/FlashcardsView';
-import ExamView from '@/features/subjects/components/ExamView';
-import SummaryView from '@/features/subjects/components/SummaryView';
-import AnalyticsView from '@/features/subjects/components/AnalyticsView';
+import TabContent from '@/features/subjects/components/TabContent';
 
-// UI Components
 import CustomModal from '@/components/ui/CustomModal';
 import MobilePanelSwitcher from '@/components/MobilePanelSwitcher';
 import FloatingActionButton from '@/components/ui/FloatingActionButton';
 import Skeleton from '@/components/ui/Skeleton';
 
-// Hooks
 import { useSubjectWorkspace } from '@/features/subjects/hooks/useSubjectWorkspace';
-
-// --- Error Boundary for Material Views ---
-class MaterialErrorBoundary extends React.Component {
-    constructor(props) {
-        super(props);
-        this.state = { hasError: false, error: null };
-    }
-    static getDerivedStateFromError(error) {
-        return { hasError: true, error };
-    }
-    componentDidCatch(error, errorInfo) {
-        console.error("Material Rendering Error:", error, errorInfo);
-    }
-    render() {
-        if (this.state.hasError) {
-            return (
-                <div className="p-10 border-4 rounded-[2.5rem] text-center my-6 animate-in zoom-in-95 duration-300 relative overflow-hidden bg-white shadow-xl shadow-red-900/5 group" style={{ borderColor: '#FEE2E2' }}>
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-red-50 rounded-bl-full opacity-50 transition-transform group-hover:scale-110"></div>
-                    <div className="w-16 h-16 rounded-3xl flex items-center justify-center mx-auto mb-6 bg-red-100 text-red-600 shadow-sm relative z-10">
-                        <XCircle className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-2xl font-black mb-2 text-red-600 uppercase tracking-tight relative z-10">Oops! Something went wrong</h3>
-                    <p className="text-gray-500 font-bold mb-8 max-w-sm mx-auto relative z-10">Our neural engines hit a bump while processing this {this.props.type || 'content'}.</p>
-                    <button
-                        onClick={() => this.setState({ hasError: false, error: null })}
-                        className="px-8 py-4 bg-red-500 hover:bg-red-600 text-white rounded-[1.5rem] font-black uppercase tracking-widest text-xs transition-all hover:scale-105 active:scale-95 shadow-lg shadow-red-200 relative z-10"
-                    >
-                        Try again
-                    </button>
-                    <details className="mt-8 text-left relative z-10">
-                        <summary className="text-[10px] font-black uppercase tracking-[0.2em] cursor-pointer opacity-40 hover:opacity-100 transition-opacity text-gray-400">Technical Details</summary>
-                        <pre className="mt-4 p-5 text-[11px] rounded-2xl overflow-auto max-h-40 bg-gray-50 font-mono text-gray-500 border border-red-50">
-                            {this.state.error?.toString()}
-                        </pre>
-                    </details>
-                </div>
-            );
-        }
-        return this.props.children;
-    }
-}
 
 const SubjectDetail = () => {
     const { id } = useParams();
     const ws = useSubjectWorkspace(id);
     const {
-        subject,
-        uploads,
-        loading,
-        isAnyBlocking,
-        isPublic,
-        user,
-        tabs,
-        setTabs,
-        activeTabId,
-        setActiveTabId,
-        selectedUploads,
-        toggleSelection,
-        showUploadModal,
-        setShowUploadModal,
-        handleUploadSuccess,
-        handleDeleteUpload,
-        handleRenameMaterial,
-        chatMessages,
-        currentQuestion,
-        setCurrentQuestion,
-        handleChat,
-        isThinking,
-        chatError,
-        setChatMessages,
-        setChatError,
-        chatEndRef,
-        chatCollapsed,
-        setChatCollapsed,
-        filePanelCollapsed,
-        setFilePanelCollapsed,
-        genType,
-        setGenType,
-        handleGenerate,
-        isGenerating,
-        genResult,
-        setGenResult,
-        genError,
-        jobProgress,
-        retryGeneration,
-        generationStartTime,
-        isListening,
-        listen,
-        speak,
-        isModalOpen,
-        setIsModalOpen,
-        modalConfig
+        subject, uploads, loading, isAnyBlocking, isPublic, user,
+        tabs, setTabs, activeTabId, setActiveTabId,
+        selectedUploads, toggleSelection,
+        showUploadModal, setShowUploadModal, handleUploadSuccess,
+        handleDeleteUpload, handleTrashSelected, handleRenameMaterial,
+        chatMessages, currentQuestion, setCurrentQuestion,
+        handleChat, handleNewChat, handleSwitchSession, stopGeneration,
+        handleFeedback, handleBookmark, handleCopyMessage,
+        handleEditAndResend, handleRegenerate,
+        isStreaming, isThinking, chatError, setChatMessages, setChatError,
+        chatEndRef, chatCollapsed, setChatCollapsed,
+        filePanelCollapsed, setFilePanelCollapsed,
+        genType, setGenType, handleGenerate, isGenerating,
+        genResult, setGenResult, genError, jobProgress,
+        retryGeneration, generationStartTime, streamProgress, stopMaterialGeneration,
+        isListening, isSpeaking, stopSpeaking, listen, speak,
+        handleVoiceInput, handleTTS,
+        sessions, activeSessionId, sessionsLoading, savedMessages, savedLoading, renameSession, deleteSession,
+        isModalOpen, setIsModalOpen, modalConfig,
     } = ws;
 
     const isExpanded = filePanelCollapsed && chatCollapsed;
 
     const [focusModeTabId, setFocusModeTabId] = useState(null);
-
     const openFocusMode  = useCallback((tabId) => setFocusModeTabId(tabId), []);
     const closeFocusMode = useCallback(() => setFocusModeTabId(null), []);
 
@@ -145,6 +58,13 @@ const SubjectDetail = () => {
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [focusModeTabId, closeFocusMode]);
+
+    const tabContentProps = {
+        tabs, materials: uploads, isExpanded, subjectId: id, subjectName: subject?.name,
+        genType, setGenType, handleGenerate, isGenerating,
+        jobProgress, selectedUploads, genResult, setGenResult, genError,
+        retryGeneration, generationStartTime, generatingMaterialId: ws.generatingMaterialId, streamProgress, stopGeneration: stopMaterialGeneration, requireAuth,
+    };
 
     if (loading && (!subject || isAnyBlocking)) {
         return (
@@ -201,206 +121,24 @@ const SubjectDetail = () => {
         );
     }
 
-    const renderTabContent = (tabId) => {
-        if (tabId === 'generator') {
-            return (
-                <MaterialsPanel
-                    genType={genType}
-                    setGenType={setGenType}
-                    handleGenerate={(options) => requireAuth(() => handleGenerate(options))}
-                    isGenerating={isGenerating}
-                    jobProgress={jobProgress}
-                    selectedCount={selectedUploads.length}
-                    genResult={genResult}
-                    setGenResult={setGenResult}
-                    genError={genError}
-                    isExpanded={isExpanded}
-                    onRetry={retryGeneration}
-                    generationStartTime={generationStartTime}
-                />
-            );
-        }
 
-        if (tabId === 'analytics') {
-            return <AnalyticsView subjectId={id} isExpanded={isExpanded} />;
-        }
-
-        const tab = tabs.find(t => t.id === tabId);
-        if (!tab) return null;
-
-        // Adaptive quiz tabs have no backing material — handle before the null guard
-        if (tab.type === 'quiz' && tab.quizMode === 'adaptive') {
-            return (
-                <div className="flex-1 h-full overflow-y-auto bg-transparent">
-                    <MaterialErrorBoundary type="quiz">
-                        <QuizView
-                            key={tab.id}
-                            quizMode="adaptive"
-                            quizData={null}
-                            isExpanded={isExpanded}
-                            subjectId={id}
-                            topic={subject?.name || null}
-                            language="en"
-                        />
-                    </MaterialErrorBoundary>
-                </div>
-            );
-        }
-
-        const material = tab.material;
-
-        if (!material) {
-            return (
-                <div className="flex-1 flex items-center justify-center p-12">
-                    <Skeleton className="w-full max-w-2xl h-64 rounded-[2rem]" />
-                </div>
-            );
-        }
-
-        if (tab.type === 'upload') {
-            const hasFile = !!material.file_path;
-            const hasContent = !!material.content;
-
-            if (hasFile) {
-                const fileUrl = `${BASE_URL}/api/files/${material.id}`;
-                if (material.file_path.toLowerCase().endsWith('.pdf')) {
-                    return (
-                        <div className="flex-1 h-full w-full flex flex-col" style={{ background: 'var(--c-canvas)' }}>
-                            <iframe
-                                src={`${fileUrl}#view=Fit&toolbar=0&navpanes=0&scrollbar=1`}
-                                className="w-full flex-1 border-none"
-                                title={tab.title}
-                                sandbox="allow-scripts allow-same-origin"
-                            />
-                        </div>
-                    );
-                } else {
-                    return (
-                        <div className="flex-1 h-full flex flex-col items-center justify-center p-8 text-center" style={{ background: 'var(--c-surface-alt)', color: 'var(--c-text-muted)' }}>
-                            <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" style={{ color: 'var(--c-primary)' }} />
-                            <h3 className="text-lg font-bold mb-2">{tab.title}</h3>
-                            <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="mt-4 px-4 py-2 font-bold text-sm transition-colors rounded-lg" style={{ background: 'var(--c-primary-light)', color: 'var(--c-primary)' }}>
-                                Download File
-                            </a>
-                        </div>
-                    );
-                }
-            } else if (hasContent) {
-                return (
-                    <div className={`mx-auto ${isExpanded ? 'max-w-6xl py-16' : 'max-w-4xl py-8 md:py-12'} px-6 transition-all duration-500`}>
-                        <div className="border rounded-[1.5rem] p-8 shadow-sm leading-relaxed text-sm whitespace-pre-wrap font-mono" style={{ background: 'var(--c-surface)', borderColor: 'var(--c-border-soft)', color: 'var(--c-text)' }}>
-                            {typeof material.content === 'object' ? JSON.stringify(material.content, null, 2) : (material.content || 'No content')}
-                        </div>
-                    </div>
-                );
-            }
-
-            return (
-                <div className="flex-1 h-full flex items-center justify-center p-8 text-center" style={{ background: 'var(--c-surface-alt)', color: 'var(--c-text-muted)' }}>
-                    <div>
-                        <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                        <h3 className="text-lg font-bold mb-2">{tab.title}</h3>
-                        <p className="text-sm">Document preview is not available.</p>
-                    </div>
-                </div>
-            );
-        }
-
-        let parsedContent = material.ai_generated_content || material.content || '';
-        if (typeof parsedContent === 'string') {
-            try { parsedContent = JSON.parse(parsedContent); } catch { }
-        }
-        if (parsedContent?.result) parsedContent = parsedContent.result;
-        
-        if (typeof parsedContent === 'object' && parsedContent) {
-            parsedContent.id = material.id;
-            parsedContent.title = parsedContent.title || material.title || '';
-        }
-
-        if (tab.type === 'quiz' || material.type === 'quiz') {
-            return (
-                <div className="flex-1 h-full overflow-y-auto bg-transparent">
-                    <MaterialErrorBoundary type="quiz">
-                        <QuizView
-                            key={tab.id}
-                            quizMode="static"
-                            quizData={parsedContent}
-                            isExpanded={isExpanded}
-                            subjectId={id}
-                            materialId={material.id}
-                            topic={subject?.name || null}
-                            language="en"
-                        />
-                    </MaterialErrorBoundary>
-                </div>
-            );
-        }
-
-        if (tab.type === 'flashcards' || material.type === 'flashcards') {
-            return (
-                <div className="flex-1 h-full overflow-y-auto bg-transparent">
-                    <MaterialErrorBoundary type="flashcards">
-                        <FlashcardsView flashcardsData={parsedContent} subjectId={id} isExpanded={isExpanded} />
-                    </MaterialErrorBoundary>
-                </div>
-            );
-        }
-
-        if (tab.type === 'exam_session') {
-            return (
-                <div className="flex-1 h-full overflow-y-auto bg-transparent">
-                    <MaterialErrorBoundary type="exam">
-                        <ExamView examData={material.ai_generated_content} examId={material.id} subjectId={id} isExpanded={isExpanded} />
-                    </MaterialErrorBoundary>
-                </div>
-            );
-        }
-
-        if (tab.type === 'exam' || material.type === 'exam') {
-            return (
-                <div className="flex-1 h-full overflow-y-auto bg-transparent">
-                    <MaterialErrorBoundary type="exam">
-                        <ExamView key={material.id} examData={parsedContent} examId={material.id} subjectId={id} isExpanded={isExpanded} />
-                    </MaterialErrorBoundary>
-                </div>
-            );
-        }
-
-        if (tab.type === 'summary' || material.type === 'summary') {
-            return (
-                <MaterialErrorBoundary type="summary">
-                    <SummaryView summaryData={parsedContent} title={tab.title} isExpanded={isExpanded} />
-                </MaterialErrorBoundary>
-            );
-        }
-
-        const displayContent = typeof parsedContent === 'object' ? JSON.stringify(parsedContent, null, 2) : String(parsedContent);
-
-        return (
-            <div className={`flex-1 h-full overflow-y-auto ${isExpanded ? 'p-12' : 'p-6 md:p-12'} bg-transparent transition-all duration-500`}>
-                <div className={`${isExpanded ? 'max-w-5xl space-y-10' : 'max-w-5xl space-y-8'} mx-auto animate-in fade-in duration-500 transition-all`}>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className={`rounded-lg flex items-center justify-center transition-all ${isExpanded ? 'w-10 h-10' : 'w-8 h-8'}`} style={{ background: 'var(--c-primary-light)' }}>
-                            <Sparkles className={`${isExpanded ? 'w-5 h-5' : 'w-4 h-4'}`} style={{ color: 'var(--c-primary)' }} />
-                        </div>
-                        <h3 className={`${isExpanded ? 'text-2xl' : 'text-lg'} font-black tracking-tight capitalize transition-all`} style={{ color: 'var(--c-text)' }}>{tab.type.replace('_', ' ')} Insight</h3>
-                    </div>
-                    <div className={`border rounded-[2.5rem] shadow-xl text-gray-800 leading-relaxed transition-all duration-500 relative overflow-hidden group ${isExpanded ? 'p-12 text-base' : 'p-8 text-sm'}`} style={{ background: 'var(--c-surface)', borderColor: 'var(--c-border-soft)' }}>
-                        <div className="absolute top-0 right-0 w-24 h-24 rounded-bl-[4rem] group-hover:scale-110 transition-transform opacity-30" style={{ background: 'var(--c-primary-light)' }}></div>
-                        {displayContent}
-                    </div>
-                </div>
-            </div>
-        );
-    };
 
     return (
-        <div className="subject-page flex-1 min-h-0 flex flex-col animate-in fade-in duration-700 pb-20 md:pb-0 bg-[var(--c-canvas)]">
-            <div className="px-6 md:px-8 py-3 md:py-4 border-b-4 border-white shadow-sm flex items-center justify-between sticky top-0 z-20 bg-white/80 backdrop-blur-xl">
+        <div className="subject-page flex-1 min-h-0 flex flex-col animate-in fade-in duration-700 pb-20 md:pb-0 relative bg-[var(--c-canvas)] isolate">
+            {/* Background Layer isolated from flex */}
+            <div className="absolute inset-0 -z-10 bg-grid-mesh bg-[var(--c-canvas)] overflow-hidden pointer-events-none mix-blend-multiply">
+                <div className="absolute ambient-orb ambient-orb-lg ambient-orb-1 top-[-10%] left-[-10%] bg-violet-400/50" />
+                <div className="absolute ambient-orb ambient-orb-md ambient-orb-2 top-[40%] right-[-10%] bg-rose-400/50" />
+                <div className="absolute ambient-orb ambient-orb-lg ambient-orb-3 bottom-[-10%] left-[30%] bg-fuchsia-400/40" />
+                <div className="absolute ambient-orb ambient-orb-md ambient-orb-1 top-[10%] left-[50%] bg-amber-400/40" />
+            </div>
+
+            {/* Workspace Header */}
+            <div className="px-6 md:px-8 py-3 md:py-4 border-b border-fuchsia-100/50 shadow-sm shadow-fuchsia-900/5 flex items-center justify-between sticky top-0 z-20 bg-white/80 backdrop-blur-2xl">
                 <div className="flex items-center gap-4 md:gap-6">
                     <Link
                         to="/dashboard"
-                        className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all group bg-indigo-50 text-indigo-500 hover:bg-indigo-600 hover:text-white shadow-sm shadow-indigo-100"
+                        className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all group bg-violet-50/80 text-violet-500 hover:bg-gradient-to-tr hover:from-violet-500 hover:to-rose-500 hover:text-white shadow-sm shadow-violet-100 hover:shadow-rose-300/50 hover-lift"
                         title="Back to Garden"
                     >
                         <svg className="w-6 h-6 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -409,48 +147,34 @@ const SubjectDetail = () => {
                     </Link>
                     <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-2 md:gap-3">
-                            <h1 className="text-xl md:text-3xl font-black tracking-tight truncate leading-tight bg-gradient-to-r from-indigo-950 to-indigo-700 bg-clip-text text-transparent">{subject?.name}</h1>
-                            <span className="hidden sm:inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest whitespace-nowrap bg-indigo-50 text-indigo-600 border-2 border-indigo-100">
+                            <h1 className="text-xl md:text-3xl font-black tracking-tight truncate leading-tight bg-gradient-to-r from-violet-950 to-fuchsia-700 bg-clip-text text-transparent">{subject?.name}</h1>
+                            <span className="hidden sm:inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest whitespace-nowrap bg-violet-50 text-violet-600 border-2 border-violet-100 shadow-sm">
                                 {uploads.length} Sources
                             </span>
                         </div>
-                        <p className="text-[10px] md:text-xs font-bold truncate max-w-[150px] sm:max-w-md mt-1 text-gray-400 uppercase tracking-widest">
+                        <p className="text-[10px] md:text-xs font-bold truncate max-w-[150px] sm:max-w-md mt-1 text-violet-700 uppercase tracking-widest">
                             {subject?.description || 'Refining knowledge with AI clarity.'}
                         </p>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-2 md:gap-4">
-                    <div className="hidden lg:flex items-center p-1.5 rounded-2xl bg-gray-100/50 border-2 border-white shadow-inner">
+                    <div className="hidden lg:flex items-center p-1.5 rounded-2xl bg-violet-50/40 border-2 border-white shadow-inner">
                         <button
                             onClick={() => setFilePanelCollapsed(!filePanelCollapsed)}
-                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${!filePanelCollapsed ? 'bg-white text-indigo-600 shadow-md transform scale-105' : 'text-gray-400 hover:text-indigo-400'}`}
+                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${!filePanelCollapsed ? 'bg-white text-violet-600 shadow-sm transform scale-105 border border-violet-100/50' : 'text-violet-900/40 hover:text-violet-600 hover:bg-white/50'}`}
                         >
                             <PanelLeft className="w-4 h-4" />
                             <span>Sources</span>
                         </button>
                         <button
-                            onClick={() => {
-                                const hasTab = tabs.some(t => t.id === 'analytics');
-                                if (!hasTab) {
-                                    setTabs(prev => [...prev, { id: 'analytics', title: 'Analytics', type: 'analytics', pinned: false }]);
-                                }
-                                setActiveTabId('analytics');
-                            }}
-                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${activeTabId === 'analytics' ? 'bg-white text-indigo-600 shadow-md transform scale-105' : 'text-gray-400 hover:text-indigo-400'}`}
-                        >
-                            <BarChart2 className="w-4 h-4" />
-                            <span>Analytics</span>
-                        </button>
-                        <button
                             onClick={() => setChatCollapsed(!chatCollapsed)}
-                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${!chatCollapsed ? 'bg-white text-indigo-600 shadow-md transform scale-105' : 'text-gray-400 hover:text-indigo-400'}`}
+                            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all flex items-center gap-2 ${!chatCollapsed ? 'bg-white text-fuchsia-600 shadow-sm transform scale-105 border border-fuchsia-100/50' : 'text-violet-900/40 hover:text-fuchsia-600 hover:bg-white/50'}`}
                         >
                             <span>Tutor</span>
                             <PanelRight className="w-4 h-4" />
                         </button>
                     </div>
-
                     <button
                         onClick={() => requireAuth(() => setShowUploadModal(true))}
                         className="btn-primary py-3 px-6 text-xs font-black uppercase tracking-widest shadow-lg shadow-purple-200 hover:scale-105 active:scale-95 hidden md:flex items-center gap-2"
@@ -470,6 +194,7 @@ const SubjectDetail = () => {
                         selectedMaterials={selectedUploads}
                         toggleSelection={toggleSelection}
                         onDelete={handleDeleteUpload}
+                        onTrashSelected={handleTrashSelected}
                         onRename={handleRenameMaterial}
                         onGenerate={handleGenerate}
                         onOpenUpload={() => requireAuth(() => setShowUploadModal(true))}
@@ -483,24 +208,50 @@ const SubjectDetail = () => {
                         setTabs={setTabs}
                         activeTabId={activeTabId}
                         setActiveTabId={setActiveTabId}
-                        renderTabContent={renderTabContent}
+                        renderTabContent={(tabId) => <TabContent tabId={tabId} {...tabContentProps} />}
                         onFocusMode={openFocusMode}
                     />
                 }
                 rightPanel={
                     <ChatPanel
-                        messages={chatMessages}
+                        // Messages & state
+                        chatMessages={chatMessages}
                         currentQuestion={currentQuestion}
                         setCurrentQuestion={setCurrentQuestion}
-                        handleChat={handleChat}
-                        handleVoiceInput={() => listen((transcript) => setCurrentQuestion(transcript))}
-                        handleTTS={speak}
+                        isStreaming={isStreaming}
                         isThinking={isThinking}
-                        isListening={isListening}
-                        chatEndRef={chatEndRef}
-                        contextInfo={selectedUploads.length > 0 ? 'Grounded in selected context' : 'Using all subject data'}
                         chatError={chatError}
-                        onClearChat={() => setChatMessages([])}
+                        chatEndRef={chatEndRef}
+                        contextInfo={selectedUploads.length > 0 ? 'Grounded in selected context' : 'Using all subject documents'}
+
+                        // Chat actions
+                        handleChat={handleChat}
+                        handleNewChat={handleNewChat}
+                        handleSwitchSession={handleSwitchSession}
+                        stopGeneration={stopGeneration}
+                        handleFeedback={handleFeedback}
+                        handleBookmark={handleBookmark}
+                        handleCopyMessage={handleCopyMessage}
+                        handleEditAndResend={handleEditAndResend}
+                        handleRegenerate={handleRegenerate}
+
+                        // Voice
+                        handleVoiceInput={handleVoiceInput}
+                        handleTTS={handleTTS}
+                        isListening={isListening}
+                        isSpeaking={isSpeaking}
+                        stopSpeaking={stopSpeaking}
+
+                        // Sessions
+                        sessions={sessions}
+                        activeSessionId={activeSessionId}
+                        sessionsLoading={sessionsLoading}
+                        savedMessages={savedMessages}
+                        savedLoading={savedLoading}
+                        renameSession={renameSession}
+                        deleteSession={deleteSession}
+
+                        // Layout
                         onCollapse={() => setChatCollapsed(true)}
                     />
                 }
@@ -526,39 +277,32 @@ const SubjectDetail = () => {
                 {...modalConfig}
             />
 
-            {/* ── Focus Mode Overlay ──────────────────────────────────────── */}
+            {/* ── Focus Mode Overlay ── */}
             {createPortal(
                 <AnimatePresence>
                     {focusModeTabId && (
                         <>
-                            {/* Backdrop */}
                             <motion.div
                                 key="focus-backdrop"
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
+                                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                                 transition={{ duration: 0.2 }}
                                 className="fixed inset-0 z-[900]"
                                 style={{ background: 'rgba(8,8,20,0.72)', backdropFilter: 'blur(6px)' }}
                                 onClick={closeFocusMode}
                             />
-
-                            {/* Panel */}
                             <motion.div
                                 key="focus-panel"
                                 initial={{ opacity: 0, scale: 0.96, y: 16 }}
-                                animate={{ opacity: 1, scale: 1,    y: 0  }}
-                                exit={{   opacity: 0, scale: 0.96, y: 16  }}
+                                animate={{ opacity: 1, scale: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.96, y: 16 }}
                                 transition={{ type: 'spring', damping: 28, stiffness: 260 }}
                                 className="fixed z-[901] flex flex-col overflow-hidden"
                                 style={{
-                                    inset: '24px',
-                                    borderRadius: '20px',
+                                    inset: '24px', borderRadius: '20px',
                                     background: 'var(--c-surface)',
                                     boxShadow: '0 32px 80px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06)',
                                 }}
                             >
-                                {/* Focus bar */}
                                 <div
                                     className="flex-shrink-0 flex items-center justify-between px-5 py-3 border-b"
                                     style={{ background: 'var(--c-surface-alt)', borderColor: 'var(--c-border)' }}
@@ -584,10 +328,8 @@ const SubjectDetail = () => {
                                         <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 rounded text-[9px] font-black bg-gray-100 text-gray-400">Esc</kbd>
                                     </button>
                                 </div>
-
-                                {/* Content — full height */}
                                 <div className="flex-1 overflow-hidden min-h-0">
-                                    {renderTabContent(focusModeTabId)}
+                                    <TabContent tabId={focusModeTabId} {...tabContentProps} />
                                 </div>
                             </motion.div>
                         </>

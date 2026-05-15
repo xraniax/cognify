@@ -70,6 +70,29 @@ export const useSubjectStore = create((set, get) => ({
             } finally {
                 uiActions.setLoading('createSubject', false);
             }
+        }),
+        
+        updateSubject: (id, name, description) => requireAuth(async () => {
+            const uiActions = useUIStore.getState().actions;
+            uiActions.setLoading('updateSubject', true, 'Updating subject...', false);
+            try {
+                const res = await subjectService.update(id, name, description);
+                const subject = res.data.data;
+                set((state) => ({
+                    ...state,
+                    data: {
+                        ...state.data,
+                        subjects: state.data.subjects.map(s => s.id === id ? subject : s)
+                    }
+                }));
+                toast.success('Subject updated!');
+                return subject;
+            } catch (err) {
+                toast.error(err.message || 'Failed to update subject');
+                throw err;
+            } finally {
+                uiActions.setLoading('updateSubject', false);
+            }
         })
     }
 }));

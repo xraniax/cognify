@@ -19,7 +19,10 @@ from services.generation import (
     RetryableGenerationError,
     NonRetryableGenerationError,
 )
-from services.summary_pipeline import generate_summary, MAP_MAX_CHUNKS as SUMMARY_MAP_MAX_CHUNKS
+from services.summary_pipeline import generate_summary, MAP_MAX_CHUNKS as SUMMARY_MAP_MAX_CHUNKS, SUMMARY_MAX_CONTEXT_CHARS
+from services.exam_utils import normalize_exam, wrap_normalized_exam
+from services.exceptions import NonRetriableGenerationError
+from pydantic import ValidationError
 from utils.logging import get_job_logger
 
 logger = logging.getLogger(__name__)
@@ -110,10 +113,15 @@ def task_ocr(self, file_path, document_id, subject_id, user_id=None):
 
     from services.preprocessing import preprocess_step
     try:
-        pre = preprocess_step(file_path, job_id=job_id)
-        text = pre["cleaned_text"]
+        pre = preprocess_step(file_path, request_id=job_id)
+        text = pre.get("cleaned_text", "")
         duration = time.perf_counter() - start_time
-        log.info(f"STEP: OCR SUCCESS (duration: {duration:.2f}s, chars: {len(text)})")
+        
+        if not text or len(text.strip()) == 0:
+            log.warning(f"STEP: OCR FINISHED but no text was extracted (duration: {duration:.2f}s)")
+            text = "" # Ensure it's a string
+        else:
+            log.info(f"STEP: OCR SUCCESS (duration: {duration:.2f}s, chars: {len(text)})")
         return {
             "document_id": document_id,       # backend UUID (kept for reference)
             "engine_doc_id": engine_doc_id,   # integer FK for engine chunks table
@@ -140,8 +148,13 @@ def task_chunk(self, data):
     """Step 2: Split extracted text into semantic chunks."""
     job_id = self.request.id
     log = get_job_logger(job_id, "tasks.chunk")
-    text = data["extracted_text"]
+    text = data.get("extracted_text", "")
     user_id = data.get("user_id")
+    
+    if not text or len(text.strip()) == 0:
+        log.info("STEP: CHUNKING SKIPPED because extracted text is empty.")
+        return {**data, "chunks": []}
+
     log.info(f"STEP: CHUNKING STARTED for {len(text)} chars (Attempt {self.request.retries + 1})")
     start_time = time.perf_counter()
 
@@ -176,7 +189,7 @@ def task_embed(self, data):
 
     from services.embeddings import embed_step
     try:
-        embeddings = embed_step(chunks, job_id=job_id)
+        embeddings = embed_step(chunks, request_id=job_id)
         duration = time.perf_counter() - start_time
         log.info(f"STEP: EMBEDDING SUCCESS (duration: {duration:.2f}s)")
         return {
@@ -287,7 +300,6 @@ def _normalize_generation_result(material: Any, material_type: str, topic: Optio
             },
         }
 
-    # Direct output from generate_study_material: {type, content, metadata}
     if isinstance(material, dict) and "content" in material and "type" in material:
         metadata = material.get("metadata") or {}
         if not isinstance(metadata, dict):
@@ -308,9 +320,7 @@ def _normalize_generation_result(material: Any, material_type: str, topic: Optio
             },
         }
 
-    # String outputs are allowed and wrapped in the normalized schema.
     normalized_content = material if isinstance(material, str) else material
-
     return {
         "type": material_type,
         "content": normalized_content,
@@ -325,6 +335,49 @@ def _normalize_generation_result(material: Any, material_type: str, topic: Optio
             },
         },
     }
+
+
+CURRENT_CONFIG_VERSION = 1
+
+def initialize_workspace_config(subject_id: str, existing_opts: Optional[dict] = None) -> dict:
+    """
+    Mandatory Workspace Entry Point.
+    Eradicates drift via strict versioning and Heal-and-Alert logic.
+    """
+    opts = existing_opts or {}
+    corrections = []
+
+    version = opts.get("config_version", 0)
+    if version < CURRENT_CONFIG_VERSION:
+        corrections.append(f"version_upgrade({version}->{CURRENT_CONFIG_VERSION})")
+
+    config = {
+        "difficulty": opts.get("difficulty", "intermediate"),
+        "count": opts.get("count", opts.get("numberOfQuestions", 10)),
+        "types": opts.get("types", opts.get("examTypes", [])),
+        "timeout": opts.get("timeout", 300),
+        "strict_fallback_immunity": True,
+        "config_version": CURRENT_CONFIG_VERSION
+    }
+
+    if not isinstance(config["types"], list) or len(config["types"]) == 0:
+        config["types"] = ["single_choice", "multiple_select", "short_answer"]
+        corrections.append("defaulted_missing_exam_types")
+
+    if not isinstance(config["count"], int) or config["count"] <= 0:
+        config["count"] = 10
+        corrections.append(f"repaired_invalid_count({opts.get('count')})")
+
+    if corrections:
+        logger.warning(
+            f"[CONFIG AUDIT] Workspace {subject_id} was misconfigured or outdated. "
+            f"Repairs made: {', '.join(corrections)}. "
+            "Please audit upstream write path in Node.js backend."
+        )
+    else:
+        logger.info(f"[CONFIG VALID] Workspace {subject_id} passed initialization (v{CURRENT_CONFIG_VERSION})")
+
+    return config
 
 def _safe_remove(path: Optional[str]) -> None:
     if not path or not os.path.exists(path):
@@ -342,6 +395,7 @@ def task_process_document(
     original_filename: str,
     subject_id: str,
     user_id: str,
+    material_id: Optional[str] = None,
     request_id: Optional[str] = None,
 ):
     """
@@ -365,7 +419,11 @@ def task_process_document(
         raise ValueError("Missing user context: user_id is required")
 
     if not subject_id:
-        raise ValueError("Missing subject context: subject_id is required")
+        raise ValueError("Missing subject context: subject_id is required for ingestion")
+    
+    from database import SessionLocal
+    from services.ingestion import ingest_file
+    from services.google_drive import download_file_from_drive
 
     tmp_path = None
     db = SessionLocal()
@@ -424,6 +482,7 @@ def task_process_document(
                 file_path=tmp_path,
                 user_id=user_id,
                 subject_id=subject_id,
+                material_id=material_id,
                 original_filename=original_filename,
                 source_uri=f"https://drive.google.com/file/d/{drive_file_id}/view",
                 request_id=request_id,
@@ -521,26 +580,123 @@ def task_process_document(
             logger.exception("DB close failed")
 
 
+@celery_app.task(bind=True, max_retries=3)
+def task_process_document_local(
+    self,
+    local_file_path: str,
+    original_filename: str,
+    subject_id: str,
+    user_id: str,
+    material_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+):
+    """Background celery task: process a document from a local file path (Drive-free fallback)."""
+    task_id = getattr(getattr(self, "request", None), "id", None)
+    started_at = time.time()
+    logger.info(
+        "[PIPELINE] local_task_start request_id=%s task_id=%s path=%s filename=%s subject_id=%s",
+        request_id, task_id, local_file_path, original_filename, subject_id,
+    )
+
+    if not user_id:
+        raise ValueError("Missing user context: user_id is required for ingestion")
+    if not subject_id:
+        raise ValueError("Missing subject context: subject_id is required for ingestion")
+
+    from database import SessionLocal
+    from services.ingestion import ingest_file
+
+    db = SessionLocal()
+    try:
+        ingest_result = ingest_file(
+            db,
+            file_path=local_file_path,
+            user_id=user_id,
+            subject_id=subject_id,
+            material_id=material_id,
+            original_filename=original_filename,
+            request_id=request_id,
+        )
+        logger.info(
+            "[PIPELINE] local_task_success request_id=%s task_id=%s chunks=%s elapsed_ms=%d",
+            request_id, task_id, ingest_result.get("chunks", 0),
+            int((time.time() - started_at) * 1000),
+        )
+        return {
+            "status": "success",
+            "subject_id": ingest_result.get("subject_id"),
+            "document": original_filename,
+            "chunk_count": ingest_result.get("chunks", 0),
+            "chunks": ingest_result.get("chunks", 0),
+            "document_id": ingest_result.get("document_id"),
+        }
+    except Exception as e:
+        logger.error("Local task crashed for %s: %s", original_filename, e)
+        logger.error(traceback.format_exc())
+        raise self.retry(exc=e, countdown=10)
+    finally:
+        db.close()
+
 @celery_app.task(
     bind=True,
     max_retries=3,
     soft_time_limit=1800,
     time_limit=2100,
 )
-def task_generate_material(self, subject_id: str, material_type: str, topic: Optional[str] = None, language: str = "en", top_k: int = 5, user_id: Optional[str] = None, difficulty: str = "intermediate", source_filenames: Optional[List[str]] = None, adaptive_weak_concepts: Optional[List[str]] = None):
+def task_generate_material(
+    self,
+    subject_id: str,
+    material_type: str,
+    topic: Optional[str] = None,
+    language: str = "en",
+    top_k: int = 5,
+    user_id: Optional[str] = None,
+    difficulty: str = "intermediate",
+    source_filenames: Optional[List[str]] = None,
+    adaptive_weak_concepts: Optional[List[str]] = None,
+    options: Optional[dict] = None,
+    chunks: Optional[List[str]] = None,
+    material_ids: Optional[List[str]] = None,
+):
     """Background celery task for executing Retrieval-Augmented LLM generation."""
-    logger.info("Celery task_generate_material started: subject=%s, type=%s, topic=%s, difficulty=%s, file_filter=%d", subject_id, material_type, topic, difficulty, len(source_filenames or []))
+    logger.info("Celery task_generate_material started: subject=%s, type=%s, topic=%s, difficulty=%s, filenames=%s", subject_id, material_type, topic, difficulty, source_filenames)
+    
+    from database import SessionLocal
+    from services.retrieval import retrieve_chunks_by_topic
+    from services.generation import generate_study_material
+    
     db = SessionLocal()
     try:
-        # 1. Retrieve context chunks — scope to selected files when provided
-        if material_type == "summary":
-            from services.retrieval import retrieve_sequential_chunks
-            # FIX S-1: Cap retrieval to prevent OOM on large subjects.
-            chunks = retrieve_sequential_chunks(db, subject_id, limit=SUMMARY_MAP_MAX_CHUNKS, source_filenames=source_filenames or [])
-        else:
-            chunks = retrieve_chunks_by_topic(db, subject_id, topic, top_k, source_filenames=source_filenames or [])
+        request_options = options if isinstance(options, dict) else {}
+        effective_topic = topic or request_options.get("topic")
+        effective_language = language or request_options.get("language") or "en"
+        raw_count = request_options.get("count") or request_options.get("total_count")
+        count = int(raw_count) if raw_count is not None and isinstance(raw_count, (int, str)) and str(raw_count).isdigit() and 1 <= int(raw_count) <= 50 else None
+        if material_type == "exam":
+            logger.info(f"[EXAM COUNT] {count}")
 
-        chunk_texts = [c.content for c in chunks if c.content]
+        # 1. Retrieve context chunks — scope to selected files when provided
+        if chunks and isinstance(chunks, list) and len(chunks) > 0:
+            chunk_texts = chunks
+        elif material_type == "summary":
+            from services.retrieval import retrieve_sequential_chunks
+            # Smart limit: fetch enough chunks for the one-shot path.
+            # Chunks average ~1500 chars each; targeting slightly over threshold
+            # so the pipeline can decide. Map-reduce will activate naturally for truly large docs.
+            ONE_SHOT_CHUNK_LIMIT = max(20, SUMMARY_MAX_CONTEXT_CHARS // 1500)
+            chunks_with_scores = retrieve_sequential_chunks(
+                db, subject_id, limit=ONE_SHOT_CHUNK_LIMIT, 
+                source_filenames=source_filenames or [],
+                material_ids=material_ids
+            )
+            chunk_texts = [c.content for c in chunks_with_scores if c.content]
+        else:
+            chunks_with_scores = retrieve_chunks_by_topic(
+                db, subject_id, topic, top_k, 
+                source_filenames=source_filenames or [],
+                material_ids=material_ids
+            )
+            chunk_texts = [c.content for c, _ in chunks_with_scores if c.content]
 
         logger.info(f"Retrieved {len(chunk_texts)} chunk texts for generation (type={material_type}).")
 
@@ -549,59 +705,39 @@ def task_generate_material(self, subject_id: str, material_type: str, topic: Opt
 
         # 2. Generate material — dedicated pipeline for summaries
         if material_type == "summary":
+            from services.summary_pipeline import generate_summary
             material = generate_summary(
                 chunk_texts,
-                topic=topic,
-                language=language,
+                topic=effective_topic,
+                language=effective_language,
                 difficulty=difficulty,
+                summary_mode=request_options.get("summary_mode"),
             )
         else:
             material = generate_study_material(
                 chunk_texts,
                 material_type,
-                topic,
-                language,
+                effective_topic,
+                effective_language,
                 user_id=user_id,
                 difficulty=difficulty,
                 adaptive_weak_concepts=adaptive_weak_concepts,
+                count=count,
+                subject_id=subject_id,
+                options=request_options,
             )
 
-        # Fast-path normalization for summary strings (S-7)
-        if material_type == "summary" and isinstance(material, str):
-            ai_generated_content = {
-                "type": "summary",
-                "content": material,
-                "metadata": {
-                    "model": os.getenv("OLLAMA_GENERATION_MODEL", "unknown"),
-                    "provider": "ollama",
-                    "additional_info": {
-                        "topic": topic,
-                        "language": language,
-                        "top_k": top_k,
-                        "subject_id": subject_id,
-                    },
-                },
-            }
-        else:
-            ai_generated_content = _normalize_generation_result(
-                material,
-                material_type,
-                topic,
-                language,
-                top_k,
-                subject_id,
-            )
-        
+        # SUCCESS Return path
         return {
             "status": "SUCCESS",
             "material_type": material_type,
-            "ai_generated_content": ai_generated_content,
+            "ai_generated_content": material,
         }
-    except (ValueError, KeyError, TypeError, AttributeError) as e:
-        # Non-retriable: programming errors or bad input that a retry cannot fix.
-        # ValueError covers "No document chunks found"; the others cover code bugs
-        # that should surface immediately rather than burn retry budget.
-        logger.exception("Task Generation failed with non-retriable error (%s)", type(e).__name__)
+    except (KeyError, TypeError, AttributeError, NonRetriableGenerationError, RuntimeError) as e:
+        # Non-retriable: programming errors or exhausted internal retries.
+        # These should surface immediately rather than burn retry budget.
+        retry_count = self.request.retries
+        logger.error("[TASK_FAIL] id=%s retry=%d/3 terminal_reason=%s error=%s", self.request.id, retry_count, type(e).__name__, str(e))
         raise
     except NonRetryableGenerationError as e:
         logger.error(
@@ -619,7 +755,8 @@ def task_generate_material(self, subject_id: str, material_type: str, topic: Opt
         )
         raise self.retry(exc=e, countdown=2 ** self.request.retries * 15)
     except Exception as e:
-        logger.exception("Task Generation failed")
+        retry_count = self.request.retries
+        logger.warning("[TASK_RETRY] id=%s retry=%d/3 reason=%s error=%s", self.request.id, retry_count, type(e).__name__, str(e))
         # Retry with exponential backoff on failure (likely Ollama timeout)
         raise self.retry(exc=e, countdown=2 ** self.request.retries * 15)
     finally:

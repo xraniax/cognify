@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useMaterialStore } from '@/store/useMaterialStore';
 import { MaterialService } from '@/services/MaterialService';
+import { extractExamData } from '@/features/subjects/utils/examUtils';
 
-const GENERATION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — MAP+REDUCE for large docs needs headroom
+const GENERATION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes — unified with engine timeout
 
 // ── Streaming flush config ──────────────────────────────────────────────────
 // Chunks accumulate in a ref and flush to React state at this interval.
@@ -24,26 +25,93 @@ export const useMaterialGeneration = ({
     setActiveTabId,
 }) => {
     const fetchMaterials = useMaterialStore(s => s.actions.fetchMaterials);
-    const startPolling = useMaterialStore(s => s.actions.startPolling);
-    const clearAllPolling = useMaterialStore(s => s.actions.clearAllPolling);
-    const setMaterialMetadata = useMaterialStore(s => s.actions.setMaterialMetadata);
-    const setExpectedFlashcards = useMaterialStore(s => s.actions.setExpectedFlashcards);
+    const { startPolling, clearAllPolling, setExpectedFlashcards } = useMaterialStore(s => s.actions);
     const jobProgress = useMaterialStore(s => s.data.jobProgress);
+
+    const openMaterialTab = useCallback((mat) => {
+        if (!mat) return;
+        if (!tabsRef.current.find(t => String(t.id) === String(mat.id))) {
+            setTabs(prev => {
+                if (prev.some(t => String(t.id) === String(mat.id))) return prev;
+                return [...prev, {
+                    id: String(mat.id),
+                    title: mat.title || (mat.type ? mat.type.charAt(0).toUpperCase() + mat.type.slice(1) : 'Material'),
+                    type: mat.type,
+                    material: mat,
+                    pinned: false
+                }];
+            });
+        }
+        setActiveTabId(String(mat.id));
+        // Do NOT reset genResult here — if called during streaming (on first delta),
+        // clearing it would wipe all accumulated content. After streaming, the tab
+        // renders from material.ai_generated_content, so genResult is irrelevant.
+    }, [setTabs, setActiveTabId, tabsRef]);
 
     const [materialGenError, setMaterialGenError] = useState('');
     const [isGeneratingMaterial, setIsGeneratingMaterial] = useState(false);
     const [genResult, setGenResult] = useState('');
     const [generationStartTime, setGenerationStartTime] = useState(null);
+    const [streamProgress, setStreamProgress] = useState('');
+    const [generatingMaterialId, setGeneratingMaterialId] = useState(null);
 
     // Enhancement Refs
     const hasRenamedRef = useRef(false);
     const activeMaterialIdRef = useRef(null);
     const timeoutRef = useRef(null);
     const lastGenParamsRef = useRef(null);
+    const activeGenTypeRef = useRef(null);
+    const examTabCreatedRef = useRef(false);
 
     const streamControllerRef = useRef(null);
     const currentSubjectIdRef = useRef(normalizedId);
     useEffect(() => { currentSubjectIdRef.current = normalizedId; }, [normalizedId]);
+
+    // ── Auto-create / update exam tab during streaming ──────────────────────
+    const EXAM_TAB_ID = `streaming-exam-${subjectId}`;
+    useEffect(() => {
+        if (activeGenTypeRef.current !== 'mock_exam') return;
+        if (!genResult) return;
+
+        // Prefer real material ID if we have it, otherwise fallback to transient
+        const currentId = activeMaterialIdRef.current ? String(activeMaterialIdRef.current) : EXAM_TAB_ID;
+
+        let parsed;
+        try { parsed = typeof genResult === 'string' ? JSON.parse(genResult) : genResult; }
+        catch { return; } // JSON not yet complete
+
+        const examData = extractExamData(parsed);
+        if (!examData || !Array.isArray(examData.questions) || examData.questions.length === 0) return;
+        // Need at least one question with text
+        if (!examData.questions[0].question) return;
+        console.log('[TRACE][EXAM_STREAM_TAB]', {
+            streamedQuestionCount: examData.questions.length,
+            streamedAnswerSheetCount: Array.isArray(examData.answer_sheet) ? examData.answer_sheet.length : undefined,
+        });
+
+        if (!examTabCreatedRef.current) {
+            // First time — create the tab and switch to it
+            examTabCreatedRef.current = true;
+            setTabs(prev => [
+                ...prev.filter(t => String(t.id) !== currentId),
+                {
+                    id: currentId,
+                    title: examData.title || 'Mock Exam',
+                    type: 'exam_session',
+                    material: { id: currentId, type: 'exam_session', ai_generated_content: examData },
+                    pinned: false,
+                },
+            ]);
+            setActiveTabId(currentId);
+        } else {
+            // Update the existing tab's data with new questions
+            setTabs(prev => prev.map(t =>
+                String(t.id) === currentId
+                    ? { ...t, material: { ...t.material, ai_generated_content: examData } }
+                    : t
+            ));
+        }
+    }, [genResult, setTabs, setActiveTabId, subjectId, EXAM_TAB_ID]);
 
     // ── Streaming accumulator refs ──────────────────────────────────────────
     // Raw chunks land here instantly; a timer flushes to React state at a
@@ -80,11 +148,15 @@ export const useMaterialGeneration = ({
     const finishGenerating = useCallback(() => {
         setIsGeneratingMaterial(false);
         setGenerationStartTime(null);
+        setStreamProgress('');
+        setGeneratingMaterialId(null);
         if (timeoutRef.current) {
             clearTimeout(timeoutRef.current);
             timeoutRef.current = null;
         }
-    }, []);
+        // Refresh sidebar to capture any new materials
+        fetchMaterials();
+    }, [fetchMaterials]);
 
     useEffect(() => {
         return () => {
@@ -120,21 +192,27 @@ export const useMaterialGeneration = ({
         streamBufferRef.current = '';
         setIsGeneratingMaterial(true);
         setGenerationStartTime(Date.now());
+        setStreamProgress('Connecting to engine...');
         hasRenamedRef.current = false;
         activeMaterialIdRef.current = null;
+        activeGenTypeRef.current = genType;
+        examTabCreatedRef.current = false;
 
-        // Store params for retry
+        // Store params for retry (from HEAD)
         lastGenParamsRef.current = { genType, singleId, genOptions };
 
-        // Set generation timeout
+        // Set generation timeout — skipped for mock_exam since the LLM must not be
+        // aborted mid-way. Other types retain a 10-minute safety net.
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        timeoutRef.current = setTimeout(() => {
-            console.warn('[TRACE][FE_TIMEOUT] generation timed out after %dms', GENERATION_TIMEOUT_MS);
-            streamControllerRef.current?.abort();
-            setMaterialGenError('Generation timed out after 10 minutes. The AI engine may be overloaded — please try again.');
-            stopFlushTimer();
-            finishGenerating();
-        }, GENERATION_TIMEOUT_MS);
+        if (genType !== 'mock_exam') {
+            timeoutRef.current = setTimeout(() => {
+                console.warn('[TRACE][FE_TIMEOUT] generation timed out after %dms', GENERATION_TIMEOUT_MS);
+                streamControllerRef.current?.abort();
+                setMaterialGenError('Generation timed out after 10 minutes. The AI engine may be overloaded — please try again.');
+                stopFlushTimer();
+                finishGenerating();
+            }, GENERATION_TIMEOUT_MS);
+        }
         const isFlashGen = genType === 'flashcards' && genOptions?.count;
         const requestedCount = genOptions?.count;
 
@@ -142,7 +220,16 @@ export const useMaterialGeneration = ({
         let renderCount = 0;
         console.log('[TRACE][FE_GEN_START] type=%s targets=%d timestamp=%d', genType, targets.length, Date.now());
 
-        try {
+        // For exams, we prioritize the persistence path so they appear in the sidebar 
+        // with a real UUID immediately and avoid 404/400 errors.
+        if (genType === 'mock_exam') {
+            console.log('[MaterialGen] Routing exam to persistence path for sidebar and ID stability.');
+            // Skip directly to the generate -> stream flow below (using a catch-like jumping or just conditional)
+            // We'll let it flow into the second try block by throwing a dummy "skip" error if we want 
+            // but a cleaner way is just wrapping the primary stream path in a conditional.
+        } else {
+            try {
+
             streamControllerRef.current?.abort();
             const controller = new AbortController();
             streamControllerRef.current = controller;
@@ -237,23 +324,53 @@ export const useMaterialGeneration = ({
                             throw err;
                         }
 
-                        if (parsed.type === 'delta' && typeof parsed.data === 'string') {
-                            deltaCount++;
-                            if (deltaCount === 1) {
-                                console.log('[TRACE][FE_FIRST_DELTA] time_ms=%d', Math.round(performance.now() - feStartMs));
-                            }
-                            // Accumulate into the ref — the flush timer pushes to state.
-                            streamBufferRef.current += parsed.data;
+                        if (parsed.type === 'metadata' && parsed.material_id) {
+                            const mid = parsed.material_id;
+                            console.log('[TRACE][FE_SSE_METADATA] material_id: %s (buffered)', mid);
+                            activeMaterialIdRef.current = mid;
+                            setGeneratingMaterialId(mid);
+                            // Do NOT open the tab yet - wait for content (buffered opening)
+                            continue;
                         }
 
-                        // Backward compatibility for older payloads.
-                        if (parsed.delta) {
-                            deltaCount++;
-                            streamBufferRef.current += String(parsed.delta);
+                        if (parsed.type === 'delta' || typeof parsed.delta === 'string') {
+                            const deltaText = parsed.data || parsed.delta;
+                            if (typeof deltaText === 'string') {
+                                deltaCount++;
+                                if (deltaCount === 1) {
+                                    console.log('[TRACE][FE_FIRST_DELTA] time_ms=%d - opening tab', Math.round(performance.now() - feStartMs));
+                                    // First content received! Open the tab now.
+                                    if (activeMaterialIdRef.current) {
+                                        fetchMaterials().then(mats => {
+                                            const mat = mats.find(m => String(m.id) === String(activeMaterialIdRef.current));
+                                            if (mat) openMaterialTab(mat);
+                                        });
+                                    }
+                                }
+                                streamBufferRef.current += deltaText;
+                            }
+                        }
+
+                        if (parsed.type === 'progress' && parsed.stage) {
+                            setStreamProgress(parsed.stage);
                         }
 
                         if ((parsed.type === 'final' && parsed.done === true) || parsed.done === true) {
                             finalReceived = true;
+                            const mid = parsed.material_id || activeMaterialIdRef.current;
+                            if (mid) {
+                                console.log('[TRACE][FE_SSE_FINAL] material_id detected: %s', mid);
+                                activeMaterialIdRef.current = mid;
+                                setGeneratingMaterialId(mid);
+                                
+                                // Safety: if for some reason we never got a delta, open the tab on final
+                                if (deltaCount === 0) {
+                                    fetchMaterials().then(mats => {
+                                        const mat = mats.find(m => String(m.id) === String(mid));
+                                        if (mat) openMaterialTab(mat);
+                                    });
+                                }
+                            }
                             console.log('[TRACE][FE_SSE_FINAL] deltas=%d duration_ms=%d', deltaCount, Math.round(performance.now() - feStartMs));
                             streamDone = true;
                             break;
@@ -272,6 +389,15 @@ export const useMaterialGeneration = ({
             console.log('[TRACE][FE_STREAM_COMPLETE] deltas=%d final=%s error=%s total_ms=%d close=normal', deltaCount, finalReceived, errorReceived, totalMs);
             streamControllerRef.current = null;
             finishGenerating();
+            
+            // Auto-navigate to the newly created material
+            if (activeMaterialIdRef.current) {
+                const mats = await fetchMaterials();
+                const mat = mats.find(m => String(m.id) === String(activeMaterialIdRef.current));
+                if (mat) {
+                    openMaterialTab(mat);
+                }
+            }
             return;
         } catch (streamErr) {
             stopFlushTimer();
@@ -283,10 +409,11 @@ export const useMaterialGeneration = ({
                 finishGenerating();
                 return;
             }
-            console.warn('[MaterialGen] Streaming path failed, falling back to async job flow:', streamErr?.message || streamErr);
+            }
         }
 
         try {
+
             const res = await MaterialService.generate(targets, genType, subjectId, genOptions);
             const { material_id } = res.data.data;
             activeMaterialIdRef.current = material_id;
@@ -329,32 +456,38 @@ export const useMaterialGeneration = ({
                             return next;
                         });
                     },
-                    () => {
+                    async () => {
                         streamControllerRef.current = null;
                         finishGenerating();
                         if (String(currentSubjectIdRef.current) !== normalizedId) return;
 
-                        MaterialService.sync(material_id, controller.signal).then(() => {
+                        try {
+                            await MaterialService.sync(material_id, controller.signal);
                             if (String(currentSubjectIdRef.current) !== normalizedId) return;
-                            fetchMaterials().then(() => {
-                                const mat = useMaterialStore.getState().data.materials
-                                    .find(m => String(m.id) === String(material_id));
-                                if (!mat) return;
-                                if (!tabsRef.current.find(t => String(t.id) === String(mat.id))) {
-                                    setTabs(prev => [...prev, {
-                                        id: mat.id, title: mat.title || mat.type,
-                                        type: mat.type, material: mat, pinned: false
-                                    }]);
+                            
+                            const mats = await fetchMaterials();
+                            const mat = mats.find(m => String(m.id) === String(material_id));
+                            if (mat) {
+                                openMaterialTab(mat);
+                            }
+                        } catch (err) {
+                            console.error("[MaterialGen] Completion sync/fetch error", err);
+                            // Fallback to polling if sync fails or material not found
+                            startPolling(String(material_id), (mat) => {
+                                if (String(currentSubjectIdRef.current) === normalizedId) {
+                                    openMaterialTab(mat);
                                 }
-                                setActiveTabId(mat.id);
-                                setGenResult('');
                             });
-                        });
+                        }
                     },
                     () => {
                         streamControllerRef.current = null;
                         finishGenerating();
-                        startPolling(String(material_id));
+                        startPolling(String(material_id), (mat) => {
+                            if (String(currentSubjectIdRef.current) === normalizedId) {
+                                openMaterialTab(mat);
+                            }
+                        });
                     }
                 );
             } else {
@@ -376,6 +509,14 @@ export const useMaterialGeneration = ({
             handleGenerateMaterial(params.genType, params.singleId, params.genOptions);
         }
     }, [handleGenerateMaterial]);
+ 
+    const stopGenerationMaterial = useCallback(() => {
+        if (streamControllerRef.current) {
+            streamControllerRef.current.abort();
+            streamControllerRef.current = null;
+        }
+        finishGenerating();
+    }, [finishGenerating]);
 
     return {
         materialGenError,
@@ -387,6 +528,9 @@ export const useMaterialGeneration = ({
         jobProgress,
         handleGenerateMaterial,
         retryGeneration,
+        generatingMaterialId,
         generationStartTime,
+        streamProgress,
+        stopGenerationMaterial,
     };
 };
