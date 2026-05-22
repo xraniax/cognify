@@ -1,346 +1,327 @@
 import React, { useState, useEffect } from 'react';
 import { adminService } from '@/features/admin/services/AdminService';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-    Users, Database, Zap, ArrowRight, ShieldCheck, Activity, 
-    FileText, UserCheck, HardDrive, BarChart3, Cpu, Server
+import { motion } from 'framer-motion';
+import {
+    Users, Zap, Activity, Target, TrendingUp, Brain, Smile,
+    Download, Calendar, ChevronRight, X, AlertTriangle, ArrowUpRight, ArrowDownRight, MoreHorizontal
 } from 'lucide-react';
 import Skeleton from '@/components/ui/Skeleton';
-import { formatBytes } from '@/utils/format';
-import AdminAlertCentre from '@/components/Admin/AdminAlertCentre';
 import ActivityStream from '@/components/Admin/ActivityStream';
 
-// Dashboard overview only
-
-// Subtle entrance for scroll-triggered sections (not flash-inducing)
-const SECTION_ANIM = {
-    initial: { opacity: 1, y: 12 },
-    whileInView: { opacity: 1, y: 0 },
-    viewport: { once: true, margin: "-60px" },
-    transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] }
+// --- Drill-down Modal ---
+const DrillDownModal = ({ isOpen, onClose, title, data, loading }) => {
+    if (!isOpen) return null;
+    return (
+        <motion.div 
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4"
+            onClick={onClose}
+        >
+            <motion.div 
+                initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }}
+                className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col border border-white/60"
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="p-6 border-b border-gray-100 flex items-center justify-between flex-none">
+                    <div>
+                        <h3 className="text-lg font-black text-gray-900 leading-tight">{title}</h3>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">Metric Drill-down</p>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                        <X className="w-5 h-5 text-gray-400" />
+                    </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6">
+                    {loading ? (
+                        <div className="space-y-3">
+                            {Array(5).fill(0).map((_, i) => <Skeleton key={i} className="h-12 w-full rounded-2xl" />)}
+                        </div>
+                    ) : data.length > 0 ? (
+                        <div className="space-y-3">
+                            {data.map((item, i) => (
+                                <div key={i} className="flex items-center justify-between p-4 bg-gray-50/50 rounded-2xl border border-gray-100 hover:border-indigo-100 transition-colors group">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-bold text-gray-800">{item.title || item.name || item.email}</span>
+                                        <span className="text-[10px] text-gray-400 font-medium uppercase tracking-tight">
+                                            {item.type || item.status || (item.created_at ? new Date(item.created_at).toLocaleDateString() : '')}
+                                        </span>
+                                    </div>
+                                    <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-indigo-400 transition-colors" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="py-20 text-center opacity-40">
+                            <Activity className="w-10 h-10 mx-auto mb-3" />
+                            <p className="text-sm font-bold uppercase tracking-widest">No detailed data found</p>
+                        </div>
+                    )}
+                </div>
+            </motion.div>
+        </motion.div>
+    );
 };
 
-// Hero section: render immediately, no flash
-const HERO_ANIM = {
-    initial: { opacity: 1, y: 0 },
-    animate: { opacity: 1, y: 0 },
-    transition: { duration: 0 }
+// ── Colour palette per metric (Tailwind JIT-safe: no dynamic class segments) ──
+const PALETTE = {
+    fuchsia: {
+        wrap: 'border-fuchsia-100 shadow-fuchsia-200/30',
+        icon: 'bg-fuchsia-50 text-fuchsia-500 border-fuchsia-100',
+        tag:  'text-fuchsia-400',
+        glow: 'bg-fuchsia-300/10',
+    },
+    indigo: {
+        wrap: 'border-indigo-100 shadow-indigo-200/30',
+        icon: 'bg-indigo-50 text-indigo-500 border-indigo-100',
+        tag:  'text-indigo-400',
+        glow: 'bg-indigo-300/10',
+    },
+    emerald: {
+        wrap: 'border-emerald-100 shadow-emerald-200/30',
+        icon: 'bg-emerald-50 text-emerald-500 border-emerald-100',
+        tag:  'text-emerald-400',
+        glow: 'bg-emerald-300/10',
+    },
+    amber: {
+        wrap: 'border-amber-100 shadow-amber-200/30',
+        icon: 'bg-amber-50 text-amber-500 border-amber-100',
+        tag:  'text-amber-400',
+        glow: 'bg-amber-300/10',
+    },
 };
 
+// Subject colours (cycle through fixed list for JIT safety)
+// ── KPI card ──────────────────────────────────────────────────────────────────
+const KpiCard = ({ icon, label, value, sub, color, loading, onClick }) => {
+    const c = PALETTE[color];
+    return (
+        <motion.div
+            whileHover={{ y: -4, scale: 1.015 }}
+            onClick={onClick}
+            className={`glass-card rounded-[1.8rem] border border-white/70 p-5 shadow-xl ${c.wrap} relative overflow-hidden ${onClick ? 'cursor-pointer active:scale-95' : ''} transition-all`}
+        >
+            <div className={`absolute -right-4 -top-4 w-24 h-24 rounded-full blur-2xl pointer-events-none ${c.glow}`} />
+            <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2.5">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center border ${c.icon}`}>
+                        {icon}
+                    </div>
+                    <span className={`text-[9px] font-black uppercase tracking-widest ${c.tag}`}>{label}</span>
+                </div>
+                {onClick && <ArrowUpRight className={`w-3 h-3 ${c.tag} opacity-0 group-hover:opacity-100`} />}
+            </div>
+            <span className="text-4xl font-black text-gray-900 tracking-tighter block mb-1">
+                {loading ? <Skeleton className="w-16 h-9" /> : value}
+            </span>
+            <p className="text-[10px] text-gray-400 font-bold">{sub}</p>
+        </motion.div>
+    );
+};
 
-const AmbientOrb = ({ className, color }) => (
-    <motion.div 
-        animate={{ 
-            scale: [1, 1.2, 1],
-            opacity: [0.3, 0.5, 0.3],
-            x: [0, 50, 0],
-            y: [0, 30, 0]
-        }}
-        transition={{ 
-            duration: 10 + Math.random() * 5, 
-            repeat: Infinity, 
-            ease: "easeInOut" 
-        }}
-        className={`absolute rounded-full blur-[140px] pointer-events-none -z-10 mix-blend-multiply will-change-[transform,opacity] ${className} ${color}`}
-    />
-);
-
+// ── Main Dashboard ─────────────────────────────────────────────────────────────
 const AdminDashboard = () => {
     const [loading, setLoading] = useState(true);
-    const [stats, setStats] = useState({
-        totalUsers: 0,
-        onlineNow: 0,
-        totalStorage: 0
-    });
-    const [sysStats, setSysStats] = useState(null);
+    const [totalUsers, setTotalUsers] = useState(0);
     const [engagement, setEngagement] = useState(null);
+    const [range, setRange] = useState('30d');
+    const [drillingDown, setDrillingDown] = useState(null);
+    const [drillData, setDrillData] = useState([]);
+    const [drillLoading, setDrillLoading] = useState(false);
+
+    const fetchData = async (dayRange) => {
+        setLoading(true);
+        try {
+            const days = parseInt(dayRange);
+            const toDate = new Date().toISOString().split('T')[0];
+            const fromDate = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
+            
+            const [usersRes, analyticsRes] = await Promise.all([
+                adminService.getUsers(),
+                adminService.getAnalytics({ from: fromDate, to: toDate }),
+            ]);
+            setTotalUsers((usersRes.data?.data || []).length);
+            setEngagement(analyticsRes.data?.data || {});
+        } catch (err) {
+            console.error('Dashboard fetch error', err);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
-        const fetchDashboardStats = async () => {
-            try {
-                const [usersRes, settingsRes, sysRes, analyticsRes] = await Promise.all([
-                    adminService.getUsers(),
-                    adminService.getSettings(),
-                    adminService.getStats(),
-                    adminService.getAnalytics()
-                ]);
-                
-                const users = usersRes.data?.data || [];
-                const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
-                const now = Date.now();
-                const onlineNow = Math.max(1, users.filter(u => {
-                    const lastActive = u.last_active_at ? new Date(u.last_active_at).getTime() : 0;
-                    return now - lastActive < ONLINE_THRESHOLD_MS;
-                }).length);
+        fetchData(range);
+    }, [range]);
 
-                const settings = settingsRes.data?.data || {};
-                const totalStorage = settings.stats?.total_storage_bytes || 0;
-                
-                setStats({
-                    totalUsers: users.length,
-                    onlineNow,
-                    totalStorage
-                });
-                setSysStats(sysRes.data?.data || null);
+    const handleDrillDown = async (metric, type, title) => {
+        setDrillingDown(title);
+        setDrillLoading(true);
+        try {
+            const days = parseInt(range);
+            const toDate = new Date().toISOString().split('T')[0];
+            const fromDate = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
+            
+            const res = await adminService.getDrillDown({ metric, type, from: fromDate, to: toDate });
+            setDrillData(res.data?.data || []);
+        } catch (err) {
+            console.error('Drill-down error', err);
+        } finally {
+            setDrillLoading(false);
+        }
+    };
 
-            } catch (err) {
-                console.error("Dashboard stats error", err);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchDashboardStats();
-    }, []);
+    const handleExport = () => {
+        adminService.exportAnalytics({ source: 'dau' });
+    };
+
+    // ── Derived student metrics ──────────────────────────────────────────────
+    const dau          = engagement?.dau || [];
+    const activeToday  = dau.slice(-1)[0]?.count ?? 0;
+    const maxDau       = Math.max(...dau.map(d => d.count), 1);
+
+    const studyAct     = engagement?.studyActivity || [];
+    const quizTotal    = studyAct.filter(d => d.type === 'quiz').reduce((s, d) => s + d.count, 0);
+    const flashTotal   = studyAct.filter(d => d.type === 'flashcard').reduce((s, d) => s + d.count, 0);
+    const allSessions  = quizTotal + flashTotal;
+
+    const avgSessions  = totalUsers > 0 ? (allSessions / totalUsers).toFixed(1) : '0';
+
+    const todayKey = new Date().toISOString().split('T')[0];
+    const quizToday  = studyAct.filter(d => d.type === 'quiz'      && String(d.date).startsWith(todayKey)).reduce((s, d) => s + d.count, 0);
+    const flashToday = studyAct.filter(d => d.type === 'flashcard' && String(d.date).startsWith(todayKey)).reduce((s, d) => s + d.count, 0);
 
     return (
-        <div className="w-full relative overflow-hidden" style={{ background: 'linear-gradient(160deg, #f8f7ff 0%, #fdf9ff 35%, #f5f8ff 70%, #f9f7ff 100%)' }}>
+        <div
+            className="flex flex-col h-[calc(100vh-56px)] overflow-hidden px-6 py-4 gap-3 relative"
+            style={{ background: 'linear-gradient(160deg,#f8f7ff 0%,#fdf9ff 50%,#f5f8ff 100%)' }}
+        >
+            <div className="absolute w-[550px] h-[550px] -top-56 -left-56 rounded-full bg-violet-300/15 blur-[110px] pointer-events-none -z-10" />
+            <div className="absolute w-[450px] h-[450px] bottom-0 -right-40 rounded-full bg-indigo-200/15 blur-[90px] pointer-events-none -z-10" />
 
-            {/* ── Layer 2: Animated mesh gradient blobs ── */}
-            <AmbientOrb className="w-[900px] h-[900px] -top-80 -left-80" color="bg-violet-300/25" />
-            <AmbientOrb className="w-[700px] h-[700px] top-[30vh] -right-60" color="bg-indigo-200/20" />
-            <AmbientOrb className="w-[800px] h-[800px] top-[90vh] left-[10vw]" color="bg-sky-200/15" />
-
-            {/* ── Layer 3: Subtle dot grid ── */}
-            <div className="fixed inset-0 bg-dot-grid opacity-20 pointer-events-none z-0" />
-
-            {/* ── Layer 4: Decorative SVG rings (top-right corner art) ── */}
-            <svg className="absolute top-0 right-0 w-[480px] h-[480px] pointer-events-none opacity-[0.06] z-0" viewBox="0 0 480 480" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="480" cy="0" r="100" stroke="#6366f1" strokeWidth="1.5" />
-                <circle cx="480" cy="0" r="180" stroke="#8b5cf6" strokeWidth="1" />
-                <circle cx="480" cy="0" r="260" stroke="#6366f1" strokeWidth="0.8" />
-                <circle cx="480" cy="0" r="340" stroke="#a78bfa" strokeWidth="0.5" />
-                <circle cx="480" cy="0" r="420" stroke="#6366f1" strokeWidth="0.4" />
-            </svg>
-
-            {/* ── Layer 5: Bottom-left ring accent ── */}
-            <svg className="absolute bottom-0 left-0 w-[360px] h-[360px] pointer-events-none opacity-[0.05] z-0" viewBox="0 0 360 360" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="0" cy="360" r="80" stroke="#8b5cf6" strokeWidth="1.5" />
-                <circle cx="0" cy="360" r="150" stroke="#6366f1" strokeWidth="1" />
-                <circle cx="0" cy="360" r="240" stroke="#a78bfa" strokeWidth="0.6" />
-                <circle cx="0" cy="360" r="320" stroke="#6366f1" strokeWidth="0.4" />
-            </svg>
-
-            {/* ── Layer 6: Diagonal shimmer line ── */}
-            <div className="fixed inset-0 pointer-events-none z-0 opacity-[0.035]"
-                style={{ background: 'repeating-linear-gradient(125deg, transparent 0px, transparent 80px, rgba(99,102,241,0.4) 80px, rgba(99,102,241,0.4) 81px)' }} />
-
-            {/* SECTION 1: OVERVIEW */}
-            <motion.section 
-                id="overview" 
-                className="min-h-[calc(100vh-80px)] flex flex-col justify-center p-8 md:p-20 relative"
-                {...HERO_ANIM}
-            >
-                <div className="w-full">
-                    <div className="inline-flex items-center gap-3 px-5 py-2 bg-gray-50 border border-gray-100 rounded-full mb-10 shadow-sm">
-                        <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 anim-pulse"></div>
-                        <span className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-500">System Core</span>
-                    </div>
-
-                    <h1 className="text-6xl md:text-8xl font-black tracking-tighter leading-[0.9] mb-10 translate-x-[-4px] relative">
-                        Mission <br/>
-                        <span className="text-gradient-hero">Control</span>
-                        <div className="absolute -top-10 -right-10 w-40 h-40 bg-fuchsia-400/20 blur-[60px] rounded-full -z-10 animate-pulse" />
-                    </h1>
-
-                    <p className="font-medium text-2xl text-gray-400 max-w-2xl leading-relaxed mb-16">
-                        The nerve center for Cognify's global operations. Monitor metrics, manage users, and scale your learning cluster.
-                    </p>
-
-                    {/* Metrics Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative z-10">
-                        {/* Users Card */}
-                        <motion.div 
-                            whileHover={{ y: -8, scale: 1.02 }}
-                            className="glass-card p-10 rounded-[3.5rem] border border-white/60 shadow-2xl shadow-fuchsia-100/30 group relative overflow-hidden"
-                        >
-                            <div className="absolute -right-4 -top-4 w-32 h-32 bg-fuchsia-400/10 blur-3xl rounded-full group-hover:bg-fuchsia-400/20 transition-colors" />
-                            <div className="flex items-center gap-4 mb-8">
-                                <div className="w-14 h-14 rounded-2xl bg-fuchsia-50 flex items-center justify-center text-fuchsia-500 border border-fuchsia-100">
-                                    <Users className="w-7 h-7" />
-                                </div>
-                                <span className="text-xs font-black uppercase text-fuchsia-400 tracking-widest">Active Users</span>
-                            </div>
-                            <span className="text-6xl font-black text-gray-900 block mb-2 tracking-tighter">
-                                {loading ? <Skeleton className="w-24 h-12" /> : stats.totalUsers}
-                            </span>
-                            <p className="text-gray-400 font-bold text-sm">Registered Students</p>
-                        </motion.div>
-
-                        {/* Storage Card */}
-                        <motion.div 
-                            whileHover={{ y: -8, scale: 1.02 }}
-                            className="glass-card p-10 rounded-[3.5rem] border border-white/60 shadow-2xl shadow-sky-100/30 group relative overflow-hidden"
-                        >
-                            <div className="absolute -right-4 -top-4 w-32 h-32 bg-sky-400/10 blur-3xl rounded-full group-hover:bg-sky-400/20 transition-colors" />
-                            <div className="flex items-center gap-4 mb-8">
-                                <div className="w-14 h-14 rounded-2xl bg-sky-50 flex items-center justify-center text-sky-500 border border-sky-100">
-                                    <HardDrive className="w-7 h-7" />
-                                </div>
-                                <span className="text-xs font-black uppercase text-sky-400 tracking-widest">Cluster Size</span>
-                            </div>
-                            <span className="text-6xl font-black text-gray-900 block mb-2 tracking-tighter">
-                                {loading ? <Skeleton className="w-32 h-12" /> : formatBytes(stats.totalStorage)}
-                            </span>
-                            <div className="w-full bg-gray-100 rounded-full h-1.5 mt-4 overflow-hidden">
-                                <div 
-                                    className="h-full bg-sky-500 rounded-full shadow-[0_0_8px_rgba(14,165,233,0.5)]" 
-                                    style={{ width: `100%` }} 
-                                />
-                            </div>
-                        </motion.div>
-
-                        {/* Logs Card */}
-                        <motion.div 
-                            whileHover={{ y: -8, scale: 1.02 }}
-                            className="glass-card p-10 rounded-[3.5rem] border border-white/60 shadow-2xl shadow-emerald-100/30 group relative overflow-hidden"
-                        >
-                            <div className="absolute -right-4 -top-4 w-32 h-32 bg-emerald-400/10 blur-3xl rounded-full group-hover:bg-emerald-400/20 transition-colors" />
-                            <div className="flex items-center gap-4 mb-8">
-                                <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-500 border border-emerald-100">
-                                    <FileText className="w-7 h-7" />
-                                </div>
-                                <span className="text-xs font-black uppercase text-emerald-400 tracking-widest">Events</span>
-                            </div>
-                            <span className="text-6xl font-black text-gray-900 block mb-2 tracking-tighter">
-                                {loading ? <Skeleton className="w-20 h-12" /> : stats.onlineNow}
-                            </span>
-                            <p className="text-gray-400 font-bold text-sm">System Actions Today</p>
-                        </motion.div>
-                    </div>
-
-                    {/* Live Operations & Monitoring */}
-                    <div className="mt-20 grid grid-cols-1 lg:grid-cols-3 gap-8 pb-20">
-                        {/* Monitor Feed */}
-                        <div className="lg:col-span-2 glass-card rounded-[3.5rem] border border-white/60 p-10 relative overflow-hidden">
-                            <div className="flex items-center justify-between mb-10">
-                                <div>
-                                    <h3 className="text-2xl font-black text-gray-900 tracking-tight">Live Pulse</h3>
-                                    <p className="text-xs font-bold text-gray-400 uppercase tracking-[0.2em] mt-1">Real-time audit stream</p>
-                                </div>
-                                <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100">
-                                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                    <span className="text-[10px] font-black uppercase tracking-widest">Broadcasting</span>
-                                </div>
-                            </div>
-                            
-                            <ActivityStream limit={6} compact={true} />
-                            
-                            <button 
-                                onClick={() => navigate('/admin/logs')}
-                                className="w-full mt-10 py-4 bg-gray-50 hover:bg-gray-100 rounded-2xl text-xs font-black uppercase tracking-widest text-gray-500 transition-all border border-gray-100"
+            <div className="flex items-center justify-between flex-none">
+                <div className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-500">Mission Control</span>
+                    <span className="text-[10px] text-gray-200 font-bold mx-1">·</span>
+                    <div className="flex items-center gap-2 bg-white/50 border border-white/60 p-1 rounded-full overflow-hidden shadow-sm">
+                        {['7d', '30d', '90d'].map(r => (
+                            <button
+                                key={r}
+                                onClick={() => setRange(r)}
+                                className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full transition-all ${range === r ? 'bg-indigo-500 text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
                             >
-                                Enter Detailed Archive
+                                {r}
                             </button>
-                        </div>
-
-                        {/* System Health (Minimal Analytics) */}
-                        <div className="space-y-8">
-                            <div className="glass-card rounded-[3rem] border border-white/60 p-8 relative overflow-hidden group">
-                                <div className="absolute inset-0 bg-gradient-to-br from-emerald-400/5 to-transparent pointer-events-none" />
-                                <div className="flex items-center gap-4 mb-6">
-                                    <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-500">
-                                        <Activity className="w-6 h-6" />
-                                    </div>
-                                    <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Network Latency</span>
-                                </div>
-                                <div className="flex items-end gap-2">
-                                    <span className="text-4xl font-black text-gray-900 tracking-tighter">
-                                        {sysStats?.latency || '24ms'}
-                                    </span>
-                                    <span className="text-emerald-500 text-xs font-black mb-1 uppercase">Optimal</span>
-                                </div>
-                            </div>
-
-                            {/* Engagement Sparkline */}
-                            <div className="glass-card rounded-[3rem] border border-white/60 p-8 relative overflow-hidden group">
-                                <div className="absolute inset-0 bg-gradient-to-br from-indigo-400/5 to-transparent pointer-events-none" />
-                                <div className="flex items-center justify-between mb-6">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500">
-                                            <BarChart3 className="w-6 h-6" />
-                                        </div>
-                                        <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">30D Engagement</span>
-                                    </div>
-                                    <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded-full">DAU Pulse</span>
-                                </div>
-                                <div className="flex items-baseline gap-3 mb-4">
-                                    <span className="text-4xl font-black text-gray-900 tracking-tighter">
-                                        {engagement?.dau?.slice(-1)[0]?.count || 0}
-                                    </span>
-                                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Active Today</span>
-                                </div>
-                                <div className="flex items-end gap-1 h-16 group/spark">
-                                    {(engagement?.dau || []).slice(-14).map((d, i) => (
-                                        <div key={i} className="flex-1 group/bar relative">
-                                            <div 
-                                                className="w-full bg-indigo-100 group-hover/bar:bg-indigo-400 transition-all rounded-t-sm relative"
-                                                style={{ height: `${Math.max(15, (d.count / (Math.max(...engagement.dau.map(x => x.count)) || 1)) * 100)}%` }}
-                                            >
-                                                <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-[9px] font-black px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
-                                                    {d.count}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="glass-card rounded-[3rem] border border-white/60 p-8 relative overflow-hidden group">
-                                <div className="absolute inset-0 bg-gradient-to-br from-sky-400/5 to-transparent pointer-events-none" />
-                                <div className="flex items-center gap-4 mb-6">
-                                    <div className="w-12 h-12 rounded-2xl bg-sky-50 flex items-center justify-center text-sky-500">
-                                        <Cpu className="w-6 h-6" />
-                                    </div>
-                                    <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Cluster CPU</span>
-                                </div>
-                                <div className="flex items-end gap-2">
-                                    <span className="text-4xl font-black text-gray-900 tracking-tighter">
-                                        {sysStats ? `${sysStats.cpu}%` : '12.5%'}
-                                    </span>
-                                    <span className="text-sky-500 text-xs font-black mb-1 uppercase">Stable</span>
-                                </div>
-                            </div>
-
-                            <div className="glass-card rounded-[3rem] border border-white/60 p-8 relative overflow-hidden group">
-                                <div className="absolute inset-0 bg-gradient-to-br from-amber-400/5 to-transparent pointer-events-none" />
-                                <div className="flex items-center gap-4 mb-6">
-                                    <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500">
-                                        <Server className="w-6 h-6" />
-                                    </div>
-                                    <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Node Uptime</span>
-                                </div>
-                                <div className="flex items-end gap-2">
-                                    <span className="text-4xl font-black text-gray-900 tracking-tighter">
-                                        {sysStats ? `${sysStats.memory.percentage}%` : '99.9%'}
-                                    </span>
-                                    <span className="text-amber-500 text-xs font-black mb-1 uppercase">
-                                        {sysStats ? 'RAM Load' : 'Reliable'}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="mt-24">
-                        <AdminAlertCentre limit={3} />
+                        ))}
                     </div>
                 </div>
                 
-                <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 0.3 }}
-                    transition={{ delay: 2 }}
-                    className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
-                >
-                </motion.div>
-            </motion.section>
-
-            <footer className="py-20 border-t border-gray-50 flex flex-col items-center">
-                <div className="w-12 h-12 bg-gray-900 rounded-2xl flex items-center justify-center mb-8">
-                    <span className="text-white text-sm font-black italic">C</span>
+                <div className="flex items-center gap-3">
+                    <button onClick={handleExport} className="flex items-center gap-2 px-4 py-1.5 bg-white border border-gray-100 rounded-full shadow-sm hover:shadow-md transition-all active:scale-95 group">
+                        <Download className="w-3 h-3 text-gray-400 group-hover:text-indigo-500" />
+                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest group-hover:text-gray-700">Export CSV</span>
+                    </button>
+                    <div className="h-6 w-px bg-gray-200/50 mx-1" />
+                    <span className="text-[10px] font-black text-gray-300 uppercase tracking-widest">
+                        {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </span>
                 </div>
-                <p className="text-[10px] font-black uppercase tracking-[1em] text-gray-300">Cognify Admin Cluster &bull; {new Date().getFullYear()}</p>
-            </footer>
+            </div>
+
+            {engagement?.anomaly && (
+                <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+                    className={`flex-none flex items-center justify-between px-6 py-2.5 rounded-3xl border border-rose-100 shadow-lg relative overflow-hidden ${engagement.anomaly.severity === 'high' ? 'bg-rose-50' : 'bg-amber-50 border-amber-100'}`}
+                >
+                    <div className="flex items-center gap-3 relative z-10">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${engagement.anomaly.severity === 'high' ? 'bg-rose-100 text-rose-500' : 'bg-amber-100 text-amber-500'}`}>
+                            <AlertTriangle className="w-4 h-4" />
+                        </div>
+                        <div>
+                            <p className={`text-[10px] font-black uppercase tracking-widest ${engagement.anomaly.severity === 'high' ? 'text-rose-500' : 'text-amber-500'}`}>Protocol Delta Detected</p>
+                            <p className="text-xs font-bold text-gray-700">{engagement.anomaly.message}</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1 bg-white/60 border border-white/80 rounded-full">
+                        {engagement.anomaly.delta < 0 ? <ArrowDownRight className="w-3 h-3 text-rose-500" /> : <ArrowUpRight className="w-3 h-3 text-emerald-500" />}
+                        <span className={`text-[10px] font-black ${engagement.anomaly.delta < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>{engagement.anomaly.delta}%</span>
+                    </div>
+                </motion.div>
+            )}
+
+            <div className="grid grid-cols-4 gap-3 flex-none">
+                <KpiCard icon={<Users className="w-4 h-4" />} label="Total Learners" value={totalUsers} sub="Registered students" color="fuchsia" loading={loading} />
+                <KpiCard icon={<Activity className="w-4 h-4" />} label="Active Learners" value={activeToday} sub="Current active users" color="indigo" loading={loading} onClick={() => handleDrillDown('active_users', null, 'Active Users History')} />
+                <KpiCard icon={<Brain className="w-4 h-4" />} label="Study Sessions" value={quizToday + flashToday} sub="Quizzes & flashcards today" color="emerald" loading={loading} />
+                <KpiCard icon={<Smile className="w-4 h-4" />} label="Satisfaction Index" value={avgSessions} sub="Avg sessions per learner" color="amber" loading={loading} />
+            </div>
+
+            <div className="grid grid-cols-12 gap-3 flex-1 min-h-0">
+                <div className="col-span-8 glass-card rounded-[2rem] border border-white/70 p-5 flex flex-col overflow-hidden shadow-xl shadow-indigo-100/20">
+                    <div className="flex items-center justify-between flex-none mb-2">
+                        <div>
+                            <p className="text-xs font-black text-gray-800 tracking-tight">{range} Engagement</p>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">Daily active learners</p>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 rounded-full border border-indigo-100">
+                            <TrendingUp className="w-3 h-3 text-indigo-500" />
+                            <span className="text-[9px] font-black uppercase tracking-widest text-indigo-500">Trend</span>
+                        </div>
+                    </div>
+                    <div className="flex items-baseline gap-2 mb-3 flex-none">
+                        <span className="text-3xl font-black text-gray-900 tracking-tighter">{activeToday}</span>
+                        <span className="text-[10px] font-black text-gray-400 uppercase">active today</span>
+                    </div>
+                    <div className="flex items-end gap-[2px] flex-1 min-h-0">
+                        {dau.map((d, i) => (
+                            <div key={i} className="flex-1 h-full flex items-end group/bar">
+                                <div className="w-full rounded-t-sm bg-indigo-100 group-hover/bar:bg-indigo-500 transition-colors duration-150 relative" style={{ height: `${Math.max(5, (d.count / maxDau) * 100)}%` }}>
+                                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-[9px] font-black px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">{d.count}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="col-span-4 flex flex-col gap-3 min-h-0">
+                    <div className="glass-card rounded-[2rem] border border-white/70 p-5 shadow-xl shadow-emerald-100/20 flex-none">
+                        <p className="text-xs font-black text-gray-800 tracking-tight mb-0.5">Performance Activity</p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-3">{range} quiz & flashcard sessions</p>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-emerald-50 rounded-2xl p-3 border border-emerald-100">
+                                <div className="flex items-center gap-1.5 mb-1.5">
+                                    <Target className="w-3 h-3 text-emerald-500" />
+                                    <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">Quizzes</span>
+                                </div>
+                                <span className="text-2xl font-black text-gray-900 tracking-tighter">{loading ? <Skeleton className="w-10 h-6" /> : quizTotal}</span>
+                            </div>
+                            <div className="bg-indigo-50 rounded-2xl p-3 border border-indigo-100">
+                                <div className="flex items-center gap-1.5 mb-1.5">
+                                    <Zap className="w-3 h-3 text-indigo-500" />
+                                    <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest">Flashcards</span>
+                                </div>
+                                <span className="text-2xl font-black text-gray-900 tracking-tighter">{loading ? <Skeleton className="w-10 h-6" /> : flashTotal}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="glass-card rounded-[2rem] border border-white/70 p-5 flex flex-col flex-1 min-h-0 overflow-hidden shadow-xl shadow-emerald-100/10">
+                        <div className="flex items-center justify-between flex-none mb-3">
+                            <div>
+                                <p className="text-xs font-black text-gray-800 tracking-tight">Live Pulse</p>
+                                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">Student activity stream</p>
+                            </div>
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 rounded-full border border-emerald-100">
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500">Live</span>
+                            </div>
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-hidden">
+                            <ActivityStream limit={4} compact={true} />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <DrillDownModal isOpen={!!drillingDown} onClose={() => setDrillingDown(null)} title={drillingDown} data={drillData} loading={drillLoading} />
         </div>
     );
 };

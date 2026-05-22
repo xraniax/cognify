@@ -49,13 +49,14 @@ export const ChatService = {
         sessionId,
         subjectId,
         question,
-        history = [],
-        materialIds = [],
+        history,
+        materialIds,
         signal,
         onSession,
         onToken,
         onDone,
         onError,
+        globalSearch = false,
     }) => {
         const response = await authFetch(`${API_URL}/chat/stream`, {
             method: 'POST',
@@ -66,6 +67,7 @@ export const ChatService = {
                 question,
                 conversation_history: history,
                 materialIds,
+                globalSearch,
             }),
             signal,
         });

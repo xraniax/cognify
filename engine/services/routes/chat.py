@@ -138,7 +138,7 @@ async def chat_route(body: UnifiedChatRequest, db: Session = Depends(get_db)):
                             request_id, max_similarity)
             else:
                 return UnifiedChatResponse(
-                    answer="That question appears unrelated to the selected material.",
+                    answer="This question isn't addressed in the uploaded files.",
                     sources=[], confidence=max_similarity,
                     latency_ms=round((time.perf_counter() - t_start) * 1000, 2),
                 )
@@ -156,8 +156,13 @@ async def chat_route(body: UnifiedChatRequest, db: Session = Depends(get_db)):
         )
         t_elapsed_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
-        chunk_by_id = {c.id: c for c, _ in chunks_with_scores}
+        answer = result["answer"]
         cited_ids = result.get("cited_ids") or []
+        if cited_ids:
+            if not answer.lower().startswith("according to"):
+                answer = "According to the uploaded files, " + answer[0].lower() + answer[1:]
+
+        chunk_by_id = {c.id: c for c, _ in chunks_with_scores}
         sources = [
             ChatSource(
                 chunk_id=cid, document_id=chunk_by_id[cid].document_id,
@@ -174,7 +179,7 @@ async def chat_route(body: UnifiedChatRequest, db: Session = Depends(get_db)):
                     request_id, t_elapsed_ms, result["confidence"], len(sources))
 
         return UnifiedChatResponse(
-            answer=result["answer"], sources=sources,
+            answer=answer, sources=sources,
             confidence=result["confidence"], latency_ms=t_elapsed_ms
         )
 
@@ -230,71 +235,101 @@ async def chat_stream_route(body: UnifiedChatRequest, db: Session = Depends(get_
             except Exception as e:
                 logger.warning("[CHAT/STREAM] request_id=%s doc-check failed: %s", request_id, e)
 
-            # ── 2. Retrieve chunks (use original question — skip condense to avoid
-            #       a blocking Ollama round-trip before any tokens are streamed) ─
+            # ── 2. Retrieve chunks (use condensed question for continuity) ───
             history_dicts = [{"role": m.role, "content": m.content} for m in body.conversation_history]
+            
+            # Use original question if history is empty, else condense
+            if not history_dicts:
+                retrieval_topic = body.question
+            else:
+                try:
+                    # Condense question to make it history-aware for retrieval
+                    retrieval_topic = await condense_question(
+                        question=body.question, 
+                        history=history_dicts[-10:], # Consider last 10 turns
+                        language=body.language
+                    )
+                except Exception as e:
+                    logger.warning("[CHAT/STREAM] request_id=%s condense failed: %s", request_id, e)
+                    retrieval_topic = body.question
+
             chunks_with_scores = retrieve_chunks_by_topic(
-                db, body.subject_id, body.question,
-                material_ids=body.material_ids, top_k=min(body.top_k, 4)
+                db, body.subject_id, retrieval_topic,
+                material_ids=body.material_ids, 
+                top_k=min(body.top_k, 6), # Slightly more context
+                user_id=body.user_id,
+                global_search=body.global_search
             )
 
-            if not chunks_with_scores:
-                msg = ("I couldn't find relevant information in the selected materials."
-                       if body.material_ids else
-                       "I couldn't find relevant information in your uploaded documents for this question.")
-                yield f'data: {json.dumps({"type": "token", "text": msg})}\n\n'
-                yield f'data: {json.dumps({"type": "done", "sources": [], "confidence": 0.0})}\n\n'
-                return
-
-            max_similarity = max(score for _, score in chunks_with_scores)
-            logger.info("[CHAT/STREAM] request_id=%s max_similarity=%.4f", request_id, max_similarity)
-
-            if max_similarity < SIMILARITY_THRESHOLD:
-                msg = "That question appears unrelated to the selected material."
-                yield f'data: {json.dumps({"type": "token", "text": msg})}\n\n'
-                yield f'data: {json.dumps({"type": "done", "sources": [], "confidence": max_similarity})}\n\n'
-                return
+            # Calculate max similarity
+            max_similarity = max([score for _, score in chunks_with_scores]) if chunks_with_scores else 0.0
+            logger.info("[CHAT/STREAM] request_id=%s retrieval_topic='%s' max_similarity=%.4f", 
+                         request_id, retrieval_topic, max_similarity)
 
             # ── 4. Build streaming prompt ─────────────────────────────────────
-            context_parts = []
-            for c, _ in chunks_with_scores:
-                page = getattr(c, "page_number", None)
-                page_str = f" p.{page}" if page is not None else ""
-                # Cap each chunk at 300 chars to keep total context small
-                snippet = (c.content or "").strip()[:300]
-                context_parts.append(f"[{c.id}{page_str}] {snippet}")
-            context_block = "\n".join(context_parts)
+            context_block = ""
+            if chunks_with_scores and max_similarity >= SIMILARITY_THRESHOLD:
+                context_parts = []
+                for c, _ in chunks_with_scores:
+                    page = getattr(c, "page_number", None)
+                    page_str = f" p.{page}" if page is not None else ""
+                    snippet = (c.content or "").strip()[:500]
+                    context_parts.append(f"[{c.id}{page_str}] {snippet}")
+                context_block = "\n".join(context_parts)
 
-            # Only include the last 4 turns of history
+            # Only include the last 8 turns of history for cleaner context
             history_lines = []
-            for msg in history_dicts[-4:]:
-                role = str(msg.get("role", "user")).capitalize()
-                content = str(msg.get("content", "")).strip()[:200]
+            for msg in history_dicts[-8:]:
+                role = "Student" if msg.get("role") == "user" else "Assistant"
+                content = str(msg.get("content", "")).strip()
                 if content:
                     history_lines.append(f"{role}: {content}")
             history_block = "\n".join(history_lines) if history_lines else ""
 
-            prompt = (
-                f"You are a study assistant. Answer based ONLY on the context below. "
-                f"Respond in {body.language}. Be concise.\n\n"
-                f"Context:\n{context_block}\n\n"
+            system_instruction = (
+                f"You are Cognify AI, a premium study assistant. "
+                f"Answer in {body.language}. "
             )
+
+            if body.profile_context:
+                system_instruction += f"\nUser Profile & Goals:\n{body.profile_context}\n"
+
+            if context_block:
+                system_instruction += (
+                    "\nAnswer the student's question based on the following context from their uploaded study materials. "
+                    "Start your answer directly — do not repeat 'According to the uploaded files' since it is already prepended. "
+                    "Do not add information beyond what the context provides.\n\n"
+                    f"Context:\n{context_block}\n"
+                )
+            else:
+                system_instruction += (
+                    "\nAnswer the student's question using your general knowledge. "
+                    "Start your answer directly with the content — no preamble needed."
+                )
+
+            prompt = f"{system_instruction}\n\n"
             if history_block:
-                prompt += f"History:\n{history_block}\n\n"
-            prompt += f"Question: {body.question}\nAnswer:"
+                prompt += f"Recent Conversation History:\n{history_block}\n\n"
+            prompt += f"Student: {body.question}\nAssistant:"
 
             ollama_payload = {
                 "model": OLLAMA_GENERATION_MODEL,
                 "prompt": prompt,
                 "stream": True,
                 "options": {
-                    "num_ctx": 2048,
-                    "num_predict": 512,
+                    "num_ctx": 4096,
+                    "num_predict": 1024,
                     "temperature": 0.7,
                 },
             }
 
-            # ── 5. Stream tokens from Ollama ──────────────────────────────────
+            # ── 5. Inject prefix token, then stream Ollama response ───────────
+            if context_block:
+                prefix = "According to the uploaded files, "
+            else:
+                prefix = "This question isn't addressed in the uploaded files.\n\n"
+            yield f'data: {json.dumps({"type": "token", "text": prefix})}\n\n'
+
             timeout = httpx.Timeout(OLLAMA_CHAT_TIMEOUT)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream("POST", OLLAMA_GENERATE_URL, json=ollama_payload) as resp:

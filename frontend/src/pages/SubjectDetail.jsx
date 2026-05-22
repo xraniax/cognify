@@ -35,6 +35,7 @@ const SubjectDetail = () => {
         handleFeedback, handleBookmark, handleCopyMessage,
         handleEditAndResend, handleRegenerate,
         isStreaming, isThinking, chatError, setChatMessages, setChatError,
+        globalSearch, setGlobalSearch,
         chatEndRef, chatCollapsed, setChatCollapsed,
         filePanelCollapsed, setFilePanelCollapsed,
         genType, setGenType, handleGenerate, isGenerating,
@@ -249,6 +250,10 @@ const SubjectDetail = () => {
                         savedLoading={savedLoading}
                         renameSession={renameSession}
                         deleteSession={deleteSession}
+
+                        // Global Search
+                        globalSearch={globalSearch}
+                        setGlobalSearch={setGlobalSearch}
 
                         // Layout
                         onCollapse={() => setChatCollapsed(true)}

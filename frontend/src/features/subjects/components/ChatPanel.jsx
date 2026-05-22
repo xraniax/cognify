@@ -5,7 +5,7 @@ import {
     Square, Copy, ThumbsUp, ThumbsDown, Bookmark, BookmarkCheck,
     RefreshCw, PenLine, PanelRightClose, History,
     ChevronDown, Sparkles, BookOpen, HelpCircle, Lightbulb,
-    Check,
+    Check, Globe
 } from 'lucide-react';
 import { motion as m } from 'framer-motion';
 import MarkdownRenderer from './MarkdownRenderer';
@@ -329,6 +329,10 @@ const ChatPanel = ({
     renameSession,
     deleteSession,
 
+    // Global Search
+    globalSearch,
+    setGlobalSearch,
+
     // Layout
     onCollapse,
 }) => {
@@ -479,13 +483,32 @@ const ChatPanel = ({
                             <span className="font-black tracking-[0.2em] uppercase text-[10px] text-gray-400 block">
                                 AI Tutor
                             </span>
-                            {streaming && (
+                            {streaming ? (
                                 <span className="text-[9px] text-indigo-400 font-bold animate-pulse">Generating...</span>
+                            ) : (
+                                <div className="flex items-center gap-1.5">
+                                    <Globe className={`w-3 h-3 ${globalSearch ? 'text-indigo-500' : 'text-gray-300'}`} />
+                                    <span className="text-[9px] text-gray-400 font-bold">
+                                        {globalSearch ? 'Global Search' : 'Current Subject'}
+                                    </span>
+                                </div>
                             )}
                         </div>
                     </div>
 
                     <div className="flex items-center gap-1.5">
+                        <motion.button
+                            whileTap={{ scale: 0.9 }}
+                            onClick={() => setGlobalSearch(!globalSearch)}
+                            className={`p-2 rounded-xl transition-all border-2 ${
+                                globalSearch 
+                                    ? 'bg-indigo-500 text-white border-indigo-400 shadow-md shadow-indigo-100' 
+                                    : 'hover:bg-indigo-50 text-indigo-400 hover:text-indigo-600 border-transparent'
+                            }`}
+                            title={globalSearch ? "Searching across all subjects" : "Searching only current subject (Click to search globally)"}
+                        >
+                            <Globe className="w-4 h-4" />
+                        </motion.button>
                         <motion.button
                             whileTap={{ scale: 0.9 }}
                             onClick={handleNewChat}
@@ -506,11 +529,29 @@ const ChatPanel = ({
                 </div>
 
                 {/* Context info strip */}
-                {contextInfo && (
-                    <div className="px-4 py-1.5 border-b text-xs text-gray-400 font-medium bg-gray-50/50 shrink-0" style={{ borderColor: 'var(--c-border-soft)' }}>
-                        {contextInfo}
-                    </div>
-                )}
+                <AnimatePresence>
+                    {(contextInfo || globalSearch) && (
+                        <motion.div 
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="px-4 py-2 border-b text-[10px] font-black uppercase tracking-widest flex items-center justify-between bg-white/50 backdrop-blur-sm shrink-0 overflow-hidden" 
+                            style={{ borderColor: 'var(--c-border-soft)' }}
+                        >
+                            <div className="flex items-center gap-2">
+                                <Sparkles className="w-3 h-3 text-indigo-400" />
+                                <span className="text-gray-500">
+                                    {globalSearch ? 'Global retrieval enabled' : (contextInfo || 'No context selected')}
+                                </span>
+                            </div>
+                            {globalSearch && (
+                                <span className="text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded-md border border-indigo-100">
+                                    Cross-Subject
+                                </span>
+                            )}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
 
                 {/* Messages */}
                 <div

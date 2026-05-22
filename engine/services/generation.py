@@ -1393,6 +1393,7 @@ async def condense_question(
     """
     if not history:
         return question
+    return question
 
 
 

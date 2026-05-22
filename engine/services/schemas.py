@@ -106,8 +106,17 @@ class UnifiedChatRequest(BaseModel):
         description="Optional list of material UUIDs to restrict context retrieval."
     )
     top_k: int = Field(default=8, ge=1, le=50, description="Number of context chunks to retrieve.")
-
     language: str = Field(default="en", description="Language for the AI response.")
+    user_id: Optional[str] = Field(default=None, description="User ID for cross-subject search.")
+
+    profile_context: Optional[str] = Field(
+        default=None,
+        description="Optional student profile context (goals, stats) to personalize the response."
+    )
+    global_search: bool = Field(
+        default=False,
+        description="If true, searches for context across all subjects available to the user."
+    )
 
     @model_validator(mode="after")
     def sanitize_subject_id(self) -> "UnifiedChatRequest":

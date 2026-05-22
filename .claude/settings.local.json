@@ -18,7 +18,11 @@
       "PowerShell(Get-ChildItem -Recurse -Path \"C:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\\\\data\" -File | ForEach-Object { $_.FullName })",
       "PowerShell(Get-ChildItem -Recurse -Path \"C:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\\\\db\" -File | ForEach-Object { $_.FullName })",
       "Bash(python3 -c ' *)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:5000/api/admin/analytics?from=2026-04-21&to=2026-05-21\" -H \"Cookie: $\\(cat /tmp/admin_cookie 2>/dev/null\\)\")",
+      "Bash(docker compose *)",
+      "Bash(curl -s -o /dev/null -w \"backend: %{http_code}\\\\n\" http://localhost:5000/api/health)"
     ]
   }
 }

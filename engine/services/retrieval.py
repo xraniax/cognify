@@ -10,7 +10,7 @@ from utils.logging import get_job_logger
 QUIZ_TOP_K = int(os.getenv("QUIZ_TOP_K", "10"))
 ENABLE_RERANKING_PER_TASK = os.getenv("ENABLE_RERANKING_PER_TASK", "true").lower() == "true"
 
-from models import Chunk, Document
+from models import Chunk, Document, Subject
 
 from .embeddings import embed_step
 from .embedding_cache import get_cache
@@ -27,7 +27,9 @@ def retrieve_chunks_by_topic(
     job_id: Optional[str] = None,
     rerank: bool = True,
     task_type: Optional[str] = None,
-    source_filenames: Optional[List[str]] = None
+    source_filenames: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
+    global_search: bool = False
 ) -> List[tuple]:
     """
     Retrieve the top_k most relevant chunks for a given topic within a subject.
@@ -94,9 +96,15 @@ def retrieve_chunks_by_topic(
         
         query = session.query(Chunk, (1 - distance_col).label("similarity"))\
             .options(joinedload(Chunk.document))\
-            .join(Document)\
-            .filter(Document.subject_id == normalized_subject_id)\
-            .filter(Chunk.embedding.isnot(None))
+            .join(Document)
+            
+        if global_search and user_id:
+            query = query.join(Subject, Document.subject_id == Subject.id)\
+                         .filter(Subject.user_id == user_id)
+        else:
+            query = query.filter(Document.subject_id == normalized_subject_id)
+
+        query = query.filter(Chunk.embedding.isnot(None))
 
         if m_ids:
             query = query.filter(Document.material_id.in_(m_ids))

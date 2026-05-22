@@ -34,6 +34,7 @@ const AdminLayout = ({ children }) => {
                 { name: 'Dashboard', path: '/admin', id: 'overview', icon: LayoutDashboard, color: 'indigo' },
                 { name: 'Users', path: '/admin/users', id: 'users', icon: Users, color: 'fuchsia' },
                 { name: 'Files', path: '/admin/files', id: 'files', icon: HardDrive, color: 'sky' },
+                { name: 'Generations', path: '/admin/generation', id: 'generation', icon: FileText, color: 'violet' },
                 { name: 'Monitoring', path: '/admin/logs', id: 'logs', icon: Activity, color: 'emerald' },
                 { name: 'System Rules', path: '/admin/settings', id: 'settings', icon: Settings, color: 'amber' }
             ]
@@ -176,7 +177,8 @@ const AdminLayout = ({ children }) => {
                                                             ? `${item.color === 'fuchsia' ? 'bg-fuchsia-500 border-fuchsia-100 shadow-fuchsia-200' : 
                                                                  item.color === 'sky' ? 'bg-sky-500 border-sky-100 shadow-sky-200' :
                                                                  item.color === 'emerald' ? 'bg-emerald-500 border-emerald-100 shadow-emerald-200' :
-                                                                 item.color === 'amber' ? 'bg-amber-500 border-amber-100 shadow-amber-200' : 'bg-gray-900 border-white shadow-indigo-200'} scale-110 text-white shadow-2xl` 
+                                                                 item.color === 'amber' ? 'bg-amber-500 border-amber-100 shadow-amber-200' : 
+                                                                 item.color === 'violet' ? 'bg-violet-500 border-violet-100 shadow-violet-200' : 'bg-gray-900 border-white shadow-indigo-200'} scale-110 text-white shadow-2xl` 
                                                             : isDone
                                                                 ? `bg-white border-gray-900 text-gray-900`
                                                                 : 'bg-white border-gray-50 text-gray-200'
@@ -199,7 +201,8 @@ const AdminLayout = ({ children }) => {
                                                                 ${item.color === 'fuchsia' ? 'bg-fuchsia-50 border-fuchsia-100/50' : 
                                                                   item.color === 'sky' ? 'bg-sky-50 border-sky-100/50' :
                                                                   item.color === 'emerald' ? 'bg-emerald-50 border-emerald-100/50' :
-                                                                  item.color === 'amber' ? 'bg-amber-50 border-amber-100/50' : 'bg-gray-50 border-gray-100/50'}
+                                                                  item.color === 'amber' ? 'bg-amber-50 border-amber-100/50' : 
+                                                                  item.color === 'violet' ? 'bg-violet-50 border-violet-100/50' : 'bg-gray-50 border-gray-100/50'}
                                                             `}
                                                             transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
                                                         />

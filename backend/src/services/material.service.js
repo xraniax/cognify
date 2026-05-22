@@ -567,7 +567,9 @@ class MaterialService {
       finalTitle,
       '',
       materialType,
-      PROCESSING
+      PROCESSING,
+      null,
+      gps
     );
 
     const enginePayload = {
@@ -648,7 +650,9 @@ class MaterialService {
       finalTitle,
       '',
       materialType,
-      PENDING_JOB
+      PENDING_JOB,
+      null,
+      gps
     );
 
     const sourceFilenames = sourceDocuments

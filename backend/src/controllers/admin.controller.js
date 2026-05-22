@@ -269,15 +269,69 @@ class AdminController {
     }
 
     /**
-     * Get user behavior analytics (aggregated)
+     * Get user behavior analytics (aggregated) with optional date range
      */
     static async getAnalytics(req, res) {
         try {
-            const analytics = await AdminService.getUserBehaviorAnalytics();
+            const { from, to } = req.query;
+            const analytics = await AdminService.getUserBehaviorAnalytics(from, to);
             res.json({ success: true, data: analytics });
         } catch (error) {
             console.error('Admin Fetch Analytics Error:', error);
             res.status(500).json({ success: false, message: 'Failed to fetch user behavior analytics' });
+        }
+    }
+
+    /**
+     * Get drill-down details for a specific metric
+     */
+    static async getDrillDown(req, res) {
+        try {
+            const { metric, type, from, to } = req.query;
+            if (!metric) return res.status(400).json({ success: false, message: 'metric is required' });
+            
+            const data = await AdminService.getAnalyticsDrillDown(metric, type, from, to);
+            res.json({ success: true, data });
+        } catch (error) {
+            console.error('Admin Fetch Drill-down Error:', error);
+            res.status(500).json({ success: false, message: 'Failed to fetch drill-down data' });
+        }
+    }
+
+    /**
+     * Export analytics as CSV
+     */
+    static async exportAnalytics(req, res) {
+        try {
+            const { from, to, source = 'dau' } = req.query;
+            const analytics = await AdminService.getUserBehaviorAnalytics(from, to);
+            
+            let filename = `cognify_analytics_${source}_${new Date().toISOString().split('T')[0]}.csv`;
+            let csvContent = '';
+
+            if (source === 'dau') {
+                csvContent = 'Date,Active Users\n';
+                analytics.dau.forEach(row => {
+                    csvContent += `${row.date.toISOString().split('T')[0]},${row.count}\n`;
+                });
+            } else if (source === 'study') {
+                csvContent = 'Date,Type,Count\n';
+                analytics.studyActivity.forEach(row => {
+                    csvContent += `${row.date.toISOString().split('T')[0]},${row.type},${row.count}\n`;
+                });
+            } else if (source === 'subjects') {
+                csvContent = 'Subject,Material Count\n';
+                analytics.topSubjects.forEach(row => {
+                    csvContent += `${row.name},${row.count}\n`;
+                });
+            }
+
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+            res.status(200).send(csvContent);
+        } catch (error) {
+            console.error('Admin Export Analytics Error:', error);
+            res.status(500).json({ success: false, message: 'Failed to export analytics' });
         }
     }
 
@@ -293,6 +347,21 @@ class AdminController {
             res.status(500).json({ success: false, message: 'Failed to fetch security analytics' });
         }
     }
+
+    /**
+     * Get generation operations analytics report
+     */
+    static async getGenerationReport(req, res) {
+        try {
+            const { from, to } = req.query;
+            const data = await AdminService.getGenerationAnalytics(from, to);
+            res.json({ success: true, data });
+        } catch (error) {
+            console.error('Admin Generation Report Error:', error);
+            res.status(500).json({ success: false, message: 'Failed to fetch generation report' });
+        }
+    }
 }
 
 export default AdminController;
+
