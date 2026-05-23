@@ -35,24 +35,25 @@ const GoalsDrawer = () => {
     const fetchData = async () => {
         try {
             setLoading(true);
-            const [goalsData, statsData, activeSessionData] = await Promise.all([
+            const [goalsRes, statsRes, sessionRes] = await Promise.all([
                 goalService.getGoals(),
                 goalService.getStats(),
                 goalService.getActiveSession()
             ]);
-            setGoals(goalsData);
-            setStats(statsData);
-            if (activeSessionData) {
-                setActiveSession(activeSessionData);
-                const elapsed = Math.floor((new Date() - new Date(activeSessionData.startedAt)) / 1000);
-                setSessionTimer(elapsed);
+            setGoals(goalsRes.data?.data ?? []);
+            setStats(statsRes.data?.data ?? null);
+            const sessionData = sessionRes.data?.data ?? null;
+            if (sessionData) {
+                setActiveSession(sessionData);
+                const elapsed = Math.floor((Date.now() - new Date(sessionData.startedAt)) / 1000);
+                setSessionTimer(Math.max(0, elapsed));
             } else {
                 setActiveSession(null);
                 setSessionTimer(0);
             }
         } catch (error) {
             console.error('Error fetching data:', error);
-            toast.error('Failed to load missions');
+            toast.error('Failed to load goals');
         } finally {
             setLoading(false);
         }
@@ -109,21 +110,25 @@ const GoalsDrawer = () => {
 
     const handleStartSession = async (goalId) => {
         try {
-            const session = await goalService.startSession(goalId);
-            setActiveSession(session);
-            setSessionTimer(0);
-            toast.success('System Online: Studying now');
+            const res = await goalService.startSession({ goalId });
+            const session = res.data?.data ?? null;
+            if (session) {
+                setActiveSession(session);
+                setSessionTimer(0);
+                toast.success('Study session started');
+            }
         } catch (error) {
             toast.error('Failed to start session');
         }
     };
 
     const handleEndSession = async () => {
+        if (!activeSession?.sessionId) return;
         try {
-            await goalService.endSession();
+            await goalService.endSession(activeSession.sessionId);
             setActiveSession(null);
             setSessionTimer(0);
-            toast.success('Session Uploaded to Core');
+            toast.success('Session saved');
             fetchData();
         } catch (error) {
             toast.error('Failed to end session');
@@ -131,11 +136,11 @@ const GoalsDrawer = () => {
     };
 
     const handleQuickLog = async (goalId) => {
-        const minutes = prompt('How many minutes did you focus?');
+        const minutes = prompt('How many minutes did you study?');
         if (!minutes || isNaN(minutes)) return;
         try {
-            await goalService.logTime(goalId, parseInt(minutes));
-            toast.success('Deep Work Logged');
+            await goalService.logTime(parseInt(minutes));
+            toast.success('Time logged');
             fetchData();
         } catch (error) {
             toast.error('Failed to log time');
@@ -274,7 +279,7 @@ const GoalsDrawer = () => {
                                     </div>
                                     <h2 className="text-xl font-black text-gray-900 tracking-tight">Growth Engine</h2>
                                 </div>
-                                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">{stats?.active_goals || 0} Active Missions</p>
+                                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">{stats?.active_goals ?? 0} Active Goals</p>
                             </div>
                             <button
                                 onClick={toggleDrawer}

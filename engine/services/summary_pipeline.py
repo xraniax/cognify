@@ -512,41 +512,6 @@ async def _async_map_summaries(
     )
 
 
-    async def _map_one(idx: int, chunk: str):
-        nonlocal completed_count
-        async with sem:
-            result = await loop.run_in_executor(
-                None, _map_summarize_chunk, chunk, language, difficulty, timeout, retries, summary_mode,
-            )
-            completed_count += 1
-            if progress_queue is not None:
-                await progress_queue.put(f"map {completed_count}/{len(eligible)}")
-            return idx, result or ""
-
-    tasks = [_map_one(i, c) for i, c in enumerate(eligible)]
-    gathered = await asyncio.gather(*tasks, return_exceptions=True)
-
-    ordered = [None] * len(eligible)
-    for item in gathered:
-        if isinstance(item, Exception):
-            logger.warning("[SUMMARY][ASYNC_MAP] chunk failed: %s", item)
-            continue
-        idx, summary = item
-        ordered[idx] = summary
-
-    mapped = [s for s in ordered if s]
-    map_ms = int((time.perf_counter() - map_start) * 1000)
-    logger.info(
-        "[SUMMARY][ASYNC_MAP_END] total_ms=%d input=%d output=%d concurrency=%d",
-        map_ms, len(eligible), len(mapped), concurrency,
-    )
-
-    if progress_queue is not None:
-        await progress_queue.put(None)
-
-    return mapped
-
-
 
 # ── Streaming Summary Generation ─────────────────────────────────────────────
 
@@ -744,7 +709,7 @@ async def generate_summary_stream(
                     "[SUMMARY][REDUCE_PARTIAL_FAIL] attempt=%d/%d ms=%d tokens_yielded=%d error=%s",
                     attempt, retries, attempt_ms, token_count, e,
                 )
-                yield f"\n\n[Generation interrupted after {token_count} tokens — please retry]"
+                yield f"[ERROR] Generation interrupted after {token_count} tokens — please retry"
                 return
 
             if attempt == retries:
@@ -805,7 +770,7 @@ def generate_summary(
             "[SUMMARY][SYNC_SKIP] total_chars=%d < min=%d — document has too little text to summarize",
             total_chars, _MIN_SUMMARY_CHARS,
         )
-        return (
+        raise RuntimeError(
             "This document doesn't contain enough readable text to generate a summary. "
             "If it's a scanned image or PDF, try re-uploading with OCR enabled."
         )

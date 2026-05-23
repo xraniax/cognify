@@ -19,6 +19,7 @@ export const generateExamSchema = z.object({
     types: z.array(questionTypeSchema).min(1),
     title: z.string().trim().min(1).max(120).optional(),
     timeLimit: z.number().int().min(1).max(300).optional(),
+    mode: z.enum(['static', 'adaptive']).default('static'),
 });
 
 export const submitExamSchema = z.object({
@@ -51,3 +52,17 @@ export const saveAttemptSchema = z.object({
     flagged: z.record(z.string(), z.boolean()).default({}),
     startedAt: z.string().datetime().optional(),
 });
+
+export const nextBatchSchema = z.object({
+    examId: z.string().trim().min(1),
+    answers: z.array(
+        z.object({
+            questionId: z.string().trim().min(1),
+            selectedAnswers: z.array(z.number().int().min(0)).default([]),
+            answerText: z.string().optional(),
+            blankAnswers: z.array(z.string()).optional(),
+            matchAnswers: z.record(z.string(), z.string()).optional(),
+        })
+    ).default([]),
+});
+

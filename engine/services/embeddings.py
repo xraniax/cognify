@@ -58,6 +58,8 @@ async def _generate_embedding_async(
             
         except httpx.TimeoutException:
             logger.warning("%sEmbedding timeout (attempt %d/%d)", rid, attempt + 1, retries)
+        except httpx.HTTPStatusError as err:
+            logger.warning("%sEmbedding HTTP error (attempt %d/%d): %s", rid, attempt + 1, retries, err)
         except httpx.RequestError as err:
             logger.warning("%sEmbedding request failed (attempt %d/%d): %s", rid, attempt + 1, retries, err)
             
@@ -179,7 +181,7 @@ def embed_step(
         thread = threading.Thread(target=_run_in_thread, daemon=False)
         thread.start()
         thread.join()
-        result = result_container[0]
+        result = result_container[0] if result_container else [None] * len(texts)
         failed = sum(1 for e in result if e is None)
         logger.info(
             "[PIPELINE] embeddings_end request_id=%s mode=sync-thread count=%d failed=%d elapsed_ms=%d",

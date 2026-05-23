@@ -109,38 +109,23 @@ def detect_irrelevant_verbose_text(
 def detect_copied_reference(
     answer_text: str,
     reference_answer: str,
-    similarity_threshold: float = 0.92
+    similarity_threshold: float = 0.98
 ) -> Tuple[bool, float, str]:
     """
     Detect if student copied the reference answer directly.
     
-    Args:
-        answer_text: Student's answer
-        reference_answer: Reference answer
-        similarity_threshold: Threshold for copy detection
-        
-    Returns:
-        Tuple of (is_copied, confidence, message)
+    Only flag "copied answer" if similarity > 0.98 AND answer is longer than 12 words.
+    Otherwise do NOT mark suspicious.
     """
     similarity, _, _ = semantic_similarity_score(answer_text, reference_answer)
     
-    # Also check substring containment
-    answer_lower = answer_text.lower().strip()
-    ref_lower = reference_answer.lower().strip()
-    
-    # Direct containment check
-    is_contained = ref_lower in answer_lower or answer_lower in ref_lower
-    
-    # Length ratio check (if answer is very similar length to reference)
-    len_ratio = len(answer_text) / max(len(reference_answer), 1)
-    length_similar = 0.8 < len_ratio < 1.2
-    
-    is_copied = similarity > similarity_threshold or (is_contained and length_similar)
+    word_count = len(answer_text.split())
+    is_copied = similarity > 0.98 and word_count > 12
     
     if is_copied:
         message = (
             f"Answer appears to be copied from reference "
-            f"(similarity={similarity:.2f}, contained={is_contained})"
+            f"(similarity={similarity:.2f})"
         )
     else:
         message = ""

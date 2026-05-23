@@ -3,7 +3,7 @@ import { protect } from '../middlewares/auth.middleware.js';
 import validate from '../middlewares/validate.middleware.js';
 import { aiLimiter } from '../middlewares/rateLimiter.middleware.js';
 import ExamController from '../controllers/exam.controller.js';
-import { generateExamSchema, saveAttemptSchema, submitExamSchema } from '../middlewares/exam.validator.js';
+import { generateExamSchema, saveAttemptSchema, submitExamSchema, nextBatchSchema } from '../middlewares/exam.validator.js';
 
 const router = express.Router();
 
@@ -13,5 +13,6 @@ router.post('/generate', aiLimiter, validate(generateExamSchema), ExamController
 router.post('/attempts/save', validate(saveAttemptSchema), ExamController.saveAttempt);
 router.get('/attempts/:examId', ExamController.getAttempt);
 router.post('/submit', aiLimiter, validate(submitExamSchema), ExamController.submit);
+router.post('/next-batch', aiLimiter, validate(nextBatchSchema), ExamController.nextBatch);
 
 export default router;

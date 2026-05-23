@@ -28,6 +28,13 @@ export const READINESS_WEIGHTS = {
     flashcard: 0.25,
 };
 
+// Weights for combining quiz vs exam signals in cross-source trend & consistency.
+// Exam scores are less noisy than per-question quiz results — weighted higher.
+export const TREND_WEIGHTS = {
+    quiz: 0.40,
+    exam: 0.60,
+};
+
 export const FLASHCARD_OUTCOME_SCORES = {
     again: 0.00,
     hard:  0.33,

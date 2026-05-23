@@ -57,9 +57,11 @@ def normalize_concept(raw_concept: str, db=None) -> Optional[str]:
             if result_fuzzy:
                 return str(result_fuzzy)
                 
-            # If we reach here, the table exists but the concept wasn't found at all
-            logger.debug(f'[CONCEPT_NORMALIZER] rejected="{raw_concept}" reason="not_in_db"')
-            return None
+            # If we reach here, the table exists but the concept wasn't found at all.
+            # We return the cleaned name as a fallback instead of rejecting it,
+            # allowing the adaptive system to work even with a sparse concepts table.
+            logger.debug(f'[CONCEPT_NORMALIZER] not_in_db fallback="{cleaned}"')
+            return cleaned
                 
         except ProgrammingError:
             # Table 'concepts' does not exist

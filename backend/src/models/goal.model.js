@@ -261,7 +261,25 @@ class Goal {
  */
 export class StudySession {
     /**
-     * Start a new study session
+     * Get the currently open session for a user (no ended_at), if any
+     */
+    static async getActive(userId) {
+        const result = await query(
+            `SELECT s.*, g.title as goal_title, subj.name as subject_name
+             FROM study_sessions s
+             LEFT JOIN study_goals g ON s.goal_id = g.id
+             LEFT JOIN subjects subj ON s.subject_id = subj.id
+             WHERE s.user_id = $1 AND s.ended_at IS NULL
+             ORDER BY s.started_at DESC
+             LIMIT 1`,
+            [userId]
+        );
+        return result.rows[0] || null;
+    }
+
+    /**
+     * Start a new study session.
+     * duration_minutes defaults to 0 (set properly when session ends).
      */
     static async start(userId, sessionData) {
         const {
@@ -272,11 +290,29 @@ export class StudySession {
         } = sessionData;
 
         const result = await query(
-            `INSERT INTO study_sessions 
-             (user_id, goal_id, subject_id, material_id, session_type, started_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
+            `INSERT INTO study_sessions
+             (user_id, goal_id, subject_id, material_id, session_type, duration_minutes, started_at)
+             VALUES ($1, $2, $3, $4, $5, 0, NOW())
              RETURNING *`,
             [userId, goalId, subjectId, materialId, sessionType]
+        );
+        return result.rows[0];
+    }
+
+    /**
+     * Log a manual study session as a single atomic INSERT.
+     * Sets ended_at immediately so the goal-progress trigger fires once
+     * with the correct duration — avoiding the start→end→patch race.
+     */
+    static async logManual(userId, { minutes, subjectId = null }) {
+        const result = await query(
+            `INSERT INTO study_sessions
+             (user_id, subject_id, session_type, duration_minutes,
+              started_at, ended_at)
+             VALUES ($1, $2, 'manual_log', $3,
+                     NOW() - ($3 || ' minutes')::interval, NOW())
+             RETURNING *`,
+            [userId, subjectId, minutes]
         );
         return result.rows[0];
     }
@@ -405,6 +441,33 @@ export class StudySession {
             [userId]
         );
         return result.rows[0]?.streak || 0;
+    }
+}
+
+/**
+ * StudyPlan Model
+ * Persists the latest AI-generated study plan per user (one row per user, upsert).
+ */
+export class StudyPlan {
+    static async save(userId, planData) {
+        const result = await query(
+            `INSERT INTO user_study_plans (user_id, plan_data, generated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (user_id) DO UPDATE
+                 SET plan_data    = EXCLUDED.plan_data,
+                     generated_at = NOW()
+             RETURNING *`,
+            [userId, JSON.stringify(planData)]
+        );
+        return result.rows[0];
+    }
+
+    static async getLatest(userId) {
+        const result = await query(
+            `SELECT * FROM user_study_plans WHERE user_id = $1`,
+            [userId]
+        );
+        return result.rows[0] || null;
     }
 }
 

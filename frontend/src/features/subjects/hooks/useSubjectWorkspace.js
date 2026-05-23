@@ -90,17 +90,24 @@ export const useSubjectWorkspace = (subjectId) => {
         }
 
         if (genType === 'mock_exam') {
-            // Unify: use the same async parallel pipeline as other materials
-            return materialGen.handleGenerateMaterial(genType, singleId, genOptions);
-        } else {
-            return materialGen.handleGenerateMaterial(genType, singleId, genOptions);
+            // Both static and adaptive exams go through the direct backend exam pipeline.
+            // Thread selected upload IDs so retrieval is restricted to chosen materials.
+            const selectedIds = (panels.selectedUploads || []).map(u => u.id).filter(Boolean);
+            return examGen.handleGenerateExam({
+                ...(genOptions || {}),
+                ...(selectedIds.length > 0 ? { material_ids: selectedIds } : {}),
+            });
         }
+        return materialGen.handleGenerateMaterial(genType, singleId, genOptions);
     }, [genType, examGen, materialGen]);
 
     // Unified Generation State
     const isGenerating = materialGen.isGeneratingMaterial || examGen.isGeneratingExam;
     const genError = materialGen.materialGenError || examGen.examGenError;
-    const setGenError = genType === 'mock_exam' ? examGen.setExamGenError : materialGen.setMaterialGenError;
+    const setGenError = (value) => {
+        materialGen.setMaterialGenError(value);
+        examGen.setExamGenError(value);
+    };
     // genResult applies only to materials (exams open a new tab)
     const genResult = materialGen.genResult;
     const setGenResult = materialGen.setGenResult;

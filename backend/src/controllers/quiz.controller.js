@@ -6,19 +6,27 @@ class QuizController {
      * Start an adaptive quiz session — returns first question without touching student model.
      * Proxies to engine POST /quiz/next.
      */
-    static start = asyncHandler(async (req, res) => {
+    static next = asyncHandler(async (req, res) => {
         const { subject_id, topic, language, top_k } = req.body;
         const user_id = String(req.user.id);
 
-        const engineRes = await engineClient.post('/quiz/next', {
-            user_id,
-            subject_id,
-            topic: topic || null,
-            language: language || 'en',
-            top_k: top_k || 5,
-        });
+        try {
+            const engineRes = await engineClient.post('/quiz/next', {
+                user_id,
+                subject_id,
+                topic: topic || null,
+                language: language || 'en',
+                top_k: top_k || 5,
+            });
 
-        res.status(200).json({ status: 'success', data: engineRes.data });
+            return res.status(200).json({ status: 'success', data: engineRes.data });
+        } catch (error) {
+            if (error.response) {
+                // The engine returned an error response (e.g. 404 No Concepts)
+                return res.status(error.response.status).json(error.response.data);
+            }
+            throw error;
+        }
     });
 
     /**
@@ -29,17 +37,24 @@ class QuizController {
         const { subject_id, topic, is_correct, response_time, language, top_k } = req.body;
         const user_id = String(req.user.id);
 
-        const engineRes = await engineClient.post('/quiz/submit-answer', {
-            user_id,
-            subject_id,
-            topic: topic || null,
-            is_correct: Boolean(is_correct),
-            response_time: Number(response_time) || 0,
-            language: language || 'en',
-            top_k: top_k || 5,
-        });
+        try {
+            const engineRes = await engineClient.post('/quiz/submit-answer', {
+                user_id,
+                subject_id,
+                topic: topic || null,
+                is_correct: Boolean(is_correct),
+                response_time: Number(response_time) || 0,
+                language: language || 'en',
+                top_k: top_k || 5,
+            });
 
-        res.status(200).json({ status: 'success', data: engineRes.data });
+            return res.status(200).json({ status: 'success', data: engineRes.data });
+        } catch (error) {
+            if (error.response) {
+                return res.status(error.response.status).json(error.response.data);
+            }
+            throw error;
+        }
     });
 }
 

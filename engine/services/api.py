@@ -1,4 +1,4 @@
-﻿"""Cognify Engine API — app factory. Route logic lives in services/routes/."""
+"""Cognify Engine API — app factory. Route logic lives in services/routes/."""
 import asyncio
 import logging
 import os
@@ -138,6 +138,18 @@ def _get_db_display() -> str:
 @app.on_event("startup")
 async def startup_event():
     logger.info("Cognify Engine API starting up...")
+    
+    # Run Alembic migrations programmatically on startup to ensure database schema integrity
+    try:
+        import sys
+        import os
+        # Add the parent directory of services (engine root) to path just in case
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from init_db import main as run_migrations
+        run_migrations()
+    except Exception as exc:
+        logger.error("Failed to run database migrations on startup: %s", exc)
+        
     logger.info(
         "[config] env=%s db=%s redis=%s ollama=%s",
         get_engine_env_source(),
@@ -146,6 +158,7 @@ async def startup_event():
         get_ollama_base_url(),
     )
     log_google_drive_config_mode()
+
 
     ollama_url = ollama_tags_url()
     startup_retries = int(os.getenv("OLLAMA_STARTUP_RETRIES", "5"))

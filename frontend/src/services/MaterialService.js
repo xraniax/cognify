@@ -130,6 +130,7 @@ export const MaterialService = {
     saveAttempt: (payload) => api.post('/exams/attempts/save', payload),
     getAttempt: (examId) => api.get(`/exams/attempts/${examId}`),
     submitExam: (payload) => api.post('/exams/submit', payload),
+    nextBatch: (payload) => api.post('/exams/next-batch', payload),
 };
 
 export default MaterialService;

@@ -8,6 +8,7 @@ MATERIAL_TYPE_ALIASES = {
     "note": "summary",
     "notes": "summary",
     "flashcard": "flashcards",
+    "mock_exam": "exam",
 }
 
 SUPPORTED_MATERIAL_TYPES = frozenset({"summary", "quiz", "flashcards", "exam"})

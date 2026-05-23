@@ -157,8 +157,17 @@ async def stream_llm_response(generator: AsyncIterator[str], *, source: str, met
                 flush_payload = _build_flush()
                 if flush_payload:
                     yield flush_payload
-                err_msg = text[7:].strip()
-                yield _sse({"type": "error", "message": err_msg or "Unknown engine error"})
+                err_text = text[7:].strip()
+                # Support structured JSON payloads (e.g. {"reason": "...", "message": "..."})
+                # while staying backward-compatible with plain string errors.
+                try:
+                    err_data = json.loads(err_text)
+                    if isinstance(err_data, dict):
+                        yield _sse({"type": "error", **err_data})
+                    else:
+                        yield _sse({"type": "error", "message": str(err_data)})
+                except (json.JSONDecodeError, ValueError):
+                    yield _sse({"type": "error", "message": err_text or "Unknown engine error"})
                 continue
 
             # ── Accumulate delta token into the batch buffer ─────────────

@@ -44,19 +44,21 @@ def preprocess_text(text: str) -> str:
     Preprocess text for embedding generation.
     
     Steps:
+        - Lowercase text
+        - Remove punctuation
         - Normalize whitespace
-        - Remove excessive punctuation
-        - Lowercase (optional, handled by model)
     """
     if not text or not text.strip():
         return ""
     
-    # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text.strip())
+    # Lowercase text
+    text = text.lower()
     
-    # Remove excessive punctuation (keep sentence structure)
-    text = re.sub(r'[!?]{2,}', '!', text)
-    text = re.sub(r'\.{3,}', '...', text)
+    # Remove punctuation
+    text = re.sub(r'[^\w\s]', '', text)
+    
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
     
     return text
 

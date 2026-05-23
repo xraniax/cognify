@@ -7,7 +7,7 @@ const router = express.Router();
 
 router.use(protect);
 
-router.post('/start', aiLimiter, QuizController.start);
+router.post('/next', aiLimiter, QuizController.next);
 router.post('/submit-answer', aiLimiter, QuizController.submitAnswer);
 
 export default router;

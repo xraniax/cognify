@@ -16,6 +16,7 @@ from services.ingestion import ingest_file
 from services.retrieval import retrieve_chunks_by_topic
 from services.generation import (
     generate_study_material,
+    normalize_ai_generated_content,
     RetryableGenerationError,
     NonRetryableGenerationError,
 )
@@ -670,6 +671,10 @@ def task_generate_material(
         request_options = options if isinstance(options, dict) else {}
         effective_topic = topic or request_options.get("topic")
         effective_language = language or request_options.get("language") or "en"
+        # Prefer difficulty from generation_options so "adaptive" (or any explicit value sent by
+        # the frontend) reaches generate_study_material.  Fall back to the task parameter which
+        # defaults to "intermediate" when the route omits the kwarg entirely.
+        effective_difficulty = request_options.get("difficulty") or difficulty
         raw_count = request_options.get("count") or request_options.get("total_count")
         count = int(raw_count) if raw_count is not None and isinstance(raw_count, (int, str)) and str(raw_count).isdigit() and 1 <= int(raw_count) <= 50 else None
         if material_type == "exam":
@@ -710,7 +715,7 @@ def task_generate_material(
                 chunk_texts,
                 topic=effective_topic,
                 language=effective_language,
-                difficulty=difficulty,
+                difficulty=effective_difficulty,
                 summary_mode=request_options.get("summary_mode"),
             )
         else:
@@ -720,18 +725,29 @@ def task_generate_material(
                 effective_topic,
                 effective_language,
                 user_id=user_id,
-                difficulty=difficulty,
+                difficulty=effective_difficulty,
                 adaptive_weak_concepts=adaptive_weak_concepts,
                 count=count,
                 subject_id=subject_id,
                 options=request_options,
             )
 
-        # SUCCESS Return path
+        # Normalize and validate before returning — converts ValueError → RuntimeError
+        # so it hits the non-retriable branch and doesn't burn retry budget.
+        try:
+            normalized = normalize_ai_generated_content(
+                material_type, material,
+                model=os.getenv("OLLAMA_GENERATION_MODEL", ""),
+                topic=effective_topic,
+                subject_id=subject_id,
+            )
+        except ValueError as e:
+            raise RuntimeError(f"Normalization failed: {e}") from e
+
         return {
             "status": "SUCCESS",
             "material_type": material_type,
-            "ai_generated_content": material,
+            "ai_generated_content": normalized,
         }
     except (KeyError, TypeError, AttributeError, NonRetriableGenerationError, RuntimeError) as e:
         # Non-retriable: programming errors or exhausted internal retries.

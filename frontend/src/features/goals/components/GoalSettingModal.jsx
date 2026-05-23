@@ -4,8 +4,9 @@ import { X, Target, Clock, BookOpen, CheckCircle, Calendar, Bell } from 'lucide-
 import { goalService, goalPresets, goalTypeLabels, goalPeriodLabels, dayNames } from '@/services/GoalService';
 import toast from 'react-hot-toast';
 
-const GoalSettingModal = ({ isOpen, onClose, subjects = [], onGoalCreated }) => {
-    const [step, setStep] = useState(1);
+const GoalSettingModal = ({ isOpen, onClose, subjects = [], initialData = null, onGoalCreated }) => {
+    const isEditing = !!initialData?.id;
+    const [step, setStep] = useState(isEditing ? 2 : 1);
     const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState({
         title: '',
@@ -18,22 +19,36 @@ const GoalSettingModal = ({ isOpen, onClose, subjects = [], onGoalCreated }) => 
         reminderDays: [1, 2, 3, 4, 5]
     });
 
-    // Reset form when modal opens
+    // Reset/populate form when modal opens
     useEffect(() => {
         if (isOpen) {
-            setStep(1);
-            setFormData({
-                title: '',
-                description: '',
-                goalType: 'study_time',
-                goalPeriod: 'weekly',
-                targetValue: 60,
-                subjectId: '',
-                reminderTime: '',
-                reminderDays: [1, 2, 3, 4, 5]
-            });
+            if (initialData?.id) {
+                setStep(2);
+                setFormData({
+                    title: initialData.title ?? '',
+                    description: initialData.description ?? '',
+                    goalType: initialData.goalType ?? 'study_time',
+                    goalPeriod: initialData.goalPeriod ?? 'weekly',
+                    targetValue: initialData.targetValue ?? 60,
+                    subjectId: initialData.subjectId ?? '',
+                    reminderTime: initialData.reminderTime ?? '',
+                    reminderDays: initialData.reminderDays ?? [1, 2, 3, 4, 5]
+                });
+            } else {
+                setStep(1);
+                setFormData({
+                    title: '',
+                    description: '',
+                    goalType: 'study_time',
+                    goalPeriod: 'weekly',
+                    targetValue: 60,
+                    subjectId: '',
+                    reminderTime: '',
+                    reminderDays: [1, 2, 3, 4, 5]
+                });
+            }
         }
-    }, [isOpen]);
+    }, [isOpen, initialData]);
 
     const applyPreset = (presetKey) => {
         const preset = goalPresets[presetKey];
@@ -96,12 +111,18 @@ const GoalSettingModal = ({ isOpen, onClose, subjects = [], onGoalCreated }) => 
                 reminderDays: formData.reminderDays.length > 0 ? formData.reminderDays : null
             };
 
-            const response = await goalService.create(payload);
-            toast.success('Goal created successfully!');
-            onGoalCreated?.(response.data.data);
+            let response;
+            if (isEditing) {
+                response = await goalService.update(initialData.id, payload);
+                toast.success('Goal updated');
+            } else {
+                response = await goalService.create(payload);
+                toast.success('Goal created');
+            }
+            onGoalCreated?.(response.data?.data);
             onClose();
         } catch (error) {
-            toast.error(error.message || 'Failed to create goal');
+            toast.error(error.message || (isEditing ? 'Failed to update goal' : 'Failed to create goal'));
         } finally {
             setLoading(false);
         }
@@ -136,10 +157,10 @@ const GoalSettingModal = ({ isOpen, onClose, subjects = [], onGoalCreated }) => 
                             </div>
                             <div>
                                 <h2 className="text-lg font-semibold text-gray-900">
-                                    {step === 1 ? 'Choose a Goal Template' : 'Customize Your Goal'}
+                                    {isEditing ? 'Edit Goal' : step === 1 ? 'Choose a Goal Template' : 'Customize Your Goal'}
                                 </h2>
                                 <p className="text-sm text-gray-500">
-                                    {step === 1 ? 'Quick start with a preset or customize your own' : 'Set your target and schedule'}
+                                    {isEditing ? 'Update your goal details' : step === 1 ? 'Quick start with a preset or customize your own' : 'Set your target and schedule'}
                                 </p>
                             </div>
                         </div>
@@ -419,7 +440,7 @@ const GoalSettingModal = ({ isOpen, onClose, subjects = [], onGoalCreated }) => 
                                         disabled={loading || !formData.title.trim()}
                                         className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                     >
-                                        {loading ? 'Creating...' : 'Create Goal'}
+                                        {loading ? (isEditing ? 'Saving…' : 'Creating…') : isEditing ? 'Save Changes' : 'Create Goal'}
                                     </button>
                                 </div>
                             </>

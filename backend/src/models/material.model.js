@@ -112,7 +112,8 @@ class Material {
   static async findByUserId(userId, pagination = null) {
     let sql = `
             SELECT m.*, s.name as subject_name,
-            f.path as file_path,
+            CASE WHEN f.id IS NOT NULL THEN '/api/files/' || m.id ELSE NULL END as file_path,
+            f.mime_type, f.original_name,
             json_build_object('id', s.id, 'name', s.name) as subject
             FROM materials m
             LEFT JOIN subjects s ON m.subject_id = s.id
@@ -138,7 +139,8 @@ class Material {
   static async findById(id, userId) {
     const result = await query(
       `SELECT m.*, s.name as subject_name,
-            f.path as file_path,
+            CASE WHEN f.id IS NOT NULL THEN '/api/files/' || m.id ELSE NULL END as file_path,
+            f.mime_type, f.original_name,
             json_build_object('id', s.id, 'name', s.name) as subject
             FROM materials m
             LEFT JOIN subjects s ON m.subject_id = s.id
@@ -154,9 +156,10 @@ class Material {
    */
   static async findBySubjectId(subjectId, userId) {
     const result = await query(
-      `SELECT m.*, f.path as file_path 
-            FROM materials m 
-            LEFT JOIN files f ON f.material_id = m.id 
+      `SELECT m.*, CASE WHEN f.id IS NOT NULL THEN '/api/files/' || m.id ELSE NULL END as file_path,
+            f.mime_type, f.original_name
+            FROM materials m
+            LEFT JOIN files f ON f.material_id = m.id
             WHERE m.subject_id = $1 AND m.user_id = $2 AND m.deleted_at IS NULL
             ORDER BY m.created_at DESC`,
       [subjectId, userId]
@@ -176,9 +179,10 @@ class Material {
     const validIds = ids.filter((id) => typeof id === 'string' && UUID_PATTERN.test(id));
     if (validIds.length === 0) return [];
     const result = await query(
-      `SELECT m.*, f.path as file_path 
-            FROM materials m 
-            LEFT JOIN files f ON f.material_id = m.id 
+      `SELECT m.*, CASE WHEN f.id IS NOT NULL THEN '/api/files/' || m.id ELSE NULL END as file_path,
+            f.mime_type, f.original_name
+            FROM materials m
+            LEFT JOIN files f ON f.material_id = m.id
             WHERE m.id = ANY($1) AND m.user_id = $2 AND m.deleted_at IS NULL
             ORDER BY m.created_at DESC`,
       [validIds, userId]
@@ -350,7 +354,9 @@ class Material {
   static async findDeleted(userId, ttlDays = 30, pagination = null) {
     const days = String(Math.max(1, parseInt(ttlDays, 10)));
     let sql = `
-            SELECT m.*, s.name as subject_name, f.path as file_path,
+            SELECT m.*, s.name as subject_name,
+             CASE WHEN f.id IS NOT NULL THEN '/api/files/' || m.id ELSE NULL END as file_path,
+             f.mime_type, f.original_name,
              (m.deleted_at + ($2 || ' days')::interval) AS expires_at
              FROM materials m
              LEFT JOIN subjects s ON m.subject_id = s.id

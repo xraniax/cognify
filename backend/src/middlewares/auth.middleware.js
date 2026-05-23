@@ -22,7 +22,7 @@ const PING_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
  * Validates the JWT from the Authorization header and attaches the user to req.user.
  */
 const protect = async (req, res, next) => {
-    const token = extractBearerToken(req.headers.authorization);
+    const token = extractBearerToken(req.headers.authorization) || req.query.token;
 
     if (!process.env.JWT_SECRET) {
         return res.status(500).json({

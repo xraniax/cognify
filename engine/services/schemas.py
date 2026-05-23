@@ -46,6 +46,10 @@ class RetrieveRequest(BaseModel):
     subject_id: UUID
     topic: Optional[str] = None
     top_k: int = Field(default=5, ge=1, le=50)
+    material_ids: Optional[List[UUID]] = Field(
+        default=None,
+        description="Optional list of material UUIDs to restrict retrieval to selected uploads only.",
+    )
 
 class QuestionTypePreference(BaseModel):
     type: Literal["mcq", "fill_blank", "matching", "essay"]
@@ -155,7 +159,7 @@ class ExamAnswerSheetItem(BaseModel):
     explanation: Optional[str] = None
 
 class GenerationMetadata(BaseModel):
-    model: str
+    model: str = ""          # engine fills this in; LLM output omits it
     provider: str = "ollama"
     difficulty: str = "intermediate"
     count: Optional[int] = None
@@ -272,7 +276,28 @@ class LearningEventRequest(BaseModel):
         return stripped
 
 
+class ExamInitRequest(BaseModel):
+    user_id: str
+    subject_id: str
+    exam_id: str
+    ui_difficulty: Optional[str] = "intermediate"
+
+
+class BatchAnswerItem(BaseModel):
+    concept: str
+    is_correct: bool
+    response_time: Optional[float] = 0.0
+
+
+class ExamBatchResultRequest(BaseModel):
+    user_id: str
+    subject_id: str
+    exam_id: str
+    batch_results: List[BatchAnswerItem]
+
+
 # --- Study Plan Generation Models ---
+
 
 class GoalInput(BaseModel):
     id: str
@@ -281,11 +306,15 @@ class GoalInput(BaseModel):
     target: int
     period: str
     subject: Optional[str] = None
+    progress_pct: Optional[int] = None
 
 class PlanGenerateRequest(BaseModel):
     goals: List[GoalInput]
     days_per_week: int = Field(default=5)
     hours_per_day: float = Field(default=2.0)
+    weak_concepts_context: Optional[str] = Field(default=None)
+    recent_activity_context: Optional[str] = Field(default=None)
+    subject_mastery_context: Optional[str] = Field(default=None)
 
 class PlanSession(BaseModel):
     day_of_week: Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

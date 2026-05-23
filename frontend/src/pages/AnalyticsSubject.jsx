@@ -404,18 +404,19 @@ const AnalyticsSubject = () => {
     const loading   = useAnalyticsStore(s => s.loading[`dashboard_${subjectId}`]);
     const error     = useAnalyticsStore(s => s.errors[`dashboard_${subjectId}`]);
 
-    const [concepts, setConcepts]         = useState([]);
+    const [concepts, setConcepts]           = useState([]);
+    const [serverDistribution, setServerDistribution] = useState({});
     const [conceptFilter, setConceptFilter] = useState('all');
     const [selectedConcept, setSelected]  = useState(null);
     const [refreshing, setRefreshing]     = useState(false);
     const [loadingConcepts, setLoadingConcepts] = useState(false);
+    const [progressWindow, setProgressWindow] = useState('all');
+
+    const progressLoading = useAnalyticsStore(s => s.loading[`progress_${subjectId}`]);
 
     const load = useCallback(async (refresh = false) => {
         if (!subjectId) return;
-        await Promise.all([
-            actions.fetchDashboard(subjectId, { refresh }),
-            actions.fetchProgress(subjectId, { granularity: 'week' }),
-        ]);
+        await actions.fetchDashboard(subjectId, { refresh });
     }, [subjectId, actions]);
 
     const loadConcepts = useCallback(async () => {
@@ -424,6 +425,7 @@ const AnalyticsSubject = () => {
         try {
             const result = await AnalyticsService.getConcepts(subjectId, { sort: 'weakness', order: 'asc', minInteractions: 0 });
             setConcepts(result.concepts ?? []);
+            setServerDistribution(result.distribution ?? {});
         } catch (_) {}
         setLoadingConcepts(false);
     }, [subjectId]);
@@ -433,10 +435,30 @@ const AnalyticsSubject = () => {
         if (subjectId) loadConcepts();
     }, [subjectId]);
 
+    useEffect(() => {
+        if (!subjectId) return;
+        const from = progressWindow === '30d'
+            ? new Date(Date.now() - 30 * 86_400_000).toISOString()
+            : progressWindow === '90d'
+            ? new Date(Date.now() - 90 * 86_400_000).toISOString()
+            : null;
+        const granularity = progressWindow === '30d' ? 'day' : 'week';
+        actions.fetchProgress(subjectId, { granularity, from }).catch(() => {});
+    }, [subjectId, progressWindow]);
+
     const handleRefresh = async () => {
         setRefreshing(true);
-        await load(true).catch(() => {});
-        await loadConcepts();
+        const from = progressWindow === '30d'
+            ? new Date(Date.now() - 30 * 86_400_000).toISOString()
+            : progressWindow === '90d'
+            ? new Date(Date.now() - 90 * 86_400_000).toISOString()
+            : null;
+        const granularity = progressWindow === '30d' ? 'day' : 'week';
+        await Promise.all([
+            load(true).catch(() => {}),
+            actions.fetchProgress(subjectId, { granularity, from }).catch(() => {}),
+            loadConcepts(),
+        ]);
         setRefreshing(false);
     };
 
@@ -453,10 +475,8 @@ const AnalyticsSubject = () => {
         ? concepts
         : concepts.filter(c => c.state === conceptFilter);
 
-    const distribution = concepts.reduce((acc, c) => {
-        acc[c.state] = (acc[c.state] ?? 0) + 1;
-        return acc;
-    }, {});
+    // Use server-computed distribution (full dataset, not paginated slice)
+    const distribution = serverDistribution;
 
     return (
         <div className="flex-1 flex overflow-hidden relative" style={{ background: 'var(--c-canvas)' }}>
@@ -562,20 +582,122 @@ const AnalyticsSubject = () => {
                                 ))}
                             </div>
 
+                            {/* ── Trend + consistency row (only when data available) ── */}
+                            {(meta.trend?.label || meta.consistency != null) && (
+                                <div className="grid grid-cols-2 gap-3">
+                                    {meta.trend?.label && (() => {
+                                        const tv = f(meta.trend.value) ?? 0;
+                                        const TrendIc = tv > 0.05 ? TrendingUp : tv < -0.05 ? TrendingDown : Minus;
+                                        const tColor  = tv > 0.05 ? 'var(--c-mint)' : tv < -0.05 ? 'var(--c-danger)' : 'var(--c-amber)';
+                                        return (
+                                            <div className="rounded-2xl p-4 flex items-center gap-3"
+                                                 style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border-soft)' }}>
+                                                <TrendIc className="w-5 h-5 flex-shrink-0" style={{ color: tColor }} />
+                                                <div>
+                                                    <div className="text-[9px] font-bold uppercase tracking-wider mb-0.5"
+                                                         style={{ color: 'var(--c-text-muted)' }}>Trend</div>
+                                                    <div className="text-[14px] font-black capitalize" style={{ color: 'var(--c-text)' }}>
+                                                        {meta.trend.label.replace('_', ' ')}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                    {meta.consistency != null && (
+                                        <div className="rounded-2xl p-4 flex items-center gap-3"
+                                             style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border-soft)' }}>
+                                            <Activity className="w-5 h-5 flex-shrink-0" style={{ color: 'var(--c-mint)' }} />
+                                            <div>
+                                                <div className="text-[9px] font-bold uppercase tracking-wider mb-0.5"
+                                                     style={{ color: 'var(--c-text-muted)' }}>Consistency</div>
+                                                <div className="text-[14px] font-black tabular-nums" style={{ color: 'var(--c-text)' }}>
+                                                    {Math.round(meta.consistency)}%
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* ── Activity mix ── */}
+                            {meta.total_interactions > 0 && (() => {
+                                const quiz  = meta.quiz_count      ?? 0;
+                                const flash = meta.flashcard_count ?? 0;
+                                const exam  = meta.exam_count      ?? 0;
+                                const total = quiz + flash + exam || 1;
+                                const sources = [
+                                    { label: 'Quizzes',     count: quiz,  color: '#635BFF', pct: (quiz  / total) * 100 },
+                                    { label: 'Flashcards',  count: flash, color: '#8b5cf6', pct: (flash / total) * 100 },
+                                    { label: 'Exams',       count: exam,  color: '#10b981', pct: (exam  / total) * 100 },
+                                ].filter(s => s.count > 0);
+                                return (
+                                    <div className="rounded-2xl p-4"
+                                         style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border-strong)' }}>
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <Activity className="w-3.5 h-3.5" style={{ color: 'var(--c-primary)' }} />
+                                            <span className="text-[11px] font-bold uppercase tracking-wider"
+                                                  style={{ color: 'var(--c-text-muted)' }}>Activity Mix</span>
+                                            <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full"
+                                                  style={{ background: 'var(--c-surface-alt)', color: 'var(--c-text-muted)' }}>
+                                                {meta.total_interactions} total
+                                            </span>
+                                        </div>
+                                        <div className="flex h-2.5 rounded-full overflow-hidden mb-3 gap-px">
+                                            {sources.map(s => (
+                                                <div key={s.label}
+                                                     title={`${s.label}: ${s.count}`}
+                                                     style={{ width: `${s.pct}%`, background: s.color, minWidth: 4 }} />
+                                            ))}
+                                        </div>
+                                        <div className="flex items-center gap-5 flex-wrap">
+                                            {sources.map(s => (
+                                                <div key={s.label} className="flex items-center gap-1.5">
+                                                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.color }} />
+                                                    <span className="text-[11px] font-semibold" style={{ color: 'var(--c-text-muted)' }}>
+                                                        {s.label}
+                                                    </span>
+                                                    <span className="text-[11px] font-black tabular-nums" style={{ color: 'var(--c-text)' }}>
+                                                        {s.count}
+                                                    </span>
+                                                    <span className="text-[10px]" style={{ color: 'var(--c-text-muted)' }}>
+                                                        ({Math.round(s.pct)}%)
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
                             {/* ── Progress chart ── */}
-                            {series && (
-                                <div className="rounded-2xl p-5"
-                                     style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border-strong)' }}>
-                                    <div className="flex items-center gap-2 mb-4">
+                            <div className="rounded-2xl p-5"
+                                 style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border-strong)' }}>
+                                <div className="flex items-center justify-between gap-2 mb-4">
+                                    <div className="flex items-center gap-2">
                                         <TrendingUp className="w-3.5 h-3.5" style={{ color: 'var(--c-primary)' }} />
                                         <span className="text-[12px] font-bold uppercase tracking-wider"
                                               style={{ color: 'var(--c-text-muted)' }}>
                                             Progress Over Time
                                         </span>
+                                        {progressLoading && (
+                                            <RefreshCw className="w-3 h-3 animate-spin" style={{ color: 'var(--c-text-muted)' }} />
+                                        )}
                                     </div>
-                                    <MultiLineChart series={series} />
+                                    <div className="flex items-center gap-1">
+                                        {[['30d', '30d'], ['90d', '90d'], ['all', 'All']].map(([val, lbl]) => (
+                                            <button key={val} onClick={() => setProgressWindow(val)}
+                                                    className="text-[10px] font-bold px-2 py-0.5 rounded-full transition-all"
+                                                    style={{
+                                                        background: progressWindow === val ? 'var(--c-primary-light)' : 'transparent',
+                                                        color: progressWindow === val ? 'var(--c-primary)' : 'var(--c-text-muted)',
+                                                    }}>
+                                                {lbl}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
-                            )}
+                                <MultiLineChart series={series} />
+                            </div>
 
                             {/* ── Weak concepts alert ── */}
                             {weak.length > 0 && (
@@ -617,6 +739,58 @@ const AnalyticsSubject = () => {
                                     </div>
                                 </div>
                             )}
+
+                            {/* ── Concept distribution bar ── */}
+                            {(() => {
+                                const states = ['mastered', 'developing', 'weak', 'critical'];
+                                const total  = states.reduce((s, k) => s + (distribution[k] || 0), 0);
+                                if (!total) return null;
+                                const COLORS = { mastered: '#10b981', developing: '#3b82f6', weak: '#f59e0b', critical: '#ef4444' };
+                                return (
+                                    <div className="rounded-2xl p-4"
+                                         style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border-strong)' }}>
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <Layers className="w-3.5 h-3.5" style={{ color: 'var(--c-primary)' }} />
+                                            <span className="text-[11px] font-bold uppercase tracking-wider"
+                                                  style={{ color: 'var(--c-text-muted)' }}>Concept Distribution</span>
+                                            <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full"
+                                                  style={{ background: 'var(--c-surface-alt)', color: 'var(--c-text-muted)' }}>
+                                                {total} concepts
+                                            </span>
+                                        </div>
+                                        <div className="flex h-3 rounded-full overflow-hidden mb-3 gap-px">
+                                            {states.map(state => {
+                                                const count = distribution[state] || 0;
+                                                if (!count) return null;
+                                                return (
+                                                    <div key={state}
+                                                         title={`${state}: ${count}`}
+                                                         style={{ width: `${(count / total) * 100}%`, background: COLORS[state], minWidth: 3 }} />
+                                                );
+                                            })}
+                                        </div>
+                                        <div className="flex items-center gap-4 flex-wrap">
+                                            {states.map(state => {
+                                                const count = distribution[state] || 0;
+                                                if (!count) return null;
+                                                const cs = stateStyle(state);
+                                                return (
+                                                    <button key={state} onClick={() => setConceptFilter(state)}
+                                                            className="flex items-center gap-1.5 transition-opacity hover:opacity-70">
+                                                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: cs.dot }} />
+                                                        <span className="text-[11px] font-bold capitalize" style={{ color: cs.text }}>
+                                                            {state}
+                                                        </span>
+                                                        <span className="text-[11px] font-black tabular-nums" style={{ color: 'var(--c-text)' }}>
+                                                            {count}
+                                                        </span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             {/* ── Concept mastery table ── */}
                             <div className="rounded-2xl overflow-hidden"

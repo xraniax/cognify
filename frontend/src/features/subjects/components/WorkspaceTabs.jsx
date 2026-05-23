@@ -64,7 +64,7 @@ const WorkspaceTabs = ({ tabs, setTabs, activeTabId, setActiveTabId, renderTabCo
                             {tabs.map((tab) => {
                                 const isActive = activeTabId === tab.id;
                                 const cfg      = getTabConfig(tab);
-                                const isDrive  = tab.material?.file_path?.includes("drive.google.com");
+                                const isDrive  = tab.material?.file_path?.startsWith("/api/files/");
                                 const Icon     = isDrive ? Cloud : cfg.icon;
 
                                 return (

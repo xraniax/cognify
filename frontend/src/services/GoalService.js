@@ -6,54 +6,51 @@ import api from '@/services/api';
  */
 export const goalService = {
     // ── Goal CRUD ────────────────────────────────────────────────────────────
-    
-    /** Get all goals for the current user */
+
     getAll: (params = {}) => api.get('/goals', { params }),
-    
-    /** Get a single goal by ID */
+    getGoals: (params = {}) => api.get('/goals', { params }),
     getOne: (id) => api.get(`/goals/${id}`),
-    
-    /** Create a new goal */
     create: (goalData) => api.post('/goals', goalData),
-    
-    /** Update a goal */
     update: (id, updates) => api.patch(`/goals/${id}`, updates),
-    
-    /** Delete a goal */
+    updateGoal: (id, updates) => api.patch(`/goals/${id}`, updates),
     delete: (id) => api.delete(`/goals/${id}`),
-    
+    deleteGoal: (id) => api.delete(`/goals/${id}`),
+
     // ── Goal Statistics ────────────────────────────────────────────────────────
-    
-    /** Get goal statistics for dashboard */
+
     getStats: () => api.get('/goals/stats'),
-    
-    /** Get current study streak */
     getStreak: () => api.get('/goals/streak'),
-    
+
     // ── Study Sessions ───────────────────────────────────────────────────────
-    
-    /** Start a study session */
-    startSession: (sessionData) => api.post('/goals/sessions/start', sessionData),
-    
-    /** End a study session */
-    endSession: (sessionId, sessionData = {}) => 
+
+    /** Returns null if no open session exists */
+    getActiveSession: () => api.get('/goals/sessions/active'),
+
+    /** Pass { goalId, subjectId? } */
+    startSession: (sessionData) => api.post('/goals/sessions/start',
+        typeof sessionData === 'object' ? sessionData : { goalId: sessionData }),
+
+    /** sessionId is required */
+    endSession: (sessionId, sessionData = {}) =>
         api.post(`/goals/sessions/${sessionId}/end`, sessionData),
-    
-    /** Get study session history */
+
     getHistory: (params = {}) => api.get('/goals/sessions/history', { params }),
-    
+
     // ── AI Study Plan ────────────────────────────────────────────────────────
 
-    /** Generate an AI study plan */
-    generatePlan: (planData) => api.post('/goals/plan/generate', planData),
+    /** Fetch the latest stored plan (null if none). */
+    getCurrentPlan: () => api.get('/goals/plan/current'),
 
-    /** Activate the generated study plan */
+    /**
+     * Generate a fresh plan. Backend fetches goals + learning signals itself.
+     * Only pass optional scheduling prefs: { days_per_week?, hours_per_day? }
+     */
+    generatePlan: (prefs = {}) => api.post('/goals/plan/generate', prefs),
     activatePlan: (planData) => api.post('/goals/plan/activate', planData),
-    
+
     // ── Quick Time Logging ────────────────────────────────────────────────────
-    
-    /** Quick log study time without session tracking */
-    logTime: (minutes, subjectId = null) => 
+
+    logTime: (minutes, subjectId = null) =>
         api.post('/goals/log-time', { minutes, subjectId }),
 };
 

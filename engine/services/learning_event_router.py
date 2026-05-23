@@ -43,6 +43,17 @@ def handle_learning_event(
             concept=resolved_concept,
             subject_id=subject_id,
         )
+    elif source == "exam":
+        # Exam events update full learner metrics (accuracy + avg_response_time + concepts)
+        # so that resolve_quiz_difficulty reads real exam performance, not stale quiz-era accuracy.
+        rt = float(response_time) if response_time is not None else 0.0
+        result = update_student_performance(
+            user_id=user_id,
+            is_correct=is_correct,
+            response_time=rt,
+            concept=resolved_concept,
+            subject_id=subject_id,
+        )
     else:
         if resolved_concept:
             update_student_performance_from_learning_event(

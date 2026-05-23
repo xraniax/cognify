@@ -27,7 +27,7 @@ const download = asyncHandler(async (req, res) => {
         return res.status(404).json({ message: 'Document not found' });
     }
 
-    if (!isAdmin && record.user_id !== userId) {
+    if (!isAdmin && record.owner_id !== userId) {
         console.log(`[files] 403 document_id=${document_id} user_id=${userId} reason=ownership`);
         return res.status(403).json({ message: 'Access denied' });
     }
@@ -42,6 +42,15 @@ const download = asyncHandler(async (req, res) => {
         console.log(`[files] { "document_id": "${document_id}", "storage_type": "drive", "drive_file_id": "${record.drive_file_id}" }`);
         try {
             const driveStream = await record.getStream();
+            driveStream.on('error', (streamErr) => {
+                console.error(`[files] Drive stream error mid-pipe document_id=${document_id}: ${streamErr.message}`);
+                if (!res.headersSent) {
+                    res.status(503).json({ message: 'Service Unavailable' });
+                }
+            });
+            driveStream.on('end', () => {
+                console.log(`[files] 200 document_id=${document_id} user_id=${userId} storage_type=drive`);
+            });
             return driveStream.pipe(res);
         } catch (error) {
             console.error(`[files] Drive stream failed for document_id=${document_id} - ${error.message}`);

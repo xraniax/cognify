@@ -8,6 +8,8 @@ const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000; // run every 6 hours
 const startServer = async () => {
   const { default: app } = await import('./app.js');
   const { default: MaterialService } = await import('./services/material.service.js');
+  const { default: initAlerts } = await import('./utils/init_alerts.js');
+  await initAlerts();
 
   app.listen(PORT, () => {
     console.log(` Cognify Backend running on port ${PORT}`);

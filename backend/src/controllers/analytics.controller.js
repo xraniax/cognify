@@ -30,7 +30,7 @@ const analyticsController = {
     async recordFlashcardReview(req, res, next) {
         try {
             const userId = req.user.id;
-            const { materialId, cardId, topicName, outcome, easeFactor, intervalDays, daysSinceLast } = req.body;
+            const { materialId, subjectId, cardId, topicName, outcome, easeFactor, intervalDays, daysSinceLast } = req.body;
 
             const VALID_OUTCOMES = ['again', 'hard', 'good', 'easy'];
             if (!outcome || !VALID_OUTCOMES.includes(outcome)) {
@@ -41,7 +41,7 @@ const analyticsController = {
             }
 
             const reviewId = await AnalyticsService.recordFlashcardReview(userId, {
-                materialId, cardId, topicName, outcome, easeFactor, intervalDays, daysSinceLast,
+                materialId, subjectId, cardId, topicName, outcome, easeFactor, intervalDays, daysSinceLast,
             });
 
             res.status(201).json({ status: 'ok', data: { reviewId } });
@@ -133,7 +133,7 @@ const analyticsController = {
             const userId    = req.user.id;
             const subjectId = req.params.subjectId;
 
-            const VALID_SORTS  = ['crs', 'mastery_score', 'last_updated', 'interaction_count'];
+            const VALID_SORTS  = ['crs', 'mastery_score', 'weakness', 'last_updated', 'interaction_count', 'last_activity', 'name'];
             const VALID_ORDERS = ['asc', 'desc'];
             const VALID_STATES = ['critical', 'weak', 'developing', 'mastered', 'unstarted'];
 

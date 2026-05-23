@@ -6,31 +6,36 @@ import {
     computeConceptReport,
     computeTrend,
     computeWeaknessScore,
-    classifyCRS,
     trendLabel,
     dataQualityLabel,
     computeConfidence,
 } from '../analytics/index.js';
+import {
+    MASTERY_THRESHOLDS,
+    MASTERY_STATE_SQL,
+    READINESS_WEIGHTS,
+    TREND_WEIGHTS,
+    INSIGHT_DECAY_THRESHOLD,
+    resolveFrom,
+    resolveTo,
+    to100,
+    classifyScore,
+    normalizeDashboard,
+} from './analytics.contract.js';
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
-
-const W = { quiz: 0.35, flashcard: 0.25, exam: 0.40 };
 
 /** Weighted composite from 0-100 source scores; skips missing sources. */
 const weightedComposite = (quizAcc, flashAcc, examAcc) => {
     let score = 0, total = 0;
-    if (quizAcc  !== null) { score += quizAcc  * W.quiz;      total += W.quiz;      }
-    if (flashAcc !== null) { score += flashAcc * W.flashcard; total += W.flashcard; }
-    if (examAcc  !== null) { score += examAcc  * W.exam;      total += W.exam;      }
+    if (quizAcc  !== null) { score += quizAcc  * READINESS_WEIGHTS.quiz;      total += READINESS_WEIGHTS.quiz;      }
+    if (flashAcc !== null) { score += flashAcc * READINESS_WEIGHTS.flashcard; total += READINESS_WEIGHTS.flashcard; }
+    if (examAcc  !== null) { score += examAcc  * READINESS_WEIGHTS.exam;      total += READINESS_WEIGHTS.exam;      }
     return total > 0 ? Math.round((score / total) * 100) / 100 : 0;
 };
 
 const f = (v) => (v !== null && v !== undefined ? parseFloat(v) : null);
 const i = (v) => parseInt(v, 10) || 0;
-
-/** Classify a DB-scale (0-100) mastery_score into a state label. */
-const classifyDBScore = (score100, confidence = 1, trend = null) =>
-    classifyCRS(score100 / 100, confidence, trend);
 
 /** Weakness score from a DB-scale mastery_score. */
 const weaknessFromDB = (score100, trend, nInteractions) =>
@@ -38,12 +43,6 @@ const weaknessFromDB = (score100, trend, nInteractions) =>
 
 const GRANULARITY_MAP = { day: 'day', week: 'week', month: 'month' };
 const validGranularity = (g) => GRANULARITY_MAP[g] ?? 'week';
-
-const DEFAULT_WINDOW_DAYS = 30;
-const toDate = (s) => (s ? new Date(s) : null);
-const windowFrom = (from, days = DEFAULT_WINDOW_DAYS) =>
-    toDate(from) ?? new Date(Date.now() - days * 86_400_000);
-const windowTo   = (to)   => toDate(to)   ?? new Date();
 
 // ─── Analytics Service ────────────────────────────────────────────────────────
 
@@ -54,15 +53,16 @@ class AnalyticsService {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /** Fire-and-forget Redis student model update. Never throws — only warns. */
-    static async #syncAdaptive(userId, concept, isCorrect, source) {
+    static async #syncAdaptive(userId, concept, isCorrect, source, subjectId = null) {
         try {
             await engineClient.post('/adaptive/learning-event', {
                 user_id: String(userId),
                 concept,
                 is_correct: isCorrect,
                 source,
+                subject_id: subjectId,
             });
-            console.log(`[ADAPTIVE_SYNC] source=${source} user=${userId} concept="${concept}" is_correct=${isCorrect}`);
+            console.log(`[ADAPTIVE_SYNC] source=${source} user=${userId} concept="${concept}" is_correct=${isCorrect} subject=${subjectId}`);
         } catch (err) {
             console.warn(`[ADAPTIVE_SYNC] WARNING: Redis update failed source=${source} user=${userId} concept="${concept}" — ${err.message}`);
         }
@@ -103,13 +103,11 @@ class AnalyticsService {
             await client.query('COMMIT');
             this.#refreshMastery(userId, subjectId).catch((e) =>
                 console.error('[Analytics] mastery refresh failed after quiz:', e.message));
-            // Adaptive sync: emit one learning event per response that carries a topicName.
-            // Mirrors the same pattern used by recordFlashcardReview and recordExamAttempt.
-            // Fire-and-forget — never throws; failures are warnings only.
+            // Adaptive sync: emit one learning event per response.
+            // Fall back to 'General' when topicName is absent so all responses
+            // are reflected in the adaptive student model regardless of topic tagging.
             for (const r of responses) {
-                if (r.topicName) {
-                    this.#syncAdaptive(userId, r.topicName, r.isCorrect, 'quiz_static');
-                }
+                this.#syncAdaptive(userId, r.topicName || 'General', r.isCorrect, 'quiz_static', subjectId);
             }
             return attemptId;
         } catch (err) {
@@ -121,7 +119,7 @@ class AnalyticsService {
     }
 
     static async recordFlashcardReview(userId, payload) {
-        const { materialId, cardId, topicName, outcome, easeFactor, intervalDays, daysSinceLast } = payload;
+        const { materialId, subjectId, cardId, topicName, outcome, easeFactor, intervalDays, daysSinceLast } = payload;
         const { rows: [{ id: reviewId }] } = await query(
             `INSERT INTO flashcard_reviews
                 (user_id, material_id, external_card_id, topic_name, outcome, ease_factor, interval_days, days_since_last)
@@ -129,22 +127,26 @@ class AnalyticsService {
             [userId, materialId ?? null, cardId ?? null, topicName ?? null,
                 outcome, easeFactor ?? 2.50, intervalDays ?? 1, daysSinceLast ?? null]
         );
-        if (topicName) {
-            // outcome values from FlashcardsView: 'easy' | 'good' (medium) | 'again' (hard)
-            const isCorrect = outcome === 'easy' || outcome === 'good';
-            this.#syncAdaptive(userId, topicName, isCorrect, 'flashcards');
 
-            if (materialId) {
-                const { rows } = await query(
-                    'SELECT subject_id FROM materials WHERE id = $1 AND user_id = $2 LIMIT 1',
-                    [materialId, userId]
-                );
-                if (rows[0]) {
-                    this.#refreshMastery(userId, rows[0].subject_id).catch((e) =>
-                        console.error('[Analytics] mastery refresh failed after flashcard:', e.message));
-                }
-            }
+        // Resolve subject: prefer the explicitly-supplied subjectId (avoids a round-trip),
+        // fall back to a materials lookup when only materialId is known.
+        const isCorrect = outcome === 'easy' || outcome === 'good';
+        let resolvedSubjectId = subjectId ?? null;
+        if (!resolvedSubjectId && materialId) {
+            const { rows } = await query(
+                'SELECT subject_id FROM materials WHERE id = $1 AND user_id = $2 LIMIT 1',
+                [materialId, userId]
+            );
+            resolvedSubjectId = rows[0]?.subject_id ?? null;
         }
+
+        const effectiveTopic = topicName || 'General';
+        this.#syncAdaptive(userId, effectiveTopic, isCorrect, 'flashcards', resolvedSubjectId);
+        if (resolvedSubjectId) {
+            this.#refreshMastery(userId, resolvedSubjectId).catch((e) =>
+                console.error('[Analytics] mastery refresh failed after flashcard:', e.message));
+        }
+
         return reviewId;
     }
 
@@ -190,7 +192,7 @@ class AnalyticsService {
 
             for (const [topicName, stats] of topicStats.entries()) {
                 const isCorrect = stats.max_score > 0 && (stats.score / stats.max_score) >= 0.70;
-                this.#syncAdaptive(userId, topicName, isCorrect, 'exam');
+                this.#syncAdaptive(userId, topicName, isCorrect, 'exam', subjectId);
             }
 
             this.#refreshMastery(userId, subjectId).catch((e) =>
@@ -218,7 +220,7 @@ class AnalyticsService {
             return this.#buildDashboardFromEngine(userId, subjectId);
         }
 
-        const [snapshotRes, recentQuizRes, recentExamRes, subjectRes] = await Promise.all([
+        const [snapshotRes, recentQuizRes, recentExamRes, subjectRes, sourceCountRes] = await Promise.all([
             query(
                 `SELECT
                     ROUND(AVG(mastery_score), 1)       AS readiness,
@@ -250,6 +252,21 @@ class AnalyticsService {
                 [userId, subjectId]
             ),
             query('SELECT name FROM subjects WHERE id = $1 AND user_id = $2 LIMIT 1', [subjectId, userId]),
+            // Per-source counts for accurate confidence and activity breakdown
+            query(
+                `SELECT
+                    (SELECT COUNT(*) FROM quiz_responses qr
+                        JOIN quiz_attempts qa ON qa.id = qr.attempt_id
+                        WHERE qa.user_id = $1 AND qa.subject_id = $2)::int AS quiz_count,
+                    (SELECT COUNT(*) FROM flashcard_reviews fr
+                        WHERE fr.user_id = $1
+                          AND fr.material_id IN (
+                              SELECT id FROM materials WHERE subject_id = $2 AND deleted_at IS NULL
+                          ))::int AS flashcard_count,
+                    (SELECT COUNT(*) FROM mock_exam_attempts
+                        WHERE user_id = $1 AND subject_id = $2)::int AS exam_count`,
+                [userId, subjectId]
+            ),
         ]);
 
         const snap = snapshotRes.rows[0];
@@ -261,12 +278,13 @@ class AnalyticsService {
         const mastery          = f(snap.mastery);
         const totalInteractions = i(snap.total_interactions);
 
-        // Confidence from total interaction count
-        const confidence = computeConfidence({
-            quizCount:      totalInteractions,   // approximate — snapshot only has total
-            flashcardCount: 0,
-            examCount:      0,
-        });
+        const sc = sourceCountRes.rows[0] ?? {};
+        const quizCount      = i(sc.quiz_count);
+        const flashcardCount = i(sc.flashcard_count);
+        const examCount      = i(sc.exam_count);
+
+        // Confidence from per-source interaction counts (accurate split)
+        const confidence = computeConfidence({ quizCount, flashcardCount, examCount });
 
         // Trend from recent sessions (ordered oldest→newest)
         const quizAccuracies = recentQuizRes.rows.map((r) => f(r.accuracy)).reverse();
@@ -283,7 +301,7 @@ class AnalyticsService {
                     exam_accuracy, response_count, last_activity_at
              FROM user_concept_mastery
              WHERE user_id = $1 AND subject_id = $2
-               AND mastery_score < 60
+               AND mastery_score < ${MASTERY_THRESHOLDS.DEVELOPING}
              ORDER BY mastery_score ASC
              LIMIT 5`,
             [userId, subjectId]
@@ -293,7 +311,7 @@ class AnalyticsService {
             .map((r) => {
                 const score  = f(r.mastery_score) ?? 0;
                 const n      = i(r.response_count);
-                const state  = classifyDBScore(score);
+                const state  = classifyScore(score);
                 const wScore = weaknessFromDB(score, null, n);
                 return {
                     name:                r.topic_name,
@@ -308,14 +326,14 @@ class AnalyticsService {
             })
             .filter((c) => c.state === 'critical' || c.state === 'weak');
 
-        return {
+        return normalizeDashboard({
             subject: {
                 id:   subjectId,
                 name: subjectRes.rows[0]?.name ?? null,
             },
             readiness: {
                 score:              readiness,
-                label:              classifyDBScore(readiness),
+                label:              classifyScore(readiness),
                 confidence:         Math.round(confidence * 100) / 100,
                 data_quality:       dataQualityLabel(confidence),
                 snapshot_age_hours: snapshotAgeMs ? Math.round(snapshotAgeMs / 3_600_000 * 10) / 10 : null,
@@ -330,16 +348,18 @@ class AnalyticsService {
                 trend: {
                     value: trendValue,
                     label: trendLabel(trendValue),
-                    based_on: `last_${quizAccuracies.length + examAccuracies.length}_sessions`,
                 },
                 total_interactions: totalInteractions,
+                quiz_count:         quizCount,
+                flashcard_count:    flashcardCount,
+                exam_count:         examCount,
                 last_activity_at:   snap.last_activity_at,
             },
             weak_concepts:          weakConcepts,
             next_suggested_action:  weakConcepts[0]
                 ? this.#suggestAction(weakConcepts[0])
                 : null,
-        };
+        });
     }
 
     /** Lightweight single-number summary for subject cards. */
@@ -368,7 +388,7 @@ class AnalyticsService {
         return {
             subject_id:       subjectId,
             readiness,
-            label:            classifyDBScore(readiness),
+            label:            classifyScore(readiness),
             trend:            trendLabel(trend),
             last_activity_at: row?.last_activity_at ?? null,
         };
@@ -397,7 +417,7 @@ class AnalyticsService {
             return {
                 subject_id:       id,
                 readiness,
-                label:            classifyDBScore(readiness),
+                label:            classifyScore(readiness),
                 trend:            null,   // not computed in bulk path
                 last_activity_at: r?.last_activity_at ?? null,
             };
@@ -417,23 +437,47 @@ class AnalyticsService {
         pagination      = null,
     } = {}) {
         const SORT_COLS = {
-            weakness:      'mastery_score',
-            name:          'topic_name',
-            crs:           'mastery_score',
-            last_activity: 'last_activity_at',
+            weakness:          'mastery_score',
+            crs:               'mastery_score',
+            mastery_score:     'mastery_score',
+            name:              'topic_name',
+            last_activity:     'last_activity_at',
+            last_updated:      'last_activity_at',
+            interaction_count: 'response_count',
         };
         const col = SORT_COLS[sort] ?? 'mastery_score';
         const dir = order === 'desc' ? 'DESC' : 'ASC';
 
-        // Get total count for pagination
+        // Get total count + state distribution in a single pass (pre-pagination, pre-state-filter)
         const countResult = await query(
-            `SELECT COUNT(*)::int as count
+            `SELECT
+                COUNT(*)::int AS count,
+                COUNT(*) FILTER (WHERE ${MASTERY_STATE_SQL.mastered})::int   AS mastered,
+                COUNT(*) FILTER (WHERE ${MASTERY_STATE_SQL.developing})::int AS developing,
+                COUNT(*) FILTER (WHERE ${MASTERY_STATE_SQL.weak})::int       AS weak,
+                COUNT(*) FILTER (WHERE ${MASTERY_STATE_SQL.critical})::int   AS critical
              FROM user_concept_mastery
              WHERE user_id = $1 AND subject_id = $2
                AND response_count >= $3`,
             [userId, subjectId, minInteractions]
         );
-        const totalCount = countResult.rows[0].count;
+        const totalCount   = countResult.rows[0].count;
+        const distribution = {
+            mastered:   i(countResult.rows[0].mastered),
+            developing: i(countResult.rows[0].developing),
+            weak:       i(countResult.rows[0].weak),
+            critical:   i(countResult.rows[0].critical),
+        };
+
+        // Translate state string to mastery_score SQL range (derived from MASTERY_THRESHOLDS via contract)
+        const stateClause = state
+            ? `AND (${state.split(',').map(s => MASTERY_STATE_SQL[s]).filter(Boolean).join(' OR ')})`
+            : '';
+
+        // Filtered total derived from distribution (avoids a 3rd round-trip)
+        const filteredTotal = state
+            ? state.split(',').reduce((sum, s) => sum + (distribution[s] ?? 0), 0)
+            : totalCount;
 
         let sql = `
             SELECT topic_name, mastery_score, quiz_accuracy, flashcard_retention,
@@ -441,6 +485,7 @@ class AnalyticsService {
              FROM user_concept_mastery
              WHERE user_id = $1 AND subject_id = $2
                AND response_count >= $3
+               ${stateClause}
              ORDER BY ${col} ${dir} NULLS LAST
         `;
         const params = [userId, subjectId, minInteractions];
@@ -456,7 +501,7 @@ class AnalyticsService {
         const concepts = rows.map((r) => {
             const score      = f(r.mastery_score) ?? 0;
             const n          = i(r.response_count);
-            const conceptState = classifyDBScore(score);
+            const conceptState = classifyScore(score);
             return {
                 name:            r.topic_name,
                 crs:             score,
@@ -475,19 +520,10 @@ class AnalyticsService {
             };
         });
 
-        const filtered = state
-            ? concepts.filter((c) => state.split(',').includes(c.state))
-            : concepts;
-
-        const distribution = { critical: 0, weak: 0, developing: 0, mastered: 0 };
-        for (const c of concepts) {
-            if (c.state in distribution) distribution[c.state]++;
-        }
-
         return {
             subject_id:     subjectId,
-            total_concepts: totalCount,
-            concepts:       filtered,
+            total_concepts: filteredTotal,
+            concepts,
             distribution,
         };
     }
@@ -498,7 +534,7 @@ class AnalyticsService {
             `SELECT topic_name, mastery_score, response_count, last_activity_at
              FROM user_concept_mastery
              WHERE user_id = $1 AND subject_id = $2
-               AND mastery_score < 60
+               AND mastery_score < ${MASTERY_THRESHOLDS.DEVELOPING}
                AND response_count >= 3
              ORDER BY mastery_score ASC
              LIMIT $3`,
@@ -510,7 +546,7 @@ class AnalyticsService {
             .map((r) => {
                 const score          = f(r.mastery_score) ?? 0;
                 const n              = i(r.response_count);
-                const conceptState   = classifyDBScore(score);
+                const conceptState   = classifyScore(score);
                 const wScore         = weaknessFromDB(score, null, n);
                 const lastAt         = r.last_activity_at ? new Date(r.last_activity_at) : null;
                 const daysSinceLast  = lastAt ? Math.floor((Date.now() - lastAt.getTime()) / 86_400_000) : null;
@@ -554,7 +590,7 @@ class AnalyticsService {
                  ORDER BY mea.completed_at ASC`,
                 [userId, subjectId, conceptName]
             ),
-            // Cards due: most recent review state per card, check if overdue
+            // Cards due: most recent review state per card, scoped to this subject via materials.
             query(
                 `SELECT COUNT(*) AS total,
                         COUNT(*) FILTER (
@@ -564,13 +600,17 @@ class AnalyticsService {
                             WHERE reviewed_at + (interval_days || ' days')::interval < NOW() - INTERVAL '1 day'
                         ) AS overdue
                  FROM (
-                     SELECT DISTINCT ON (external_card_id)
-                            external_card_id, reviewed_at, interval_days
-                     FROM flashcard_reviews
-                     WHERE user_id = $1 AND topic_name = $2
-                     ORDER BY external_card_id, reviewed_at DESC
+                     SELECT DISTINCT ON (fr.external_card_id)
+                            fr.external_card_id, fr.reviewed_at, fr.interval_days
+                     FROM flashcard_reviews fr
+                     WHERE fr.user_id = $1
+                       AND fr.topic_name = $3
+                       AND fr.material_id IN (
+                           SELECT id FROM materials WHERE subject_id = $2 AND deleted_at IS NULL
+                       )
+                     ORDER BY fr.external_card_id, fr.reviewed_at DESC
                  ) latest`,
-                [userId, conceptName]
+                [userId, subjectId, conceptName]
             ),
         ]);
 
@@ -600,7 +640,7 @@ class AnalyticsService {
             concept:     conceptName,
             subject_id:  subjectId,
             crs:         score,
-            state:       classifyDBScore(score),
+            state:       classifyScore(score),
             confidence:  Math.min(n / 15, 1),
             scores: {
                 understanding: { value: f(snap.quiz_accuracy),        based_on: null, last_updated: snap.last_activity_at },
@@ -644,11 +684,11 @@ class AnalyticsService {
         sources     = 'all',
     } = {}) {
         const gran     = validGranularity(granularity);
-        const fromDate = windowFrom(from);
-        const toDate   = windowTo(to);
-        const wantAll  = sources === 'all';
-        const srcList  = wantAll 
-            ? ['quiz', 'exam', 'flashcard'] 
+        const fromDate = resolveFrom(from);
+        const endDate  = resolveTo(to);
+        const wantAll = sources === 'all';
+        const srcList = wantAll
+            ? ['quiz', 'exam', 'flashcard']
             : (Array.isArray(sources) ? sources : sources.split(',').map((s) => s.trim()));
 
         const queries = await Promise.all([
@@ -662,7 +702,7 @@ class AnalyticsService {
                  WHERE user_id = $2 AND subject_id = $3
                    AND completed_at BETWEEN $4 AND $5
                  GROUP BY period ORDER BY period ASC`,
-                [gran, userId, subjectId, fromDate, toDate]
+                [gran, userId, subjectId, fromDate, endDate]
             ) : Promise.resolve({ rows: [] }),
 
             srcList.includes('exam') ? query(
@@ -674,7 +714,7 @@ class AnalyticsService {
                  WHERE user_id = $1 AND subject_id = $2
                    AND completed_at BETWEEN $3 AND $4
                  ORDER BY completed_at ASC`,
-                [userId, subjectId, fromDate, toDate]
+                [userId, subjectId, fromDate, endDate]
             ) : Promise.resolve({ rows: [] }),
 
             srcList.includes('flashcard') ? query(
@@ -687,7 +727,7 @@ class AnalyticsService {
                    AND fr.material_id IN (SELECT id FROM materials WHERE subject_id = $3 AND deleted_at IS NULL)
                    AND fr.reviewed_at BETWEEN $4 AND $5
                  GROUP BY period ORDER BY period ASC`,
-                [gran, userId, subjectId, fromDate, toDate]
+                [gran, userId, subjectId, fromDate, endDate]
             ) : Promise.resolve({ rows: [] }),
         ]);
 
@@ -701,7 +741,7 @@ class AnalyticsService {
             subject_id: subjectId,
             window: {
                 from:        fromDate.toISOString().slice(0, 10),
-                to:          toDate.toISOString().slice(0, 10),
+                to:          endDate.toISOString().slice(0, 10),
                 granularity: gran,
             },
             series: {
@@ -736,33 +776,33 @@ class AnalyticsService {
     /** Per-concept accuracy over time — powers concept-level sparklines. */
     static async getProgressConcepts(userId, subjectId, { from = null, to = null, granularity = 'week' } = {}) {
         const gran     = validGranularity(granularity);
-        const fromDate = windowFrom(from);
-        const toDate   = windowTo(to);
+        const fromDate = resolveFrom(from);
+        const endDate  = resolveTo(to);
 
         const [quizRes, examRes] = await Promise.all([
             query(
-                `SELECT DATE_TRUNC($1, qa.completed_at) AS period, qr.topic_name,
+                `SELECT DATE_TRUNC($1, qa.completed_at) AS period,
+                        COALESCE(qr.topic_name, 'General') AS topic_name,
                         ROUND(AVG(qr.is_correct::int) * 100, 1) AS accuracy
                  FROM quiz_responses qr
                  JOIN quiz_attempts qa ON qa.id = qr.attempt_id
                  WHERE qa.user_id = $2 AND qa.subject_id = $3
-                   AND qr.topic_name IS NOT NULL
                    AND qa.completed_at BETWEEN $4 AND $5
-                 GROUP BY period, qr.topic_name
+                 GROUP BY period, COALESCE(qr.topic_name, 'General')
                  ORDER BY period ASC`,
-                [gran, userId, subjectId, fromDate, toDate]
+                [gran, userId, subjectId, fromDate, endDate]
             ),
             query(
-                `SELECT DATE_TRUNC($1, mea.completed_at) AS period, ecs.topic_name,
+                `SELECT DATE_TRUNC($1, mea.completed_at) AS period,
+                        COALESCE(ecs.topic_name, 'General') AS topic_name,
                         ROUND(SUM(ecs.score)::numeric / NULLIF(SUM(ecs.max_score),0) * 100, 1) AS accuracy
                  FROM exam_concept_scores ecs
                  JOIN mock_exam_attempts mea ON mea.id = ecs.attempt_id
                  WHERE mea.user_id = $2 AND mea.subject_id = $3
-                   AND ecs.topic_name IS NOT NULL
                    AND mea.completed_at BETWEEN $4 AND $5
-                 GROUP BY period, ecs.topic_name
+                 GROUP BY period, COALESCE(ecs.topic_name, 'General')
                  ORDER BY period ASC`,
-                [gran, userId, subjectId, fromDate, toDate]
+                [gran, userId, subjectId, fromDate, endDate]
             ),
         ]);
 
@@ -775,7 +815,7 @@ class AnalyticsService {
 
         return {
             subject_id: subjectId,
-            window: { from: fromDate.toISOString().slice(0, 10), to: toDate.toISOString().slice(0, 10) },
+            window: { from: fromDate.toISOString().slice(0, 10), to: endDate.toISOString().slice(0, 10) },
             concepts: [...byTopic.entries()].map(([name, points]) => {
                 const sorted      = points.sort((a, b) => new Date(a.date) - new Date(b.date));
                 const accuracies  = sorted.map((p) => p.accuracy);
@@ -794,8 +834,8 @@ class AnalyticsService {
 
     /** Exam attempt history with per-attempt concept breakdown and deltas. */
     static async getProgressExams(userId, subjectId, { from = null, to = null } = {}) {
-        const fromDate = windowFrom(from, 365);   // exam history window is wider (1 year default)
-        const toDate   = windowTo(to);
+        const fromDate = resolveFrom(from);
+        const endDate  = resolveTo(to);
 
         const [attemptsRes, conceptsRes] = await Promise.all([
             query(
@@ -804,7 +844,7 @@ class AnalyticsService {
                  WHERE user_id = $1 AND subject_id = $2
                    AND completed_at BETWEEN $3 AND $4
                  ORDER BY completed_at ASC`,
-                [userId, subjectId, fromDate, toDate]
+                [userId, subjectId, fromDate, endDate]
             ),
             query(
                 `SELECT ecs.topic_name, ecs.score, ecs.max_score, mea.attempt_number
@@ -813,7 +853,7 @@ class AnalyticsService {
                  WHERE mea.user_id = $1 AND mea.subject_id = $2
                    AND mea.completed_at BETWEEN $3 AND $4
                  ORDER BY mea.attempt_number ASC`,
-                [userId, subjectId, fromDate, toDate]
+                [userId, subjectId, fromDate, endDate]
             ),
         ]);
 
@@ -965,38 +1005,49 @@ class AnalyticsService {
         const engineScores = computeAllScores({ quizResponses, flashcardReviews, examAttempts });
         const engineReport = computeConceptReport({ quizResponses, flashcardReviews, examAttempts });
         const conceptList  = [...engineReport.concepts.values()];
-        const weakConcepts = engineReport.weakConcepts.slice(0, 5).map((c) => ({
-            name:           c.conceptName,
-            crs:            Math.round(c.crs * 1000) / 10,
-            state:          c.state,
-            weakness_score: Math.round(c.weaknessScore * 1000) / 1000,
-            trend:          c.trendLabel,
-            action:         c.action,
-        }));
+        const weakConcepts = engineReport.weakConcepts.slice(0, 5).map((c) => {
+            // Look up per-dimension scores from the concept Map so #suggestAction
+            // can distinguish quiz vs flashcard_review recommendations.
+            // Scores are in [0,1] from the engine — convert to 0-100 to match fast path.
+            const conceptData = engineReport.concepts.get(c.conceptName);
+            return {
+                name:                c.conceptName,
+                crs:                 to100(c.crs),
+                state:               c.state,
+                weakness_score:      Math.round(c.weaknessScore * 1000) / 1000,
+                trend:               c.trendLabel,
+                action:              c.action,
+                quiz_accuracy:       conceptData ? to100(conceptData.understanding) : null,
+                flashcard_retention: conceptData ? to100(conceptData.retention)     : null,
+            };
+        });
 
-        return {
+        return normalizeDashboard({
             subject:   { id: subjectId, name: subjectRes.rows[0]?.name ?? null },
             readiness: {
                 score:              engineScores.readiness,
-                label:              classifyDBScore(engineScores.readiness),
+                label:              classifyScore(engineScores.readiness),
                 confidence:         Math.round((engineScores.confidence ?? 0) * 100) / 100,
                 data_quality:       engineScores.metadata.dataQuality,
                 snapshot_age_hours: null,
             },
             breakdown: {
-                understanding: engineScores.understanding !== null ? { score: Math.round((engineScores.understanding ?? 0) * 1000) / 10, source: 'quizzes',    based_on: engineScores.metadata.quizCount      } : null,
-                retention:     engineScores.retention     !== null ? { score: Math.round((engineScores.retention     ?? 0) * 1000) / 10, source: 'flashcards', based_on: engineScores.metadata.flashcardCount  } : null,
-                mastery:       engineScores.mastery       !== null ? { score: Math.round((engineScores.mastery       ?? 0) * 1000) / 10, source: 'exams',      based_on: engineScores.metadata.examCount       } : null,
+                understanding: engineScores.understanding !== null ? { score: to100(engineScores.understanding), source: 'quizzes',    based_on: engineScores.metadata.quizCount      } : null,
+                retention:     engineScores.retention     !== null ? { score: to100(engineScores.retention),     source: 'flashcards', based_on: engineScores.metadata.flashcardCount  } : null,
+                mastery:       engineScores.mastery       !== null ? { score: to100(engineScores.mastery),       source: 'exams',      based_on: engineScores.metadata.examCount       } : null,
             },
             meta: {
-                consistency: engineScores.consistency !== null ? Math.round(engineScores.consistency * 100) / 100 : null,
-                trend:       engineScores.trend,
+                consistency:        engineScores.consistency !== null ? to100(engineScores.consistency) : null,
+                trend:              engineScores.trend,
                 total_interactions: engineScores.metadata.totalInteractions,
+                quiz_count:         engineScores.metadata.quizCount,
+                flashcard_count:    engineScores.metadata.flashcardCount,
+                exam_count:         engineScores.metadata.examCount,
                 last_activity_at:   null,
             },
             weak_concepts:         weakConcepts,
             next_suggested_action: weakConcepts[0] ? this.#suggestAction(weakConcepts[0]) : null,
-        };
+        });
     }
 
     static #suggestAction(weakestConcept) {
@@ -1032,21 +1083,14 @@ class AnalyticsService {
         const tQ = computeTrend(quizAccuracies);
         const tE = computeTrend(examAccuracies);
         let combined = null;
-        if (tQ !== null && tE !== null) combined = 0.40 * tQ + 0.60 * tE;
+        if (tQ !== null && tE !== null) combined = TREND_WEIGHTS.quiz * tQ + TREND_WEIGHTS.exam * tE;
         else if (tE !== null)           combined = tE;
         else if (tQ !== null)           combined = tQ;
         return { value: combined, label: trendLabel(combined) };
     }
 
     static #emptyDashboard(subjectId) {
-        return {
-            subject:              { id: subjectId, name: null },
-            readiness:            { score: 0, label: 'unstarted', confidence: 0, data_quality: 'insufficient', snapshot_age_hours: null },
-            breakdown:            { understanding: null, retention: null, mastery: null },
-            meta:                 { consistency: null, trend: { value: null, label: 'insufficient_data' }, total_interactions: 0, last_activity_at: null },
-            weak_concepts:        [],
-            next_suggested_action: null,
-        };
+        return normalizeDashboard({ subject: { id: subjectId, name: null } });
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1077,7 +1121,7 @@ class AnalyticsService {
                  ORDER BY crs DESC NULLS LAST`,
                 [userId]
             ),
-            this.#getHeatmapData(userId, 90),
+            this.#getHeatmapData(userId, 105),
             query(
                 `SELECT * FROM user_insights
                  WHERE user_id = $1 AND dismissed = false
@@ -1244,8 +1288,8 @@ class AnalyticsService {
                     ROUND(AVG(flashcard_retention), 2)   AS retention,
                     ROUND(AVG(exam_accuracy), 2)         AS mastery,
                     COUNT(*)                             AS concept_count,
-                    COUNT(*) FILTER (WHERE mastery_score >= 70) AS mastered_count,
-                    COUNT(*) FILTER (WHERE mastery_score < 50)  AS at_risk_count,
+                    COUNT(*) FILTER (WHERE mastery_score >= ${MASTERY_THRESHOLDS.MASTERED})    AS mastered_count,
+                    COUNT(*) FILTER (WHERE mastery_score < ${MASTERY_THRESHOLDS.DEVELOPING}) AS at_risk_count,
                     MAX(last_activity_at)                AS last_activity_at
                  FROM user_concept_mastery
                  WHERE user_id = $1 AND subject_id = $2`,
@@ -1352,7 +1396,8 @@ class AnalyticsService {
             return age <= 30;
         }).length;
 
-        // Streak: consecutive days ending today or yesterday
+        // Streak: consecutive days ending today or yesterday (grace: today not yet active → check yesterday).
+        // Break on the first inactive day after the grace; i=0 is the only allowed skip.
         const daySet = new Set(days.map((d) => new Date(d.day).toISOString().slice(0, 10)));
         let streak = 0;
         const today = new Date();
@@ -1361,8 +1406,10 @@ class AnalyticsService {
             d.setDate(d.getDate() - i);
             if (daySet.has(d.toISOString().slice(0, 10))) {
                 streak++;
-            } else if (i > 1) {
-                break;
+            } else if (i === 0) {
+                continue;   // grace: not active today — start streak from yesterday
+            } else {
+                break;      // any inactive day past today ends the streak
             }
         }
 
@@ -1464,13 +1511,13 @@ class AnalyticsService {
                  WHERE usa.user_id = $1`,
                 [userId]
             ),
-            // Concepts with CRS < 50 and last activity > 14 days
+            // Concepts below the insight decay threshold and not recently studied
             query(
                 `SELECT ucm.topic_name, ucm.mastery_score, ucm.last_activity_at, s.name AS subject_name, s.id AS subject_id
                  FROM user_concept_mastery ucm
                  JOIN subjects s ON s.id = ucm.subject_id
                  WHERE ucm.user_id = $1
-                   AND ucm.mastery_score < 50
+                   AND ucm.mastery_score < ${INSIGHT_DECAY_THRESHOLD}
                    AND ucm.last_activity_at < NOW() - INTERVAL '14 days'
                  ORDER BY ucm.mastery_score ASC
                  LIMIT 3`,
@@ -1620,30 +1667,32 @@ class AnalyticsService {
 
     static async #refreshMastery(userId, subjectId) {
         const [quizRes, examRes, flashRes] = await Promise.all([
+            // COALESCE ensures null-topic responses aggregate under 'General'
+            // rather than being silently dropped, so interactions always feed mastery.
             query(
-                `SELECT qr.topic_name,
+                `SELECT COALESCE(qr.topic_name, 'General') AS topic_name,
                         ROUND(AVG(qr.is_correct::int) * 100, 2) AS quiz_accuracy,
                         COUNT(*) AS quiz_count,
                         MAX(qa.completed_at) AS last_at
                  FROM quiz_responses qr
                  JOIN quiz_attempts qa ON qa.id = qr.attempt_id
-                 WHERE qa.user_id = $1 AND qa.subject_id = $2 AND qr.topic_name IS NOT NULL
-                 GROUP BY qr.topic_name`,
+                 WHERE qa.user_id = $1 AND qa.subject_id = $2
+                 GROUP BY COALESCE(qr.topic_name, 'General')`,
                 [userId, subjectId]
             ),
             query(
-                `SELECT ecs.topic_name,
+                `SELECT COALESCE(ecs.topic_name, 'General') AS topic_name,
                         ROUND(SUM(ecs.score)::numeric / NULLIF(SUM(ecs.max_score),0) * 100, 2) AS exam_accuracy,
                         SUM(ecs.question_count) AS exam_count,
                         MAX(mea.completed_at) AS last_at
                  FROM exam_concept_scores ecs
                  JOIN mock_exam_attempts mea ON mea.id = ecs.attempt_id
-                 WHERE mea.user_id = $1 AND mea.subject_id = $2 AND ecs.topic_name IS NOT NULL
-                 GROUP BY ecs.topic_name`,
+                 WHERE mea.user_id = $1 AND mea.subject_id = $2
+                 GROUP BY COALESCE(ecs.topic_name, 'General')`,
                 [userId, subjectId]
             ),
             query(
-                `SELECT fr.topic_name,
+                `SELECT COALESCE(fr.topic_name, 'General') AS topic_name,
                         ROUND(AVG(CASE WHEN fr.outcome IN ('good','easy') THEN 1.0 ELSE 0.0 END) * 100, 2) AS flashcard_retention,
                         COUNT(*) AS flash_count,
                         MAX(fr.reviewed_at) AS last_at
@@ -1651,8 +1700,7 @@ class AnalyticsService {
                  WHERE fr.user_id = $1
                    AND fr.material_id IN (SELECT id FROM materials WHERE subject_id = $2 AND deleted_at IS NULL)
                    AND fr.reviewed_at >= NOW() - INTERVAL '30 days'
-                   AND fr.topic_name IS NOT NULL
-                 GROUP BY fr.topic_name`,
+                 GROUP BY COALESCE(fr.topic_name, 'General')`,
                 [userId, subjectId]
             ),
         ]);

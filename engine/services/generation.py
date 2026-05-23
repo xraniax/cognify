@@ -477,6 +477,41 @@ def _build_quiz_difficulty_guidance(difficulty: str) -> str:
         )
 
 
+def _build_flashcard_difficulty_guidance(difficulty: str) -> str:
+    """Map difficulty to flashcard selection-granularity rules.
+
+    Difficulty controls WHICH concept tiers to draw from and how many related
+    facts may appear on a single card — not wording style or content generation.
+    The concept plan injected above (CORE / SUPPORTING / MINOR tiers) is the
+    authoritative source; these rules say how to consume it.
+    """
+    diff_lower = (difficulty or "").lower().strip()
+    if diff_lower in ("introductory", "beginner", "easy", "beg"):
+        return (
+            "\nSELECTION RULES (Beginner):\n"
+            "- Create cards ONLY for concepts marked as Core in the concept plan above.\n"
+            "- Each card covers exactly one atomic fact: a single term, definition, or direct statement from the context.\n"
+            "- Do not combine multiple facts on a single card.\n"
+            "- Skip all Supporting and Minor concepts."
+        )
+    elif diff_lower in ("advanced", "hard", "adv"):
+        return (
+            "\nSELECTION RULES (Advanced):\n"
+            "- Create cards for Core, Supporting, and Minor concepts listed in the concept plan above.\n"
+            "- A card may link two or more concepts ONLY if their relationship is explicitly stated in the same sentence or paragraph of the context.\n"
+            "- Do not infer, deduce, or extrapolate relationships — only extract what the context explicitly asserts.\n"
+            "- Use domain-specific terminology exactly as it appears in the context."
+        )
+    else:
+        return (
+            "\nSELECTION RULES (Intermediate):\n"
+            "- Create cards for Core and Supporting concepts listed in the concept plan above.\n"
+            "- A card may combine two directly related facts ONLY if they appear in the same sentence or adjacent sentences in the context.\n"
+            "- Each card must still be grounded in a single passage — do not merge facts from different parts of the context.\n"
+            "- Skip Minor concepts."
+        )
+
+
 # PURE STRUCTURAL VALIDATOR — NO SEMANTIC OR DIFFICULTY LOGIC
 def validate_quiz_question(question: Dict[str, Any]) -> Dict[str, Any]:
     """Schema-only check: shape and index bounds. No content, semantic, or difficulty logic."""
@@ -574,6 +609,7 @@ def build_prompt(
     student_profile: Optional[Dict[str, Any]] = None,
     difficulty: str = "intermediate",
     adaptive_weak_concepts: Optional[List[str]] = None,
+    plan_block: str = "",
 ) -> str:
     """Build a structured prompt for the LLM based on material type."""
     
@@ -665,14 +701,24 @@ def build_prompt(
 
     elif material_type == "flashcards":
         card_count = count if isinstance(count, int) and count > 0 else None
-        if card_count is not None:
-            base_instructions = f"Create a set of {card_count} flashcards (Front/Back) based on the context in {language}."
-        else:
-            base_instructions = f"Create a set of 5-10 flashcards (Front/Back) based on the context in {language}."
-        
+        count_phrase = f"exactly {card_count}" if card_count is not None else "5-10"
+
         actual_diff = str(difficulty_override).strip() if difficulty_override and str(difficulty_override).strip() else difficulty
+
+        base_instructions = (
+            f"Create {count_phrase} flashcards based strictly on the context provided below.\n\n"
+            "GROUNDING RULES — follow without exception:\n"
+            "1. Use ONLY information explicitly present in the provided context. "
+            "Do not add external knowledge, invented examples, or facts not in the context.\n"
+            "2. Do not paraphrase, synthesize, or rewrite beyond what the context states. "
+            "Extract concepts and definitions as they appear.\n"
+            "3. Each card must represent a single fact, term, or concept directly from the context.\n"
+            f"4. Write front and back in {language}, but do not change the factual content.\n"
+        )
+        if plan_block:
+            base_instructions += f"\n{plan_block}"
         if actual_diff:
-            base_instructions += f" Adapt the complexity to {actual_diff} level."
+            base_instructions += _build_flashcard_difficulty_guidance(actual_diff)
 
         json_structure = {
             "type": "flashcards",
@@ -846,6 +892,7 @@ async def generate_study_material_stream(
     topic: Optional[str] = None,
     language: str = "en",
     difficulty: str = "intermediate",
+    options: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[str]:
     """Stream study material tokens/chunks directly from Ollama.
 
@@ -862,8 +909,27 @@ async def generate_study_material_stream(
         yield "[ERROR] Not enough context to generate material."
         return
 
+    _stream_difficulty = options.get("difficulty", difficulty) if options else difficulty
+
+    stream_plan_block = ""
+    if material_type == "flashcards":
+        try:
+            from .concept_planner import create_summary_plan
+            _, stream_plan_block = create_summary_plan(chunks, _stream_difficulty)
+        except Exception as e:
+            logger.warning("[STREAM] Concept plan failed for flashcards: %s", e)
+
     context = _build_generation_context(chunks)
-    prompt = build_prompt(material_type, context, topic, language, difficulty=difficulty)
+    prompt = build_prompt(
+        material_type,
+        context,
+        topic,
+        language,
+        difficulty=_stream_difficulty,
+        count=options.get("total_count") if options else None,
+        adaptive_weak_concepts=options.get("adaptive_weak_concepts") if options else None,
+        plan_block=stream_plan_block,
+    )
 
     payload: Dict[str, Any] = {
         "model": OLLAMA_GENERATION_MODEL,
@@ -982,6 +1048,43 @@ def generate_study_material(
         if mapped_chunks:
             chunks = mapped_chunks
 
+    # Adaptive difficulty + weak-concept resolution for flashcards (mirrors quiz's student_profile
+    # lookup pattern).  Uses Redis-only get_student (no db) — same path as quiz in this function.
+    # Only activates when the caller explicitly requests adaptive mode via difficulty="adaptive".
+    if material_type == "flashcards" and user_id:
+        is_adaptive = difficulty in ("adaptive", "auto")
+        try:
+            from .student_model import get_student
+            student = get_student(user_id)
+            if is_adaptive:
+                from .quiz_manager import resolve_quiz_difficulty
+                difficulty = resolve_quiz_difficulty(
+                    mode="adaptive",
+                    ui_difficulty="intermediate",
+                    session_state={},
+                    student_profile=student,
+                    last_answer_correct=None,
+                )
+                logger.info(
+                    "Adaptive flashcards resolved difficulty=%s user_id=%s", difficulty, user_id
+                )
+            if not adaptive_weak_concepts:
+                adaptive_weak_concepts = list(student.get("weak_concepts") or [])
+        except Exception as e:
+            logger.warning(
+                "Adaptive profile lookup failed for flashcards user_id=%s: %s", user_id, e
+            )
+            if is_adaptive:
+                difficulty = "intermediate"
+
+    plan_block = ""
+    if material_type == "flashcards":
+        try:
+            from .concept_planner import create_summary_plan
+            _, plan_block = create_summary_plan(chunks, difficulty)
+        except Exception as e:
+            logger.warning("Concept plan failed for flashcards: %s", e)
+
     context = _build_generation_context(chunks)
 
     student_profile: Optional[Dict[str, Any]] = None
@@ -1011,6 +1114,7 @@ def generate_study_material(
         student_profile=student_profile,
         difficulty=difficulty,
         adaptive_weak_concepts=adaptive_weak_concepts,
+        plan_block=plan_block,
     )
 
     payload: Dict[str, Any] = {
@@ -1024,11 +1128,13 @@ def generate_study_material(
 
     strict_flashcards_suffix = (
         "\n\nIMPORTANT: You MUST return at least 3 flashcards. "
-        "If the context is sparse, still produce at least 3 cards by summarizing "
-        "the most important distinct points. Return ONLY valid JSON."
+        "Use ONLY information from the provided context above — do not add external knowledge. "
+        "Return fewer cards only if the context genuinely contains fewer distinct facts. "
+        "Return ONLY valid JSON."
     )
     repair_flashcards_suffix = (
         "\n\nOutput MUST contain at least 3 flashcards. "
+        "Extract content ONLY from the context provided above — no external knowledge or invented content. "
         "Previous output was invalid. Return ONLY valid JSON."
     )
     strict_prompt_enabled = False
@@ -1391,12 +1497,12 @@ def generate_single_quiz_question(
                 attempt + 1, retries, difficulty, target_concept,
             )
             generated_text = _stream_ollama_generate(payload, timeout=timeout, material_type="quiz_single")
-            cleaned = _strip_markdown_fences(generated_text)
-            parsed = json.loads(cleaned)
-
-            if not isinstance(parsed, dict):
-                raise ValueError("Single quiz payload is not a JSON object")
-
+            parse_result = safe_parse_llm_json(generated_text)
+            
+            if not parse_result["ok"]:
+                raise ValueError(f"Failed to parse LLM JSON: {parse_result['error']}")
+            
+            parsed = parse_result["data"]
             question = str(parsed.get("question") or "").strip()
             options = parsed.get("options") or []
             correct_answer_raw = parsed.get("correct_answer")
@@ -1580,6 +1686,233 @@ def generate_chat_response(
                 raise
 
     raise RuntimeError("All chat retry attempts failed")
+
+async def condense_question(
+    question: str,
+    history: List[Dict[str, str]],
+    language: str = "en",
+) -> str:
+    """Rephrase the current question to be standalone using conversation history."""
+    if not history:
+        return question
+
+    history_text = "\n".join(
+        f"{m.get('role','user').capitalize()}: {m.get('content','')}"
+        for m in history[-6:]
+    )
+    prompt = (
+        f"Given the following conversation history and a follow-up question, "
+        f"rephrase the follow-up question to be a standalone question in {language}. "
+        f"Return ONLY the rephrased question, nothing else.\n\n"
+        f"History:\n{history_text}\n\n"
+        f"Follow-up question: {question}\n"
+        f"Standalone question:"
+    )
+    payload: Dict[str, Any] = {
+        "model": OLLAMA_GENERATION_MODEL,
+        "prompt": prompt,
+        "options": {"num_predict": 128, "temperature": 0.1},
+    }
+    loop = asyncio.get_event_loop()
+    try:
+        condensed = await loop.run_in_executor(
+            None,
+            lambda: _stream_ollama_generate(payload, timeout=OLLAMA_CHAT_TIMEOUT, material_type="condense"),
+        )
+        return condensed.strip() or question
+    except Exception:
+        return question
+
+
+async def generate_structured_chat(
+    chunks: List[Dict[str, Any]],
+    question: str,
+    history: List[Dict[str, str]],
+    language: str = "en",
+) -> Dict[str, Any]:
+    """Generate a grounded chat answer with cited chunk IDs and a confidence score."""
+    context_parts = []
+    for c in chunks:
+        page = c.get("page_number")
+        page_str = f" p.{page}" if page is not None else ""
+        snippet = (c.get("content") or "").strip()[:400]
+        context_parts.append(f"[{c['id']}{page_str}] {snippet}")
+    context_block = "\n".join(context_parts)
+
+    history_lines = []
+    for m in (history or [])[-6:]:
+        role = str(m.get("role", "user")).capitalize()
+        content = str(m.get("content", "")).strip()[:300]
+        if content:
+            history_lines.append(f"{role}: {content}")
+    history_block = "\n".join(history_lines)
+
+    prompt = (
+        f"You are a study assistant. Answer based ONLY on the numbered context below. "
+        f"Respond in {language}. Be concise and accurate.\n\n"
+        f"Context:\n{context_block}\n\n"
+    )
+    if history_block:
+        prompt += f"Conversation history:\n{history_block}\n\n"
+    prompt += (
+        f"Question: {question}\n\n"
+        f"Reply with a JSON object with these keys:\n"
+        f'  "answer": your answer as a string\n'
+        f'  "cited_ids": list of integer chunk IDs from the context that support your answer\n'
+        f'  "confidence": float 0-1 reflecting how well the context supports your answer\n'
+        f"JSON:"
+    )
+
+    payload: Dict[str, Any] = {
+        "model": OLLAMA_GENERATION_MODEL,
+        "prompt": prompt,
+        "options": {"num_predict": 768, "temperature": 0.3},
+    }
+    loop = asyncio.get_event_loop()
+    try:
+        raw = await loop.run_in_executor(
+            None,
+            lambda: _stream_ollama_generate(payload, timeout=OLLAMA_CHAT_TIMEOUT, material_type="chat_structured"),
+        )
+        parsed = safe_parse_llm_json(raw)
+        return {
+            "answer": str(parsed.get("answer", raw.strip())),
+            "cited_ids": [int(i) for i in (parsed.get("cited_ids") or []) if str(i).isdigit()],
+            "confidence": float(parsed.get("confidence", max(c.get("similarity", 0.5) for c in chunks))),
+        }
+    except Exception:
+        similarities = [c.get("similarity", 0.5) for c in chunks]
+        return {
+            "answer": raw.strip() if "raw" in dir() else "I was unable to generate a response.",
+            "cited_ids": [],
+            "confidence": float(max(similarities)) if similarities else 0.5,
+        }
+
+
+def normalize_to_canonical(
+    raw: Dict[str, Any],
+    material_type: str,
+    *,
+    model: str = "",
+    topic: Optional[str] = None,
+    subject_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Coerce any LLM output shape into {type, content, metadata}."""
+    # Already canonical
+    if "type" in raw and "content" in raw:
+        result = dict(raw)
+        result.setdefault("metadata", {})
+        result["metadata"].setdefault("model", model)
+        if topic:
+            result["metadata"].setdefault("topic", topic)
+        if subject_id:
+            result["metadata"].setdefault("subject_id", subject_id)
+        return result
+
+    content: Any
+    if material_type == "flashcards":
+        cards = (
+            raw.get("cards")
+            or raw.get("flashcards")
+            or (raw.get("content") or {}).get("cards")
+            or []
+        )
+        content = {"cards": cards}
+    elif material_type == "quiz":
+        questions = (
+            raw.get("questions")
+            or raw.get("quiz")
+            or (raw.get("content") or {}).get("questions")
+            or []
+        )
+        content = {"questions": questions}
+    elif material_type == "summary":
+        content = raw.get("summary") or raw.get("content") or raw
+    else:
+        content = raw.get("content") or raw
+
+    return {
+        "type": material_type,
+        "content": content,
+        "metadata": {
+            "model": model,
+            **({"topic": topic} if topic else {}),
+            **({"subject_id": subject_id} if subject_id else {}),
+        },
+    }
+
+
+def normalize_ai_generated_content(
+    material_type: str,
+    raw: Union[str, Dict[str, Any]],
+    *,
+    model: str = "",
+    topic: Optional[str] = None,
+    subject_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Canonical normalization shared by SSE and Celery paths.
+
+    summary   — plain text is valid; JSON dict also accepted. Raises ValueError if empty/whitespace.
+    quiz      — must parse to JSON with non-empty questions list; raises ValueError.
+    flashcards— must parse to JSON with non-empty cards list; raises ValueError.
+    exam      — must parse to JSON with non-empty questions + answer_sheet; raises ValueError.
+    All structured types also run _validate_mode_specific_constraints (field-level).
+    """
+    from datetime import datetime as _dt
+
+    def _stamp(payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload.setdefault("metadata", {})
+        payload["metadata"].setdefault("model", model)
+        if topic:
+            payload["metadata"].setdefault("topic", topic)
+        if subject_id:
+            payload["metadata"].setdefault("subject_id", subject_id)
+        payload["metadata"]["processed_at"] = _dt.now().isoformat()
+        return payload
+
+    if material_type == "summary":
+        if isinstance(raw, str):
+            if not raw.strip():
+                raise ValueError("Summary output is empty")
+            return _stamp({"type": "summary", "content": raw.strip(), "metadata": {}})
+        payload = normalize_to_canonical(raw, "summary", model=model, topic=topic, subject_id=subject_id)
+        return _stamp(payload)
+
+    if isinstance(raw, str):
+        parse_result = safe_parse_llm_json(raw)
+        if not parse_result.get("ok"):
+            raise ValueError(
+                f"Failed to parse {material_type} LLM output as JSON: {parse_result.get('error')}"
+            )
+        parsed: Dict[str, Any] = parse_result["data"]
+    else:
+        parsed = raw
+
+    payload = normalize_to_canonical(parsed, material_type, model=model, topic=topic, subject_id=subject_id)
+    content = payload.get("content") or {}
+
+    if material_type == "quiz":
+        questions = content.get("questions") if isinstance(content, dict) else None
+        if not isinstance(questions, list) or len(questions) == 0:
+            raise ValueError("Quiz output contains no questions")
+    elif material_type == "flashcards":
+        cards = content.get("cards") if isinstance(content, dict) else None
+        if not isinstance(cards, list) or len(cards) == 0:
+            raise ValueError("Flashcards output contains no cards")
+    elif material_type == "exam":
+        questions = content.get("questions") if isinstance(content, dict) else None
+        answer_sheet = content.get("answer_sheet") if isinstance(content, dict) else None
+        if not isinstance(questions, list) or len(questions) == 0:
+            raise ValueError("Exam output contains no questions")
+        if not isinstance(answer_sheet, list) or len(answer_sheet) == 0:
+            raise ValueError("Exam output contains no answer_sheet")
+
+    # Field-level validation: same constraints the Celery path enforces via
+    # _validate_mode_specific_constraints, now applied in the SSE path too.
+    _validate_mode_specific_constraints(material_type, payload)
+
+    return _stamp(payload)
+
 
 def evaluate_quiz(
     questions: List[Dict[str, Any]],

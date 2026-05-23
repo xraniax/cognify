@@ -192,8 +192,8 @@ def test_keyword_stuffing():
     result = scorer.score(answer, rubric)
     
     print(f"Score: {result.final_score}/5.0")
-    print(f"Detected issues: {result.detected_issues or 'None'}")
-    print(f"Anti-cheating penalty: {result.anti_cheating_penalty:.2f}")
+    print(f"Detected issues: {result.warnings or 'None'}")
+    print(f"Anti-cheating penalty: {result.component_breakdown.get('anti_cheating_penalty', 0.0):.2f}")
     print(f"\n[Score reduced due to keyword stuffing detection]")
     
     return result
@@ -230,19 +230,19 @@ def run_all_tests():
     # Validate expectations
     all_pass = True
     if results['good'].final_score < 3.5:
-        print("\n❌ FAIL: Good answer scored too low")
+        print("\n[FAIL]: Good answer scored too low")
         all_pass = False
     if results['fluff'].final_score > 2.0:
-        print("\n❌ FAIL: Fluff answer scored too high (soft coupling not working)")
+        print("\n[FAIL]: Fluff answer scored too high (soft coupling not working)")
         all_pass = False
     if results['stuffing'].final_score > results['partial'].final_score:
-        print("\n❌ FAIL: Keyword stuffing scored higher than partial (anti-cheating failed)")
+        print("\n[FAIL]: Keyword stuffing scored higher than partial (anti-cheating failed)")
         all_pass = False
     
     if all_pass:
-        print("\n✅ ALL TESTS PASSED - System working correctly")
+        print("\n[PASS] ALL TESTS PASSED - System working correctly")
     else:
-        print("\n⚠️  Some tests failed - review scoring logic")
+        print("\n[WARN] Some tests failed - review scoring logic")
     
     return all_pass
 

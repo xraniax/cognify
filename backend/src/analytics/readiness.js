@@ -9,6 +9,7 @@
 
 import {
     READINESS_WEIGHTS,
+    TREND_WEIGHTS,
     CONFIDENCE_PENALTY,
     CONFIDENCE_TAU,
     DATA_QUALITY_THRESHOLDS,
@@ -151,8 +152,8 @@ export function computeOverallConsistency({ quizResponses = [], examAttempts = [
 
     // Weighted average over available sources
     let num = 0, den = 0;
-    if (kQuiz !== null) { num += 0.40 * kQuiz; den += 0.40; }
-    if (kExam !== null) { num += 0.60 * kExam; den += 0.60; }
+    if (kQuiz !== null) { num += TREND_WEIGHTS.quiz * kQuiz; den += TREND_WEIGHTS.quiz; }
+    if (kExam !== null) { num += TREND_WEIGHTS.exam * kExam; den += TREND_WEIGHTS.exam; }
 
     return clamp(num / den);
 }
@@ -184,7 +185,7 @@ export function computeOverallTrend({ quizResponses = [], examAttempts = [] }) {
     // Combined: weighted average of available trends (exam weighted higher)
     let combined = null;
     if (tQuiz !== null && tExam !== null) {
-        combined = 0.40 * tQuiz + 0.60 * tExam;
+        combined = TREND_WEIGHTS.quiz * tQuiz + TREND_WEIGHTS.exam * tExam;
     } else if (tExam !== null) {
         combined = tExam;
     } else if (tQuiz !== null) {
@@ -201,7 +202,7 @@ export function computeOverallTrend({ quizResponses = [], examAttempts = [] }) {
 
 // ─── Weakness threshold logic ─────────────────────────────────────────────────
 
-const BASE_THRESHOLDS = {
+export const BASE_THRESHOLDS = {
     critical:   0.40,
     weak:       0.60,
     developing: 0.80,

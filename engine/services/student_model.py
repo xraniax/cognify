@@ -145,8 +145,12 @@ def get_student(user_id: str) -> Dict[str, Any]:
     if not user_id:
         raise ValueError("user_id is required")
 
-    client = _get_redis_client()
-    data = _read_state(user_id, client)
+    try:
+        client = _get_redis_client()
+        data = _read_state(user_id, client)
+    except Exception as exc:
+        logger.error("[STUDENT_MODEL] get_student FAIL user_id=%s error=%s — returning defaults", user_id, exc)
+        data = {}
 
     return {
         "accuracy": float(data.get("accuracy", 0.5)),
@@ -180,56 +184,81 @@ def get_subject_student(user_id: str, subject_id: str) -> Dict[str, Any]:
     if not user_id or not subject_id:
         raise ValueError("user_id and subject_id are required")
 
-    client = _get_redis_client()
-    sub_key = _subject_state_key(user_id, subject_id)
-    data = client.hgetall(sub_key)
+    _redis_fail_defaults = {
+        "accuracy": 0.5,
+        "avg_response_time": 0.0,
+        "weak_concepts": [],
+        "strong_concepts": [],
+        "concept_scores": {},
+    }
 
-    if not data:
-        # Lazy Migration
-        global_data = _read_state(user_id, client)
-        
-        from .knowledge_graph_service import get_subject_graph
-        graph = get_subject_graph(subject_id)
-        domain_concepts = set()
-        if graph:
-            for cat in ("core_concepts", "supporting_concepts", "minor_concepts"):
-                for c in graph.get(cat) or []:
-                    name = c.get("name") if isinstance(c, dict) else None
-                    if name:
-                        domain_concepts.add(name)
-        
-        global_weak = set(_parse_json_list(global_data.get("weak_concepts", "[]")))
-        global_strong = set(_parse_json_list(global_data.get("strong_concepts", "[]")))
-        global_scores = _parse_json_dict(global_data.get("concept_scores", "{}"))
-        
-        if domain_concepts:
-            subject_weak = [c for c in global_weak if c in domain_concepts]
-            subject_strong = [c for c in global_strong if c in domain_concepts]
-            subject_scores = {c: s for c, s in global_scores.items() if c in domain_concepts}
-        else:
-            subject_weak = []
-            subject_strong = []
-            subject_scores = {}
-            
-        data = {
-            "accuracy": global_data.get("accuracy", "0.500000"),
-            "avg_response_time": global_data.get("avg_response_time", "0.000000"),
-            "attempts": "0",
-            "correct_count": "0",
-            "weak_concepts": json.dumps(subject_weak),
-            "strong_concepts": json.dumps(subject_strong),
-            "concept_scores": json.dumps(subject_scores),
-            "last_updated": str(time.time()),
-        }
-        client.hset(sub_key, mapping=data)
-        logger.info(
-            "Lazy hydrated subject_id=%s for user_id=%s with weak=%d strong=%d",
-            subject_id, user_id, len(subject_weak), len(subject_strong)
+    try:
+        client = _get_redis_client()
+        sub_key = _subject_state_key(user_id, subject_id)
+        data = client.hgetall(sub_key)
+
+        if not data:
+            # Lazy Migration
+            global_data = _read_state(user_id, client)
+
+            from .knowledge_graph_service import get_subject_graph
+            graph = get_subject_graph(subject_id)
+            domain_concepts = set()
+            if graph:
+                for cat in ("core_concepts", "supporting_concepts", "minor_concepts"):
+                    for c in graph.get(cat) or []:
+                        name = c.get("name") if isinstance(c, dict) else None
+                        if name:
+                            domain_concepts.add(name)
+
+            global_weak = set(_parse_json_list(global_data.get("weak_concepts", "[]")))
+            global_strong = set(_parse_json_list(global_data.get("strong_concepts", "[]")))
+            global_scores = _parse_json_dict(global_data.get("concept_scores", "{}"))
+
+            if domain_concepts:
+                subject_weak = [c for c in global_weak if c in domain_concepts]
+                subject_strong = [c for c in global_strong if c in domain_concepts]
+                subject_scores = {c: s for c, s in global_scores.items() if c in domain_concepts}
+            else:
+                subject_weak = []
+                subject_strong = []
+                subject_scores = {}
+
+            data = {
+                "accuracy": global_data.get("accuracy", "0.500000"),
+                "avg_response_time": global_data.get("avg_response_time", "0.000000"),
+                "attempts": "0",
+                "correct_count": "0",
+                "weak_concepts": json.dumps(subject_weak),
+                "strong_concepts": json.dumps(subject_strong),
+                "concept_scores": json.dumps(subject_scores),
+                "last_updated": str(time.time()),
+            }
+            client.hset(sub_key, mapping=data)
+            logger.info(
+                "Lazy hydrated subject_id=%s for user_id=%s with weak=%d strong=%d",
+                subject_id, user_id, len(subject_weak), len(subject_strong)
+            )
+
+    except Exception as exc:
+        logger.error(
+            "[STUDENT_MODEL] get_subject_student FAIL user_id=%s subject_id=%s error=%s — returning defaults",
+            user_id, subject_id, exc,
         )
+        return _redis_fail_defaults
+
+    # Ensure floats are safely parsed even if Redis returns empty strings/None
+    def _safe_float(val, default):
+        try:
+            if val is None or str(val).strip() == "":
+                return default
+            return float(val)
+        except (ValueError, TypeError):
+            return default
 
     return {
-        "accuracy": float(data.get("accuracy", 0.5)),
-        "avg_response_time": float(data.get("avg_response_time", 0.0)),
+        "accuracy": _safe_float(data.get("accuracy"), 0.5),
+        "avg_response_time": _safe_float(data.get("avg_response_time"), 0.0),
         "weak_concepts": sorted(_parse_json_list(data.get("weak_concepts", "[]"))),
         "strong_concepts": sorted(_parse_json_list(data.get("strong_concepts", "[]"))),
         "concept_scores": _parse_json_dict(data.get("concept_scores", "{}")),
@@ -253,77 +282,83 @@ def update_student_performance(
     from .concept_resolver import ConceptResolver
     resolved_concept = ConceptResolver.resolve(concept, topic)
 
-    client = _get_redis_client()
-    
-    # 1. Global Update
-    global_data = _read_state(user_id, client)
-    g_attempts = int(global_data.get("attempts", 0)) + 1
-    g_correct = int(global_data.get("correct_count", 0)) + (1 if is_correct else 0)
-    g_avg_rt = float(global_data.get("avg_response_time", 0.0))
-    g_new_avg_rt = float(response_time) if g_attempts == 1 else ((g_avg_rt * (g_attempts - 1)) + float(response_time)) / g_attempts
-    
-    g_acc = float(global_data.get("accuracy", 0.5))
-    g_emp = g_correct / g_attempts
-    g_step = ACCURACY_STEP if is_correct else -ACCURACY_STEP
-    g_new_acc = (g_emp + _clamp(g_acc + g_step, 0.0, 1.0)) / 2.0
+    try:
+        client = _get_redis_client()
 
-    global_mapping = {
-        "attempts": g_attempts,
-        "correct_count": g_correct,
-        "accuracy": f"{g_new_acc:.6f}",
-        "avg_response_time": f"{g_new_avg_rt:.6f}",
-        "last_updated": str(time.time()),
-    }
-    
-    # Temporarily preserve global concepts for backward compatibility
-    # Instead of deleting, just carry them forward
-    if "weak_concepts" in global_data:
-        global_mapping["weak_concepts"] = global_data["weak_concepts"]
-        global_mapping["strong_concepts"] = global_data["strong_concepts"]
-        global_mapping["concept_scores"] = global_data["concept_scores"]
+        # 1. Global Update
+        global_data = _read_state(user_id, client)
+        g_attempts = int(global_data.get("attempts", 0)) + 1
+        g_correct = int(global_data.get("correct_count", 0)) + (1 if is_correct else 0)
+        g_avg_rt = float(global_data.get("avg_response_time", 0.0))
+        g_new_avg_rt = float(response_time) if g_attempts == 1 else ((g_avg_rt * (g_attempts - 1)) + float(response_time)) / g_attempts
 
-    client.hset(_state_key(user_id), mapping=global_mapping)
+        g_acc = float(global_data.get("accuracy", 0.5))
+        g_emp = g_correct / g_attempts
+        g_step = ACCURACY_STEP if is_correct else -ACCURACY_STEP
+        g_new_acc = (g_emp + _clamp(g_acc + g_step, 0.0, 1.0)) / 2.0
 
-    # 2. Subject Update
-    if subject_id:
-        get_subject_student(user_id, subject_id) # ensure lazy hydrate
-        sub_key = _subject_state_key(user_id, subject_id)
-        sub_data = client.hgetall(sub_key)
-        
-        s_attempts = int(sub_data.get("attempts", 0)) + 1
-        s_correct = int(sub_data.get("correct_count", 0)) + (1 if is_correct else 0)
-        s_avg_rt = float(sub_data.get("avg_response_time", 0.0))
-        s_new_avg_rt = float(response_time) if s_attempts == 1 else ((s_avg_rt * (s_attempts - 1)) + float(response_time)) / s_attempts
-        
-        s_acc = float(sub_data.get("accuracy", 0.5))
-        s_emp = s_correct / s_attempts
-        s_new_acc = (s_emp + _clamp(s_acc + g_step, 0.0, 1.0)) / 2.0
-        
-        weak_concepts = set(_parse_json_list(sub_data.get("weak_concepts", "[]")))
-        strong_concepts = set(_parse_json_list(sub_data.get("strong_concepts", "[]")))
-        concept_scores = _parse_json_dict(sub_data.get("concept_scores", "{}"))
-        
-        if resolved_concept:
-            if is_correct:
-                current_count = int(concept_scores.get(resolved_concept, 0)) + 1
-                concept_scores[resolved_concept] = current_count
-                if current_count >= STRONG_CONCEPT_MIN_CORRECT:
-                    strong_concepts.add(resolved_concept)
-                    weak_concepts.discard(resolved_concept)
-            else:
-                weak_concepts.add(resolved_concept)
-                strong_concepts.discard(resolved_concept)
-
-        client.hset(sub_key, mapping={
-            "attempts": s_attempts,
-            "correct_count": s_correct,
-            "accuracy": f"{s_new_acc:.6f}",
-            "avg_response_time": f"{s_new_avg_rt:.6f}",
-            "weak_concepts": json.dumps(sorted(weak_concepts)),
-            "strong_concepts": json.dumps(sorted(strong_concepts)),
-            "concept_scores": json.dumps(concept_scores),
+        global_mapping = {
+            "attempts": g_attempts,
+            "correct_count": g_correct,
+            "accuracy": f"{g_new_acc:.6f}",
+            "avg_response_time": f"{g_new_avg_rt:.6f}",
             "last_updated": str(time.time()),
-        })
+        }
+
+        # Temporarily preserve global concepts for backward compatibility
+        if "weak_concepts" in global_data:
+            global_mapping["weak_concepts"] = global_data["weak_concepts"]
+            global_mapping["strong_concepts"] = global_data["strong_concepts"]
+            global_mapping["concept_scores"] = global_data["concept_scores"]
+
+        client.hset(_state_key(user_id), mapping=global_mapping)
+
+        # 2. Subject Update
+        if subject_id:
+            get_subject_student(user_id, subject_id)  # ensure lazy hydrate (has its own try/except)
+            sub_key = _subject_state_key(user_id, subject_id)
+            sub_data = client.hgetall(sub_key)
+
+            s_attempts = int(sub_data.get("attempts", 0)) + 1
+            s_correct = int(sub_data.get("correct_count", 0)) + (1 if is_correct else 0)
+            s_avg_rt = float(sub_data.get("avg_response_time", 0.0))
+            s_new_avg_rt = float(response_time) if s_attempts == 1 else ((s_avg_rt * (s_attempts - 1)) + float(response_time)) / s_attempts
+
+            s_acc = float(sub_data.get("accuracy", 0.5))
+            s_emp = s_correct / s_attempts
+            s_new_acc = (s_emp + _clamp(s_acc + g_step, 0.0, 1.0)) / 2.0
+
+            weak_concepts = set(_parse_json_list(sub_data.get("weak_concepts", "[]")))
+            strong_concepts = set(_parse_json_list(sub_data.get("strong_concepts", "[]")))
+            concept_scores = _parse_json_dict(sub_data.get("concept_scores", "{}"))
+
+            if resolved_concept:
+                if is_correct:
+                    current_count = int(concept_scores.get(resolved_concept, 0)) + 1
+                    concept_scores[resolved_concept] = current_count
+                    if current_count >= STRONG_CONCEPT_MIN_CORRECT:
+                        strong_concepts.add(resolved_concept)
+                        weak_concepts.discard(resolved_concept)
+                else:
+                    weak_concepts.add(resolved_concept)
+                    strong_concepts.discard(resolved_concept)
+
+            client.hset(sub_key, mapping={
+                "attempts": s_attempts,
+                "correct_count": s_correct,
+                "accuracy": f"{s_new_acc:.6f}",
+                "avg_response_time": f"{s_new_avg_rt:.6f}",
+                "weak_concepts": json.dumps(sorted(weak_concepts)),
+                "strong_concepts": json.dumps(sorted(strong_concepts)),
+                "concept_scores": json.dumps(concept_scores),
+                "last_updated": str(time.time()),
+            })
+
+    except Exception as exc:
+        logger.error(
+            "[STUDENT_MODEL] update_student_performance FAIL user_id=%s error=%s — Redis state may not be fully persisted",
+            user_id, exc,
+        )
 
     return get_student(user_id)
 
@@ -347,61 +382,68 @@ def update_student_performance_from_learning_event(
         logger.debug("Skipping student performance update for invalid concept=%s", concept)
         return
 
-    client = _get_redis_client()
-    
-    if subject_id:
-        get_subject_student(user_id, subject_id)
-        sub_key = _subject_state_key(user_id, subject_id)
-        data = client.hgetall(sub_key)
-        
-        weak_concepts = set(_parse_json_list(data.get("weak_concepts", "[]")))
-        strong_concepts = set(_parse_json_list(data.get("strong_concepts", "[]")))
-        concept_scores = _parse_json_dict(data.get("concept_scores", "{}"))
+    try:
+        client = _get_redis_client()
 
-        if is_correct:
-            current_count = int(concept_scores.get(resolved_concept, 0)) + 1
-            concept_scores[resolved_concept] = current_count
-            if current_count >= STRONG_CONCEPT_MIN_CORRECT:
-                strong_concepts.add(resolved_concept)
-                weak_concepts.discard(resolved_concept)
+        if subject_id:
+            get_subject_student(user_id, subject_id)  # ensure lazy hydrate (has its own try/except)
+            sub_key = _subject_state_key(user_id, subject_id)
+            data = client.hgetall(sub_key)
+
+            weak_concepts = set(_parse_json_list(data.get("weak_concepts", "[]")))
+            strong_concepts = set(_parse_json_list(data.get("strong_concepts", "[]")))
+            concept_scores = _parse_json_dict(data.get("concept_scores", "{}"))
+
+            if is_correct:
+                current_count = int(concept_scores.get(resolved_concept, 0)) + 1
+                concept_scores[resolved_concept] = current_count
+                if current_count >= STRONG_CONCEPT_MIN_CORRECT:
+                    strong_concepts.add(resolved_concept)
+                    weak_concepts.discard(resolved_concept)
+            else:
+                weak_concepts.add(resolved_concept)
+                strong_concepts.discard(resolved_concept)
+
+            client.hset(
+                sub_key,
+                mapping={
+                    "weak_concepts": json.dumps(sorted(weak_concepts)),
+                    "strong_concepts": json.dumps(sorted(strong_concepts)),
+                    "concept_scores": json.dumps(concept_scores),
+                    "last_updated": str(time.time()),
+                },
+            )
         else:
-            weak_concepts.add(resolved_concept)
-            strong_concepts.discard(resolved_concept)
+            # Legacy global fallback if no subject provided
+            data = _read_state(user_id, client)
+            weak_concepts = set(_parse_json_list(data.get("weak_concepts", "[]")))
+            strong_concepts = set(_parse_json_list(data.get("strong_concepts", "[]")))
+            concept_scores = _parse_json_dict(data.get("concept_scores", "{}"))
 
-        client.hset(
-            sub_key,
-            mapping={
-                "weak_concepts": json.dumps(sorted(weak_concepts)),
-                "strong_concepts": json.dumps(sorted(strong_concepts)),
-                "concept_scores": json.dumps(concept_scores),
-                "last_updated": str(time.time()),
-            },
-        )
-    else:
-        # Legacy global fallback if no subject provided
-        data = _read_state(user_id, client)
-        weak_concepts = set(_parse_json_list(data.get("weak_concepts", "[]")))
-        strong_concepts = set(_parse_json_list(data.get("strong_concepts", "[]")))
-        concept_scores = _parse_json_dict(data.get("concept_scores", "{}"))
+            if is_correct:
+                current_count = int(concept_scores.get(resolved_concept, 0)) + 1
+                concept_scores[resolved_concept] = current_count
+                if current_count >= STRONG_CONCEPT_MIN_CORRECT:
+                    strong_concepts.add(resolved_concept)
+                    weak_concepts.discard(resolved_concept)
+            else:
+                weak_concepts.add(resolved_concept)
+                strong_concepts.discard(resolved_concept)
 
-        if is_correct:
-            current_count = int(concept_scores.get(resolved_concept, 0)) + 1
-            concept_scores[resolved_concept] = current_count
-            if current_count >= STRONG_CONCEPT_MIN_CORRECT:
-                strong_concepts.add(resolved_concept)
-                weak_concepts.discard(resolved_concept)
-        else:
-            weak_concepts.add(resolved_concept)
-            strong_concepts.discard(resolved_concept)
+            client.hset(
+                _state_key(user_id),
+                mapping={
+                    "weak_concepts": json.dumps(sorted(weak_concepts)),
+                    "strong_concepts": json.dumps(sorted(strong_concepts)),
+                    "concept_scores": json.dumps(concept_scores),
+                    "last_updated": str(time.time()),
+                },
+            )
 
-        client.hset(
-            _state_key(user_id),
-            mapping={
-                "weak_concepts": json.dumps(sorted(weak_concepts)),
-                "strong_concepts": json.dumps(sorted(strong_concepts)),
-                "concept_scores": json.dumps(concept_scores),
-                "last_updated": str(time.time()),
-            },
+    except Exception as exc:
+        logger.error(
+            "[STUDENT_MODEL] update_student_performance_from_learning_event FAIL user_id=%s concept=%s error=%s — state NOT persisted",
+            user_id, concept, exc,
         )
 
     logger.debug(

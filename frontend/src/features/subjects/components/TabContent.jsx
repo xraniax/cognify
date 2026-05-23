@@ -156,14 +156,27 @@ const TabContent = ({
         const hasContent = !!material.content;
 
         if (hasFile) {
-            const isDrive = material.file_path.includes('drive.google.com');
+            const isBackendFile = material.file_path.startsWith('/api/files/');
+            const isDrive = !isBackendFile && material.file_path.includes('drive.google.com');
             const isMemory = material.file_path.startsWith('memory://');
-            const lowerFilePath = (material.file_path || '').toLowerCase();
-            const isPdf = lowerFilePath.endsWith('.pdf');
-            const isImage = ['.png', '.jpg', '.jpeg', '.webp', '.gif'].some((ext) => lowerFilePath.endsWith(ext));
-            let fileUrl = (material.file_path.startsWith('http') || isMemory)
-                ? material.file_path
-                : `${BASE_URL.replace(/\/+$/, '')}/${material.file_path.replace(/^\/+/, '')}`;
+            // Use mime_type + original_name (now returned by API) for reliable type detection.
+            // Falling back to file_path suffix only works for non-API paths (direct URLs).
+            const originalName = (material.original_name || material.title || '').toLowerCase();
+            const lowerFilePath = isBackendFile ? originalName : (material.file_path || '').toLowerCase();
+            const isPdf = material.mime_type === 'application/pdf' || lowerFilePath.endsWith('.pdf');
+            const isImage = (material.mime_type || '').startsWith('image/') ||
+                ['.png', '.jpg', '.jpeg', '.webp', '.gif'].some((ext) => lowerFilePath.endsWith(ext));
+
+            let fileUrl;
+            if (isBackendFile) {
+                const token = localStorage.getItem('token');
+                const base = `${BASE_URL.replace(/\/+$/, '')}${material.file_path}`;
+                fileUrl = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+            } else if (material.file_path.startsWith('http') || isMemory) {
+                fileUrl = material.file_path;
+            } else {
+                fileUrl = `${BASE_URL.replace(/\/+$/, '')}/${material.file_path.replace(/^\/+/, '')}`;
+            }
 
             if (isDrive && fileUrl.includes('/view')) {
                 fileUrl = fileUrl.replace('/view', '/preview');
@@ -185,21 +198,8 @@ const TabContent = ({
                 );
             }
 
-            if (isPdf || isDrive) {
-                return (
-                    <div className="flex-1 h-full w-full flex flex-col" style={{ background: 'var(--c-canvas)' }}>
-                        {DeletedBanner}
-                        <iframe
-                            key={tab.requestedPage ? `${fileUrl}-${tab.requestedPage}` : fileUrl}
-                            src={isDrive ? (fileUrl.includes('?') ? `${fileUrl}&rm=minimal` : `${fileUrl}?rm=minimal`) : `${fileUrl}#page=${tab.requestedPage || 1}&view=Fit&zoom=page-fit`}
-                            className="w-full flex-1 border-none"
-                            title={tab.title}
-                            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-                        />
-                    </div>
-                );
-            }
-
+            // Images: always use <img> — not affected by X-Frame-Options/CSP frame-ancestors,
+            // and renders correctly for both backend-hosted and direct URLs.
             if (isImage) {
                 return (
                     <div className="flex-1 h-full w-full flex flex-col" style={{ background: 'var(--c-canvas)' }}>
@@ -212,6 +212,43 @@ const TabContent = ({
                                 style={{ borderColor: 'var(--c-border-soft)' }}
                             />
                         </div>
+                    </div>
+                );
+            }
+
+            if (isDrive) {
+                // Google Drive preview — sandbox restricts what Drive's UI can do in our page.
+                const driveEmbedUrl = fileUrl.includes('?') ? `${fileUrl}&rm=minimal` : `${fileUrl}?rm=minimal`;
+                return (
+                    <div className="flex-1 h-full w-full flex flex-col" style={{ background: 'var(--c-canvas)' }}>
+                        {DeletedBanner}
+                        <iframe
+                            key={driveEmbedUrl}
+                            src={driveEmbedUrl}
+                            className="w-full flex-1 border-none"
+                            title={tab.title}
+                            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                        />
+                    </div>
+                );
+            }
+
+            if (isPdf || isBackendFile) {
+                // Backend-hosted files (PDF/binary from our own server).
+                // No sandbox: binary content needs no sandboxing, and Edge/Chrome block
+                // PDF rendering in sandboxed iframes that lack allow-downloads.
+                const embedUrl = isBackendFile
+                    ? fileUrl
+                    : `${fileUrl}#page=${tab.requestedPage || 1}&view=Fit&zoom=page-fit`;
+                return (
+                    <div className="flex-1 h-full w-full flex flex-col" style={{ background: 'var(--c-canvas)' }}>
+                        {DeletedBanner}
+                        <iframe
+                            key={tab.requestedPage ? `${embedUrl}-${tab.requestedPage}` : embedUrl}
+                            src={embedUrl}
+                            className="w-full flex-1 border-none"
+                            title={tab.title}
+                        />
                     </div>
                 );
             }
@@ -272,7 +309,7 @@ const TabContent = ({
             parsedContent = contentToParse;
         }
     } else {
-        parsedContent = extractExamData(contentToParse);
+        parsedContent = extractExamData(contentToParse) || contentToParse;
     }
 
     if (typeof parsedContent === 'object' && parsedContent) {
@@ -290,7 +327,17 @@ const TabContent = ({
                 )}
                 <div className="flex-1">
                     <MaterialErrorBoundary type="quiz">
-                        <QuizView key={tab.id} quizMode="static" quizData={parsedContent} isExpanded={isExpanded} subjectId={subjectId} topic={subjectName || null} language="en" />
+                        <QuizView 
+                key={tab.id} 
+                quizMode="static" 
+                quizData={parsedContent} 
+                isExpanded={isExpanded} 
+                subjectId={subjectId} 
+                materialId={material.id}
+                topic={subjectName || null} 
+                language="en"
+                isLiveGenerating={isLiveGenerating}
+            />
                     </MaterialErrorBoundary>
                 </div>
                 {ratingPortal}
@@ -309,7 +356,12 @@ const TabContent = ({
                 )}
                 <div className="flex-1">
                     <MaterialErrorBoundary type="flashcards">
-                        <FlashcardsView flashcardsData={parsedContent} subjectId={subjectId} isExpanded={isExpanded} />
+                        <FlashcardsView 
+                flashcardsData={parsedContent} 
+                subjectId={subjectId} 
+                isExpanded={isExpanded}
+                isLiveGenerating={isLiveGenerating}
+            />
                     </MaterialErrorBoundary>
                 </div>
                 {ratingPortal}
@@ -328,7 +380,7 @@ const TabContent = ({
                 )}
                 <div className="flex-1">
                     <MaterialErrorBoundary type="exam">
-                        <ExamView examData={parsedContent} examId={material.id} subjectId={subjectId} isExpanded={isExpanded} />
+                        <ExamView examData={parsedContent} examId={material.id} subjectId={subjectId} isExpanded={isExpanded} isLiveGenerating={isLiveGenerating} />
                     </MaterialErrorBoundary>
                 </div>
                 {ratingPortal}
@@ -336,7 +388,11 @@ const TabContent = ({
         );
     }
 
-    if (tab.type === 'exam' || material.type === 'exam') {
+    if (tab.type === 'exam' || material.type === 'exam' || tab.type === 'mock_exam' || material.type === 'mock_exam') {
+        // Show loading state when material is still being generated by the engine
+        const TERMINAL_STATUSES = ['COMPLETED', 'SUCCESS', 'FAILED', 'EMPTY'];
+        const examStillProcessing = !material?.ai_generated_content &&
+            !TERMINAL_STATUSES.includes(String(material?.status || '').toUpperCase());
         return (
             <div className="flex-1 h-full flex flex-col overflow-y-auto bg-transparent">
                 {DeletedBanner}
@@ -347,7 +403,14 @@ const TabContent = ({
                 )}
                 <div className="flex-1">
                     <MaterialErrorBoundary type="exam">
-                        <ExamView key={material.id} examData={parsedContent} examId={material.id} subjectId={subjectId} isExpanded={isExpanded} />
+                        <ExamView
+                key={material.id}
+                examData={parsedContent}
+                examId={material.id}
+                subjectId={subjectId}
+                isExpanded={isExpanded}
+                isLiveGenerating={isLiveGenerating || examStillProcessing}
+            />
                     </MaterialErrorBoundary>
                 </div>
                 {ratingPortal}

@@ -12,7 +12,19 @@ Provides deterministic, explainable, and fair grading for short-answer exam ques
 """
 
 import logging
-from typing import Optional, Dict, Any, List
+import math
+from typing import Optional, Dict, Any, List, Tuple
+
+def safe_clamp_score(val: Any) -> float:
+    try:
+        if val is None:
+            return 0.0
+        f_val = float(val)
+        if math.isnan(f_val) or math.isinf(f_val):
+            return 0.0
+        return round(max(0.0, min(1.0, f_val)), 3)
+    except Exception:
+        return 0.0
 
 from .schemas import ExamRubric, StudentAnswer, ExamScoreResult, ScoreScale
 from .core.similarity import semantic_similarity_score
@@ -102,7 +114,7 @@ class ExamScorer:
         )
         
         # 1. Semantic similarity scoring
-        raw_semantic_score = self._calculate_semantic_score(answer_text, reference)
+        raw_semantic_score = safe_clamp_score(self._calculate_semantic_score(answer_text, reference))
         
         # 2. Concept coverage scoring
         concept_score, present_concepts, missing_concepts = self._calculate_concept_score(
@@ -116,7 +128,7 @@ class ExamScorer:
         # Soft coupling: semantic score weighted by concept coverage
         # Prevents "fluent but empty" answers from high scores
         concept_coverage_ratio = len(present_concepts) / len(rubric.concepts) if rubric.concepts else 0
-        semantic_score = raw_semantic_score * (0.6 + 0.4 * concept_coverage_ratio)
+        semantic_score = safe_clamp_score(raw_semantic_score * (0.6 + 0.4 * concept_coverage_ratio))
         
         # Combine component scores
         weights = rubric.weights
@@ -222,7 +234,7 @@ class ExamScorer:
         self,
         answer: str,
         rubric: ExamRubric
-    ) -> tuple[float, List[str], List[str]]:
+    ) -> Tuple[float, List[str], List[str]]:
         """Calculate concept coverage score."""
         if not rubric.concepts:
             return 1.0, [], []

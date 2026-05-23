@@ -1,0 +1,722 @@
+{
+  "info": {
+    "name": "Cognify Exam Debug Suite",
+    "_postman_id": "cognify-exam-debug-v1",
+    "description": "Complete exam system debug collection.\n\n**Setup:**\n1. Set `auth_token` variable by running the Login request first.\n2. Set `subject_id` to a real UUID from your DB.\n3. `exam_id` is auto-captured from the generate response via the test script.\n\n**Backend:** http://localhost:5000/api/exams\n**Engine:** http://localhost:8000\n\n**Layer isolation strategy:**\n- Run Backend requests first to test the full stack.\n- Run Engine Direct requests to bypass the backend and hit the engine alone.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url",    "value": "http://localhost:5000", "type": "string" },
+    { "key": "engine_url",  "value": "http://localhost:8000", "type": "string" },
+    { "key": "auth_token",  "value": "PASTE_JWT_HERE",        "type": "string" },
+    { "key": "subject_id",  "value": "PASTE_SUBJECT_UUID",    "type": "string" },
+    { "key": "exam_id",     "value": "",                      "type": "string" },
+    { "key": "material_id", "value": "",                      "type": "string" },
+    { "key": "user_id",     "value": "PASTE_USER_UUID",       "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "0. Auth",
+      "item": [
+        {
+          "name": "Login (get JWT)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/api/auth/login", "host": ["{{base_url}}"], "path": ["api","auth","login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"your@email.com\",\n  \"password\": \"yourpassword\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.token) {",
+                  "  pm.collectionVariables.set('auth_token', res.token);",
+                  "  console.log('Token captured:', res.token.substring(0, 20) + '...');",
+                  "} else if (res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('auth_token', res.data.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "1. Backend — Static Exam",
+      "item": [
+        {
+          "name": "1.1 Generate Static Exam (mixed difficulty, all types)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 10,\n  \"difficulty\": \"mixed\",\n  \"topics\": [\"general\"],\n  \"types\": [\"single_choice\", \"multiple_select\", \"short_answer\"],\n  \"title\": \"Debug Static Exam\",\n  \"timeLimit\": 60,\n  \"mode\": \"static\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Generate static response:', JSON.stringify(res).substring(0, 300));",
+                  "// Capture exam_id — field may be nested differently per service version",
+                  "const eid = res.examId || (res.data && res.data.examId) || res.id || (res.data && res.data.id);",
+                  "if (eid) { pm.collectionVariables.set('exam_id', eid); console.log('exam_id set:', eid); }",
+                  "const mid = res.materialId || (res.data && res.data.materialId);",
+                  "if (mid) { pm.collectionVariables.set('material_id', mid); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.2 Generate Static Exam — Intro difficulty, problem + fill_blank",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 5,\n  \"difficulty\": \"Intro\",\n  \"topics\": [\"chapter 1\"],\n  \"types\": [\"problem\", \"fill_blank\"],\n  \"mode\": \"static\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Intro/problem/fill_blank:', JSON.stringify(res).substring(0, 300));",
+                  "const eid = res.examId || (res.data && res.data.examId);",
+                  "if (eid) pm.collectionVariables.set('exam_id', eid);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.3 Generate Static Exam — Adv difficulty, matching + scenario",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 6,\n  \"difficulty\": \"Adv\",\n  \"topics\": [\"advanced topics\"],\n  \"types\": [\"matching\", \"scenario\"],\n  \"mode\": \"static\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Adv/matching/scenario:', JSON.stringify(res).substring(0, 300));",
+                  "const eid = res.examId || (res.data && res.data.examId);",
+                  "if (eid) pm.collectionVariables.set('exam_id', eid);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.4 Get Attempts (by examId)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/exams/attempts/{{exam_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api","exams","attempts","{{exam_id}}"]
+            }
+          }
+        },
+        {
+          "name": "1.5 Save In-Progress Attempt",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/attempts/save", "host": ["{{base_url}}"], "path": ["api","exams","attempts","save"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"examId\": \"{{exam_id}}\",\n  \"currentIndex\": 2,\n  \"answers\": [\n    { \"questionId\": \"q_001\", \"selectedAnswers\": [0] },\n    { \"questionId\": \"q_002\", \"selectedAnswers\": [1, 3] }\n  ],\n  \"flagged\": { \"q_001\": false, \"q_003\": true },\n  \"startedAt\": \"2026-05-22T10:00:00.000Z\"\n}"
+            }
+          }
+        },
+        {
+          "name": "1.6 Submit Static Exam — single_choice + multiple_select",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/submit", "host": ["{{base_url}}"], "path": ["api","exams","submit"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"examId\": \"{{exam_id}}\",\n  \"startedAt\": \"2026-05-22T10:00:00.000Z\",\n  \"submittedAt\": \"2026-05-22T10:45:00.000Z\",\n  \"answers\": [\n    {\n      \"questionId\": \"q_001\",\n      \"selectedAnswers\": [2]\n    },\n    {\n      \"questionId\": \"q_002\",\n      \"selectedAnswers\": [0, 3]\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "1.7 Submit Static Exam — short_answer (semantic grading)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/submit", "host": ["{{base_url}}"], "path": ["api","exams","submit"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"examId\": \"{{exam_id}}\",\n  \"startedAt\": \"2026-05-22T10:00:00.000Z\",\n  \"submittedAt\": \"2026-05-22T10:50:00.000Z\",\n  \"answers\": [\n    {\n      \"questionId\": \"q_001\",\n      \"selectedAnswers\": [],\n      \"answerText\": \"This is my short answer explanation.\"\n    },\n    {\n      \"questionId\": \"q_002\",\n      \"selectedAnswers\": [],\n      \"answerText\": \"Another short answer about the concept.\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "1.8 Submit Static Exam — fill_blank + matching",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/submit", "host": ["{{base_url}}"], "path": ["api","exams","submit"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"examId\": \"{{exam_id}}\",\n  \"startedAt\": \"2026-05-22T10:00:00.000Z\",\n  \"submittedAt\": \"2026-05-22T10:55:00.000Z\",\n  \"answers\": [\n    {\n      \"questionId\": \"q_fill_001\",\n      \"selectedAnswers\": [],\n      \"blankAnswers\": {\n        \"blank_1\": \"photosynthesis\",\n        \"blank_2\": \"chlorophyll\"\n      }\n    },\n    {\n      \"questionId\": \"q_match_001\",\n      \"selectedAnswers\": [],\n      \"matchAnswers\": {\n        \"item_1\": \"match_b\",\n        \"item_2\": \"match_a\",\n        \"item_3\": \"match_c\"\n      }\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "1.9 Submit Static Exam — problem + scenario (semantic grading)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/submit", "host": ["{{base_url}}"], "path": ["api","exams","submit"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"examId\": \"{{exam_id}}\",\n  \"startedAt\": \"2026-05-22T10:00:00.000Z\",\n  \"submittedAt\": \"2026-05-22T11:00:00.000Z\",\n  \"answers\": [\n    {\n      \"questionId\": \"q_problem_001\",\n      \"selectedAnswers\": [],\n      \"answerText\": \"Step 1: Identify the variables.\\nStep 2: Apply the formula.\\nStep 3: Solve for x = 42.\"\n    },\n    {\n      \"questionId\": \"q_scenario_001\",\n      \"selectedAnswers\": [],\n      \"answerText\": \"In this scenario, the main issue is resource allocation. The recommended approach is to prioritize critical tasks first.\"\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "2. Backend — Adaptive Exam",
+      "item": [
+        {
+          "name": "2.1 Generate Adaptive Exam",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 15,\n  \"difficulty\": \"Progression\",\n  \"topics\": [\"general\"],\n  \"types\": [\"single_choice\", \"short_answer\"],\n  \"title\": \"Debug Adaptive Exam\",\n  \"timeLimit\": 90,\n  \"mode\": \"adaptive\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Generate adaptive response:', JSON.stringify(res).substring(0, 500));",
+                  "const eid = res.examId || (res.data && res.data.examId) || res.id;",
+                  "if (eid) { pm.collectionVariables.set('exam_id', eid); console.log('exam_id captured:', eid); }",
+                  "pm.test('Has exam_id', () => pm.expect(eid).to.be.a('string'));",
+                  "pm.test('Has questions array', () => {",
+                  "  const questions = res.questions || (res.data && res.data.questions);",
+                  "  pm.expect(questions).to.be.an('array').with.lengthOf.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.2 Adaptive — Next Batch (after answering first batch)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/next-batch", "host": ["{{base_url}}"], "path": ["api","exams","next-batch"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"examId\": \"{{exam_id}}\",\n  \"answers\": [\n    { \"questionId\": \"q_001\", \"selectedAnswers\": [1] },\n    { \"questionId\": \"q_002\", \"selectedAnswers\": [0] },\n    { \"questionId\": \"q_003\", \"selectedAnswers\": [], \"answerText\": \"The process involves three steps.\" },\n    { \"questionId\": \"q_004\", \"selectedAnswers\": [2] },\n    { \"questionId\": \"q_005\", \"selectedAnswers\": [0, 2] }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Next batch response:', JSON.stringify(res).substring(0, 500));",
+                  "pm.test('Has next questions', () => {",
+                  "  const q = res.questions || res.nextBatch || (res.data && res.data.questions);",
+                  "  pm.expect(q).to.be.an('array').with.lengthOf.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.3 Submit Adaptive Exam (final submission)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/submit", "host": ["{{base_url}}"], "path": ["api","exams","submit"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"examId\": \"{{exam_id}}\",\n  \"startedAt\": \"2026-05-22T10:00:00.000Z\",\n  \"submittedAt\": \"2026-05-22T11:30:00.000Z\",\n  \"answers\": [\n    { \"questionId\": \"q_001\", \"selectedAnswers\": [1] },\n    { \"questionId\": \"q_002\", \"selectedAnswers\": [0] },\n    { \"questionId\": \"q_003\", \"selectedAnswers\": [], \"answerText\": \"My answer for question 3.\" },\n    { \"questionId\": \"q_004\", \"selectedAnswers\": [2] },\n    { \"questionId\": \"q_005\", \"selectedAnswers\": [0, 2] },\n    { \"questionId\": \"q_006\", \"selectedAnswers\": [3] },\n    { \"questionId\": \"q_007\", \"selectedAnswers\": [], \"answerText\": \"Detailed explanation here.\" }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "3. Engine Direct — Layer Isolation",
+      "description": "Call the engine directly (bypassing backend) to isolate failures. Engine has NO authentication — any failure here is an engine/model bug, not a backend/auth issue.",
+      "item": [
+        {
+          "name": "3.1 Exam Init Session (adaptive)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{engine_url}}/exam/init-session", "host": ["{{engine_url}}"], "path": ["exam","init-session"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"subject_id\": \"{{subject_id}}\",\n  \"exam_id\": \"{{exam_id}}\",\n  \"ui_difficulty\": \"Progression\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Engine init-session:', JSON.stringify(res).substring(0, 400));",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('No error stage', () => pm.expect(res.stage).to.not.equal('exam_init'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.2 Exam Adaptive State (update after batch)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{engine_url}}/exam/adaptive-state", "host": ["{{engine_url}}"], "path": ["exam","adaptive-state"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"subject_id\": \"{{subject_id}}\",\n  \"exam_id\": \"{{exam_id}}\",\n  \"batch_results\": [\n    { \"question_id\": \"q_001\", \"is_correct\": true,  \"response_time\": 15.3, \"difficulty\": \"intermediate\" },\n    { \"question_id\": \"q_002\", \"is_correct\": false, \"response_time\": 45.0, \"difficulty\": \"intermediate\" },\n    { \"question_id\": \"q_003\", \"is_correct\": true,  \"response_time\": 20.1, \"difficulty\": \"beginner\" },\n    { \"question_id\": \"q_004\", \"is_correct\": true,  \"response_time\": 12.5, \"difficulty\": \"advanced\" },\n    { \"question_id\": \"q_005\", \"is_correct\": false, \"response_time\": 60.0, \"difficulty\": \"advanced\" }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Engine adaptive-state:', JSON.stringify(res).substring(0, 400));",
+                  "pm.test('Returns recommended difficulty', () => {",
+                  "  pm.expect(res.recommended_difficulty || (res.data && res.data.recommended_difficulty)).to.be.a('string');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.3 Semantic Score — single answer",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{engine_url}}/scoring/score", "host": ["{{engine_url}}"], "path": ["scoring","score"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rubric\": {\n    \"question_id\": \"q_short_001\",\n    \"question_text\": \"Explain the process of photosynthesis.\",\n    \"reference_answer\": \"Photosynthesis is the process by which plants use sunlight, water and carbon dioxide to produce oxygen and glucose.\",\n    \"concepts\": [\n      {\n        \"name\": \"sunlight_requirement\",\n        \"description\": \"plants need sunlight\",\n        \"keywords\": [\"sunlight\", \"light\", \"solar\"],\n        \"weight\": 1.0,\n        \"required\": true\n      },\n      {\n        \"name\": \"glucose_output\",\n        \"description\": \"glucose is produced\",\n        \"keywords\": [\"glucose\", \"sugar\", \"energy\"],\n        \"weight\": 1.0,\n        \"required\": true\n      }\n    ],\n    \"important_keywords\": [\"photosynthesis\", \"chlorophyll\", \"CO2\", \"oxygen\"],\n    \"max_length\": 300,\n    \"min_length\": 10,\n    \"weights\": {\n      \"semantic\": 0.40,\n      \"concept\":  0.40,\n      \"keyword\":  0.20\n    },\n    \"score_scale\": \"0-5\"\n  },\n  \"answer\": {\n    \"student_id\": \"{{user_id}}\",\n    \"question_id\": \"q_short_001\",\n    \"answer_text\": \"Plants absorb sunlight and CO2 to make glucose and release oxygen as a byproduct.\",\n    \"submitted_at\": \"2026-05-22T10:30:00.000Z\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Scoring response:', JSON.stringify(res));",
+                  "pm.test('Has normalized_score', () => pm.expect(res.normalized_score).to.be.a('number'));",
+                  "pm.test('normalized_score in [0,1]', () => {",
+                  "  pm.expect(res.normalized_score).to.be.at.least(0).and.at.most(1);",
+                  "});",
+                  "// Backend uses threshold: normalized_score >= 0.8 → correct",
+                  "console.log('Would be graded', res.normalized_score >= 0.8 ? 'CORRECT' : 'WRONG', '(threshold 0.8)');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.4 Semantic Score — borderline answer (normalized_score ~0.8 edge case)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{engine_url}}/scoring/score", "host": ["{{engine_url}}"], "path": ["scoring","score"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rubric\": {\n    \"question_id\": \"q_short_002\",\n    \"question_text\": \"Explain the process of photosynthesis.\",\n    \"reference_answer\": \"Photosynthesis is the process by which plants use sunlight, water and carbon dioxide to produce oxygen and glucose.\",\n    \"concepts\": [\n      {\n        \"name\": \"sunlight_requirement\",\n        \"description\": \"plants need sunlight\",\n        \"keywords\": [\"sunlight\", \"light\"],\n        \"weight\": 1.0,\n        \"required\": true\n      }\n    ],\n    \"important_keywords\": [\"photosynthesis\", \"plants\"],\n    \"max_length\": 300,\n    \"min_length\": 5,\n    \"weights\": { \"semantic\": 0.40, \"concept\": 0.40, \"keyword\": 0.20 },\n    \"score_scale\": \"0-5\"\n  },\n  \"answer\": {\n    \"student_id\": \"{{user_id}}\",\n    \"question_id\": \"q_short_002\",\n    \"answer_text\": \"Plants need light to grow.\",\n    \"submitted_at\": \"2026-05-22T10:31:00.000Z\"\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Borderline score:', res.normalized_score, '| feedback:', res.feedback);",
+                  "console.log('Graded:', res.normalized_score >= 0.8 ? 'CORRECT' : 'WRONG', '(threshold 0.8)');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.5 Semantic Score Batch",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{engine_url}}/scoring/score/batch", "host": ["{{engine_url}}"], "path": ["scoring","score","batch"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rubric\": {\n    \"question_id\": \"q_batch_test\",\n    \"question_text\": \"What is machine learning?\",\n    \"reference_answer\": \"Machine learning is a subset of AI that enables computers to learn from data without explicit programming.\",\n    \"concepts\": [\n      {\n        \"name\": \"subset_of_ai\",\n        \"description\": \"ML is part of AI\",\n        \"keywords\": [\"AI\", \"artificial intelligence\"],\n        \"weight\": 1.0,\n        \"required\": true\n      },\n      {\n        \"name\": \"learning_from_data\",\n        \"description\": \"learns from data\",\n        \"keywords\": [\"data\", \"learn\", \"training\"],\n        \"weight\": 1.0,\n        \"required\": true\n      }\n    ],\n    \"important_keywords\": [\"machine learning\", \"data\", \"algorithms\"],\n    \"max_length\": 300,\n    \"min_length\": 5,\n    \"weights\": { \"semantic\": 0.40, \"concept\": 0.40, \"keyword\": 0.20 },\n    \"score_scale\": \"0-5\"\n  },\n  \"answers\": [\n    { \"student_id\": \"student_A\", \"question_id\": \"q_batch_test\", \"answer_text\": \"ML is an AI technique that learns patterns from data automatically.\" },\n    { \"student_id\": \"student_B\", \"question_id\": \"q_batch_test\", \"answer_text\": \"It is a computer program.\" },\n    { \"student_id\": \"student_C\", \"question_id\": \"q_batch_test\", \"answer_text\": \"Machine learning allows systems to learn from experience and improve without being programmed.\" }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "3.6 Adaptive Quiz — Next Question",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{engine_url}}/quiz/next", "host": ["{{engine_url}}"], "path": ["quiz","next"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"subject_id\": \"{{subject_id}}\",\n  \"topic\": null,\n  \"language\": \"en\",\n  \"top_k\": 5\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "console.log('Quiz next:', JSON.stringify(res).substring(0, 400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.7 Adaptive Quiz — Submit Answer",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{engine_url}}/quiz/submit-answer", "host": ["{{engine_url}}"], "path": ["quiz","submit-answer"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"subject_id\": \"{{subject_id}}\",\n  \"topic\": null,\n  \"is_correct\": true,\n  \"response_time\": 18.5,\n  \"language\": \"en\",\n  \"top_k\": 5\n}"
+            }
+          }
+        },
+        {
+          "name": "3.8 Evaluate Quiz (batch grading)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{engine_url}}/evaluate-quiz", "host": ["{{engine_url}}"], "path": ["evaluate-quiz"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questions\": [\n    {\n      \"id\": \"q_001\",\n      \"question\": \"What does CPU stand for?\",\n      \"options\": [\"Central Processing Unit\", \"Computer Power Unit\", \"Core Processing Unit\", \"Central Program Unit\"],\n      \"correct_answer\": 0,\n      \"question_type\": \"single_choice\"\n    }\n  ],\n  \"submissions\": [\n    {\n      \"question_id\": \"q_001\",\n      \"selected_answers\": [0]\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "4. Validator Probes — Schema Edge Cases",
+      "description": "Requests designed to trigger specific Zod validator errors. Expect 400 responses. Use these to confirm the backend is validating correctly.",
+      "item": [
+        {
+          "name": "4.1 [Expect 400] Missing topics array",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 5,\n  \"difficulty\": \"mixed\",\n  \"types\": [\"single_choice\"],\n  \"mode\": \"static\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Should be 400', () => pm.response.to.have.status(400));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.2 [Expect 400] Invalid difficulty value",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 5,\n  \"difficulty\": \"INVALID_DIFFICULTY\",\n  \"topics\": [\"test\"],\n  \"types\": [\"single_choice\"],\n  \"mode\": \"static\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Should be 400', () => pm.response.to.have.status(400));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.3 [Expect 400] numberOfQuestions exceeds max (101)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 101,\n  \"difficulty\": \"mixed\",\n  \"topics\": [\"test\"],\n  \"types\": [\"single_choice\"],\n  \"mode\": \"static\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Should be 400', () => pm.response.to.have.status(400));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.4 [Expect 400] Invalid question type",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 5,\n  \"difficulty\": \"mixed\",\n  \"topics\": [\"test\"],\n  \"types\": [\"true_false\"],\n  \"mode\": \"static\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Should be 400', () => pm.response.to.have.status(400));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "4.5 [Expect 401] No auth token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_id\": \"{{subject_id}}\",\n  \"numberOfQuestions\": 5,\n  \"difficulty\": \"mixed\",\n  \"topics\": [\"test\"],\n  \"types\": [\"single_choice\"],\n  \"mode\": \"static\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('Should be 401', () => pm.response.to.have.status(401));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "5. Difficulty Enum Coverage",
+      "description": "One request per valid difficulty value to confirm the backend accepts all difficultySchema variants. All expect 200 (or 201). Run these after capturing a valid auth_token and subject_id.",
+      "item": [
+        {
+          "name": "difficulty = Inter",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"subject_id\": \"{{subject_id}}\", \"numberOfQuestions\": 3, \"difficulty\": \"Inter\", \"topics\": [\"test\"], \"types\": [\"single_choice\"], \"mode\": \"static\" }"
+            }
+          }
+        },
+        {
+          "name": "difficulty = Balanced",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"subject_id\": \"{{subject_id}}\", \"numberOfQuestions\": 3, \"difficulty\": \"Balanced\", \"topics\": [\"test\"], \"types\": [\"single_choice\"], \"mode\": \"static\" }"
+            }
+          }
+        },
+        {
+          "name": "difficulty = Hard",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"subject_id\": \"{{subject_id}}\", \"numberOfQuestions\": 3, \"difficulty\": \"Hard\", \"topics\": [\"test\"], \"types\": [\"single_choice\"], \"mode\": \"static\" }"
+            }
+          }
+        },
+        {
+          "name": "difficulty = Expert",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"subject_id\": \"{{subject_id}}\", \"numberOfQuestions\": 3, \"difficulty\": \"Expert\", \"topics\": [\"test\"], \"types\": [\"single_choice\"], \"mode\": \"static\" }"
+            }
+          }
+        },
+        {
+          "name": "difficulty = Default",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"subject_id\": \"{{subject_id}}\", \"numberOfQuestions\": 3, \"difficulty\": \"Default\", \"topics\": [\"test\"], \"types\": [\"single_choice\"], \"mode\": \"static\" }"
+            }
+          }
+        },
+        {
+          "name": "difficulty = Progression (adaptive)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type",  "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/exams/generate", "host": ["{{base_url}}"], "path": ["api","exams","generate"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"subject_id\": \"{{subject_id}}\", \"numberOfQuestions\": 3, \"difficulty\": \"Progression\", \"topics\": [\"test\"], \"types\": [\"single_choice\"], \"mode\": \"adaptive\" }"
+            }
+          }
+        }
+      ]
+    }
+
+  ]
+}

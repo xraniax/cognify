@@ -11,7 +11,7 @@ class DriveService {
                 const credentials = JSON.parse(process.env.GOOGLE_DRIVE_CREDENTIALS);
                 const auth = new google.auth.GoogleAuth({
                     credentials,
-                    scopes: ['https://www.googleapis.com/auth/drive.file'],
+                    scopes: ['https://www.googleapis.com/auth/drive'],
                 });
                 this.drive = google.drive({ version: 'v3', auth });
                 this.isInitialized = true;
@@ -42,6 +42,7 @@ class DriveService {
                 requestBody: fileMetadata,
                 media: media,
                 fields: 'id',
+                supportsAllDrives: true,
             });
 
             return response.data.id;
@@ -58,7 +59,7 @@ class DriveService {
 
         try {
             const response = await this.drive.files.get(
-                { fileId: fileId, alt: 'media' },
+                { fileId: fileId, alt: 'media', supportsAllDrives: true },
                 { responseType: 'stream' }
             );
             return response.data;
@@ -71,7 +72,7 @@ class DriveService {
     async deleteFile(fileId) {
         if (!this.isInitialized) return;
         try {
-            await this.drive.files.delete({ fileId });
+            await this.drive.files.delete({ fileId, supportsAllDrives: true });
         } catch (error) {
              console.error(`[DriveService] Error deleting file ${fileId}:`, error);
         }

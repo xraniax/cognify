@@ -69,9 +69,16 @@ def _load_credentials_from_file() -> Optional[Tuple[Dict[str, Any], str]]:
             resolved = legacy
 
     if not resolved.exists():
-        raise GoogleDriveConfigError(
-            "Google Drive fallback file not found. Set GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 or a valid GOOGLE_SERVICE_ACCOUNT_FILE"
+        # File path was set but the file is missing — return None so the caller can
+        # fall through to GOOGLE_SERVICE_ACCOUNT_JSON_BASE64.  Raising here would
+        # silently block base64 from being tried and send uploads to local fallback.
+        logger.warning(
+            "GOOGLE_SERVICE_ACCOUNT_FILE=%s not found (checked %s); "
+            "falling back to GOOGLE_SERVICE_ACCOUNT_JSON_BASE64",
+            file_path,
+            resolved,
         )
+        return None
 
     logger.warning(
         "Using development-only GOOGLE_SERVICE_ACCOUNT_FILE fallback; prefer GOOGLE_SERVICE_ACCOUNT_JSON_BASE64"

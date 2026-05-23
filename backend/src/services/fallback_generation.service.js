@@ -40,10 +40,16 @@ class FallbackGenerationService {
             } else if (taskType === 'flashcards') {
                 finalResult.type = 'flashcards';
                 finalResult.content = aiGeneratedContent.content || aiGeneratedContent;
-                if (!finalResult.content.cards) finalResult.content = { cards: [{"front": "Fallback Card", "back": "Fallback generated"}] };
+                if (!Array.isArray(finalResult.content?.cards) || finalResult.content.cards.length === 0) {
+                    finalResult.content = { cards: [{"front": "Fallback Card", "back": "Fallback generated"}] };
+                }
             } else {
                 finalResult.type = taskType === 'mock_exam' ? 'exam' : taskType;
-                finalResult.questions = aiGeneratedContent.questions || aiGeneratedContent;
+                const rawQuestions = aiGeneratedContent.questions;
+                if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) {
+                    throw new Error(`Fallback generation produced no valid questions for ${taskType}`);
+                }
+                finalResult.questions = rawQuestions;
             }
 
             await Material.updateAIResult(materialId, userId, finalResult);

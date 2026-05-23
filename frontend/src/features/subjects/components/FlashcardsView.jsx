@@ -307,7 +307,7 @@ function _genEventId() {
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
-const FlashcardsView = ({ flashcardsData, subjectId, isExpanded = false }) => {
+const FlashcardsView = ({ flashcardsData, subjectId, isExpanded = false, isLiveGenerating = false }) => {
     const materialId = flashcardsData?.id || flashcardsData?.material_id;
     const metadata = useMaterialStore(s => s.data.materialMetadata[materialId]);
     const expectedCount = metadata?.generation?.expectedCount || 0;
@@ -616,13 +616,27 @@ const FlashcardsView = ({ flashcardsData, subjectId, isExpanded = false }) => {
     if (cards.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center p-16 text-gray-400 gap-4">
-                <Layers className="w-14 h-14 opacity-20" />
-                <p className="text-sm font-semibold text-center mt-2">
-                    {flashcardsData?.error 
-                        ? "AI failed to generate flashcards. The content format was invalid." 
-                        : "No flashcards available or generation produced empty results."}
-                </p>
-                <p className="text-xs text-gray-300">Please try generating flashcards again from the Study Intelligence tab.</p>
+                {isLiveGenerating ? (
+                    <>
+                        <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-2 animate-bounce">
+                            <BrainCircuit className="w-8 h-8 text-indigo-500" />
+                        </div>
+                        <h3 className="text-xl font-black text-gray-900 mb-0">Crafting Flashcards</h3>
+                        <p className="text-sm font-medium text-gray-400 max-w-xs text-center leading-relaxed">
+                            Generating your study set. The cards will be available for review shortly.
+                        </p>
+                    </>
+                ) : (
+                    <>
+                        <Layers className="w-14 h-14 opacity-20" />
+                        <p className="text-sm font-semibold text-center mt-2">
+                            {flashcardsData?.error 
+                                ? "AI failed to generate flashcards. The content format was invalid." 
+                                : "No flashcards available or generation produced empty results."}
+                        </p>
+                        <p className="text-xs text-gray-300">Please try generating flashcards again from the Study Intelligence tab.</p>
+                    </>
+                )}
             </div>
         );
     }

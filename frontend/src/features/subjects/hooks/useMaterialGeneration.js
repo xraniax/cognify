@@ -313,7 +313,13 @@ export const useMaterialGeneration = ({
 
                         if (parsed.type === 'error') {
                             errorReceived = true;
-                            console.error('[TRACE][FE_SSE_ERROR] message=%s duration_ms=%d', parsed.message, Math.round(performance.now() - feStartMs));
+                            console.error('[TRACE][FE_SSE_ERROR] reason=%s message=%s duration_ms=%d', parsed.reason, parsed.message, Math.round(performance.now() - feStartMs));
+                            // Capture and clear the material ID before the throw so that any
+                            // in-flight fetchMaterials().then() callback from first-delta tab-open
+                            // finds null and does NOT call openMaterialTab for a failed material.
+                            const failedMaterialId = activeMaterialIdRef.current;
+                            activeMaterialIdRef.current = null;
+                            setGeneratingMaterialId(null);
                             // Clear any partial content accumulated before the error
                             // so the user doesn't see a truncated summary.
                             stopFlushTimer();
@@ -321,6 +327,8 @@ export const useMaterialGeneration = ({
                             setGenResult('');
                             const err = new Error(parsed.message || 'Streaming error');
                             err.isEngineError = true;
+                            err.reason = parsed.reason || null;
+                            err.failedMaterialId = failedMaterialId;
                             throw err;
                         }
 
@@ -392,6 +400,11 @@ export const useMaterialGeneration = ({
             
             // Auto-navigate to the newly created material
             if (activeMaterialIdRef.current) {
+                try {
+                    await MaterialService.sync(activeMaterialIdRef.current);
+                } catch (err) {
+                    console.error('[MaterialGen] SSE Completion sync error', err);
+                }
                 const mats = await fetchMaterials();
                 const mat = mats.find(m => String(m.id) === String(activeMaterialIdRef.current));
                 if (mat) {
@@ -405,9 +418,21 @@ export const useMaterialGeneration = ({
             console.error('[TRACE][FE_STREAM_THROW] error=%s duration_ms=%d', streamErr?.message || streamErr, totalMs);
             streamControllerRef.current = null;
             if (streamErr?.isEngineError) {
-                setMaterialGenError(streamErr.message);
-                finishGenerating();
-                return;
+                if (streamErr.reason === 'FLASHCARDS_PARSE_FAILED') {
+                    // Remove any tab that was speculatively opened on the first delta.
+                    // activeMaterialIdRef was already nullified in the [ERROR] handler to
+                    // block the async fetchMaterials().then() path, but the tab may already
+                    // be in the DOM if that callback resolved before the error arrived.
+                    if (streamErr.failedMaterialId) {
+                        setTabs(prev => prev.filter(t => String(t.id) !== String(streamErr.failedMaterialId)));
+                    }
+                    // Engine failed to produce valid flashcard JSON — fall through to Celery path.
+                    console.warn('[MaterialGen] Flashcard SSE parse failed (%s), falling back to Celery', streamErr.message);
+                } else {
+                    setMaterialGenError(streamErr.message);
+                    finishGenerating();
+                    return;
+                }
             }
             }
         }
@@ -464,11 +489,22 @@ export const useMaterialGeneration = ({
                         try {
                             await MaterialService.sync(material_id, controller.signal);
                             if (String(currentSubjectIdRef.current) !== normalizedId) return;
-                            
+
                             const mats = await fetchMaterials();
                             const mat = mats.find(m => String(m.id) === String(material_id));
                             if (mat) {
                                 openMaterialTab(mat);
+                                // Stream ended before final chunk (e.g. client disconnect) — if engine
+                                // is still processing, poll until content arrives so the tab auto-updates.
+                                const status = String(mat.status || '').toUpperCase();
+                                const TERMINAL = ['COMPLETED', 'SUCCESS', 'FAILED', 'EMPTY'];
+                                if (!mat.ai_generated_content && !TERMINAL.includes(status)) {
+                                    startPolling(String(material_id), (completedMat) => {
+                                        if (String(currentSubjectIdRef.current) === normalizedId) {
+                                            openMaterialTab(completedMat);
+                                        }
+                                    });
+                                }
                             }
                         } catch (err) {
                             console.error("[MaterialGen] Completion sync/fetch error", err);

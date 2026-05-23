@@ -12,7 +12,7 @@ from core.normalization.input_normalizer import SUPPORTED_MATERIAL_TYPES, normal
 from streaming.stream_core import stream_llm_response
 from tasks import task_generate_material
 from .._route_utils import _stage_error_response, get_db
-from ..generation import generate_study_material_stream, normalize_to_canonical
+from ..generation import generate_study_material_stream, normalize_ai_generated_content
 from ..summary_pipeline import generate_summary_stream, MAP_MAX_CHUNKS, SUMMARY_MAX_CONTEXT_CHARS
 from ..retrieval import retrieve_chunks_by_topic, retrieve_sequential_chunks
 from ..schemas import GenerateRequest
@@ -115,8 +115,49 @@ async def generate_stream_route(body: GenerateRequest):
             
             if not inner_chunks:
                 logger.warning("[TRACE][STREAM_EMPTY] No chunks found")
+                if body.material_id:
+                    from models import Material
+                    from datetime import datetime
+                    _mat = db.query(Material).filter(Material.id == body.material_id).first()
+                    if _mat:
+                        _mat.status = "FAILED"
+                        _mat.processed_at = datetime.now()
+                        db.commit()
                 yield "[ERROR] No document chunks found for the given subject or topic."
                 return
+
+            # Adaptive difficulty + weak-concept resolution for flashcards.
+            # Stream path has db access → use get_adaptive_profile (blends Redis + PostgreSQL
+            # mastery + flashcard_reviews), which is richer than the Celery Redis-only path.
+            # Activates when difficulty=="adaptive" or generation_options.adaptive==True.
+            if (
+                material_type == "flashcards"
+                and body.user_id
+                and body.subject_id
+            ):
+                _adaptive_requested = (
+                    request_options.get("difficulty") in ("adaptive", "auto")
+                    or request_options.get("adaptive") is True
+                    or request_options.get("mode") == "adaptive"
+                )
+                if _adaptive_requested:
+                    try:
+                        from ..adaptive_profile_service import get_adaptive_profile
+                        _prof = get_adaptive_profile(
+                            str(body.user_id), str(body.subject_id), db
+                        )
+                        request_options["difficulty"] = _prof["recommended_difficulty"]
+                        if not request_options.get("adaptive_weak_concepts"):
+                            request_options["adaptive_weak_concepts"] = _prof["weak_concepts"]
+                        logger.info(
+                            "[ADAPTIVE_FLASH] user=%s resolved difficulty=%s weak_concepts=%d",
+                            body.user_id,
+                            _prof["recommended_difficulty"],
+                            len(_prof["weak_concepts"]),
+                        )
+                    except Exception as _e:
+                        logger.warning("[ADAPTIVE_FLASH] Profile lookup failed: %s", _e)
+                        request_options.setdefault("difficulty", "intermediate")
 
             if material_type == "summary":
                 summary_mode = body.summary_mode or request_options.get("summary_mode")
@@ -151,34 +192,29 @@ async def generate_stream_route(body: GenerateRequest):
                 final_content = "".join(accumulated_text)
                 from models import Material
                 from datetime import datetime
-                
-                # Update material record directly in Postgres 
-                # (Engine and Backend share the same DB)
                 mat = db.query(Material).filter(Material.id == body.material_id).first()
                 if mat:
                     logger.info("[TRACE][STREAM_PERSIST] Saving final output for material_id=%s", body.material_id)
-                    # Normalize the raw streamed text before persisting so the frontend
-                    # always receives a consistent {type, content: {cards/questions/...}} shape.
                     try:
-                        raw_parsed = json.loads(final_content)
-                        payload = normalize_to_canonical(
-                            raw_parsed,
-                            material_type,
+                        payload = normalize_ai_generated_content(
+                            material_type, final_content,
                             model=OLLAMA_GENERATION_MODEL,
                             topic=body.topic,
                             subject_id=str(body.subject_id) if body.subject_id else None,
                         )
-                        payload["metadata"]["processed_at"] = datetime.now().isoformat()
                     except Exception as norm_err:
-                        logger.warning("[TRACE][STREAM_PERSIST_NORM_FAIL] Normalization failed (%s), saving raw payload", norm_err)
-                        payload = {
-                            "type": material_type,
-                            "content": final_content,
-                            "metadata": {
-                                "model": OLLAMA_GENERATION_MODEL,
-                                "processed_at": datetime.now().isoformat()
-                            }
-                        }
+                        logger.warning(
+                            "[TRACE][STREAM_PERSIST_NORM_FAIL] %s normalization failed (%s), marking FAILED",
+                            material_type, norm_err,
+                        )
+                        mat.status = "FAILED"
+                        mat.processed_at = datetime.now()
+                        db.commit()
+                        if material_type == "flashcards":
+                            yield f'[ERROR] {json.dumps({"reason": "FLASHCARDS_PARSE_FAILED", "message": str(norm_err)})}'
+                        else:
+                            yield f"[ERROR] {str(norm_err)}"
+                        return
                     mat.ai_generated_content = json.dumps(payload, ensure_ascii=False)
                     mat.status = "COMPLETED"
                     mat.completed_at = datetime.now()
@@ -197,6 +233,24 @@ async def generate_stream_route(body: GenerateRequest):
                     db.commit()
             yield f"[ERROR] {str(e)}"
         finally:
+            if body.material_id:
+                try:
+                    from models import Material
+                    from datetime import datetime
+                    _mat = db.query(Material).filter(Material.id == body.material_id).first()
+                    if _mat and _mat.status == "PROCESSING":
+                        _mat.status = "FAILED"
+                        _mat.processed_at = datetime.now()
+                        db.commit()
+                        logger.error(
+                            "[TRACE][STREAM_LIFECYCLE] material_id=%s exited with status PROCESSING — forced to FAILED",
+                            body.material_id,
+                        )
+                except Exception:
+                    logger.exception(
+                        "[TRACE][STREAM_LIFECYCLE] Failed to enforce FAILED state for material_id=%s",
+                        body.material_id,
+                    )
             db.close()
 
     return StreamingResponse(

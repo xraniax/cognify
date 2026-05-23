@@ -1,4 +1,5 @@
 """Document ingestion routes: preprocess, embed, process-text, process-document, drive, uploads."""
+import asyncio
 import logging
 import os
 import time
@@ -21,7 +22,7 @@ from .._route_utils import (
 from ..document_processor import process_text_pipeline
 from ..embeddings import embed_step
 from ..google_client import GoogleDriveConfigError, GoogleDriveNotConfiguredError
-from ..google_drive import list_files_in_folder, upload_file_to_drive_from_bytes
+from ..google_drive import download_file_from_drive, list_files_in_folder, upload_file_to_drive_from_bytes
 from ..preprocessing import DEFAULT_UPLOADS_DIR, preprocess_document, preprocess_uploads_folder
 from ..processor import process_subject
 from ..schemas import EmbedRequest, ProcessTextRequest
@@ -222,6 +223,34 @@ async def process_document_route(
         "drive_file_id": google_file_id,
         "message": "Document uploaded to Google Drive. AI processing and embedding generation has started in the background.",
     }
+
+
+@router.get("/drive/stream/{file_id}")
+async def drive_stream_file_route(file_id: str):
+    """Stream a Drive file's raw bytes to the caller (backend proxy path)."""
+    try:
+        tmp_path = await asyncio.to_thread(download_file_from_drive, file_id)
+
+        async def _file_gen():
+            try:
+                with open(tmp_path, "rb") as fh:
+                    while True:
+                        chunk = fh.read(65536)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+        return StreamingResponse(_file_gen(), media_type="application/octet-stream")
+    except (GoogleDriveNotConfiguredError, GoogleDriveConfigError) as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.exception("Drive stream failed for file_id=%s", file_id)
+        raise HTTPException(status_code=500, detail=f"Failed to stream Drive file: {e}")
 
 
 @router.post("/drive/delete")

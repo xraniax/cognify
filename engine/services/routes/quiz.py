@@ -6,7 +6,10 @@ from sqlalchemy.orm import Session
 
 from .._route_utils import _stage_error_response, get_db
 from ..generation import evaluate_quiz
-from ..schemas import QuizEvaluateRequest, QuizEvaluateResponse, QuizNextRequest, QuizSubmitAnswerRequest
+from ..schemas import (
+    QuizEvaluateRequest, QuizEvaluateResponse, QuizNextRequest, QuizSubmitAnswerRequest,
+    ExamInitRequest, ExamBatchResultRequest
+)
 
 router = APIRouter()
 logger = logging.getLogger("engine-api")
@@ -56,3 +59,39 @@ async def quiz_submit_answer_route(body: QuizSubmitAnswerRequest, db: Session = 
     except Exception as exc:
         logger.exception("quiz/submit-answer failed")
         return _stage_error_response("quiz_submit", "Failed to process answer", details=str(exc), status_code=500)
+
+
+@router.post("/exam/init-session")
+async def exam_init_session_route(body: ExamInitRequest, db: Session = Depends(get_db)):
+    """Initialize an adaptive exam session."""
+    from ..quiz_manager import init_exam_session
+    try:
+        return init_exam_session(
+            user_id=body.user_id.strip(),
+            subject_id=body.subject_id,
+            exam_id=body.exam_id,
+            ui_difficulty=body.ui_difficulty,
+            db=db
+        )
+    except Exception as exc:
+        logger.exception("exam/init-session failed")
+        return _stage_error_response("exam_init", "Failed to initialize exam session", details=str(exc), status_code=500)
+
+
+@router.post("/exam/adaptive-state")
+async def exam_adaptive_state_route(body: ExamBatchResultRequest, db: Session = Depends(get_db)):
+    """Update student model with batch results and get the next adaptive target."""
+    from ..quiz_manager import get_exam_adaptive_state
+    try:
+        results = [r.model_dump() for r in body.batch_results]
+        return get_exam_adaptive_state(
+            user_id=body.user_id.strip(),
+            subject_id=body.subject_id,
+            exam_id=body.exam_id,
+            batch_results=results,
+            db=db
+        )
+    except Exception as exc:
+        logger.exception("exam/adaptive-state failed")
+        return _stage_error_response("exam_adaptive_state", "Failed to update adaptive state", details=str(exc), status_code=500)
+

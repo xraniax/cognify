@@ -11,10 +11,10 @@ import { extractExamData } from '@/features/subjects/utils/examUtils';
 // ─── Static config ────────────────────────────────────────────────────────────
 
 const MATERIAL_TYPES = [
-    { id: 'flashcards', label: 'Flashcards', icon: Layout,       description: 'Q&A cards to test recall'       },
-    { id: 'summary',   label: 'Summary',    icon: FileText,      description: 'Key ideas at a glance'          },
-    { id: 'quiz',      label: 'Quiz',       icon: CheckCircle2,  description: 'Multiple-choice questions'      },
-    { id: 'mock_exam', label: 'Mock Exam',  icon: ClipboardList, description: 'Timed exam with mixed formats'  },
+    { id: 'flashcards',    label: 'Flashcards',    icon: Layout,       description: 'Q&A cards to test recall'          },
+    { id: 'summary',      label: 'Summary',       icon: FileText,      description: 'Key ideas at a glance'             },
+    { id: 'quiz',         label: 'Quiz',          icon: CheckCircle2,  description: 'Multiple-choice questions'         },
+    { id: 'mock_exam',    label: 'Mock Exam',     icon: ClipboardList, description: 'Timed exam with mixed formats'     },
 ];
 
 const DIFFICULTIES = [
@@ -98,7 +98,8 @@ const MaterialsPanel = ({
     // Merged state using redis-fix pattern but individual variables for legacy compatibility where needed or just full object
     const [genOptions, setGenOptions] = useState({
         count: 10,
-        difficulty: 'adaptive',
+        difficulty: 'Inter',
+        mode: 'static',
         summary_mode: 'concise_summary',
         topics: '',
         examTypes: ['single_choice', 'multiple_select', 'short_answer'],
@@ -110,10 +111,12 @@ const MaterialsPanel = ({
     const alertTimer = useRef(null);
 
     const isAdaptiveQuiz = genType === 'quiz' && genOptions.difficulty === 'adaptive';
+    const isAdaptiveExam = genType === 'mock_exam' && genOptions.mode === 'adaptive';
     const showCount    = genType !== 'summary' && !isAdaptiveQuiz;
     const showExamOpts = genType === 'mock_exam';
     const countLabel   = genType === 'flashcards' ? 'Cards' : 'Questions';
     const activeType   = MATERIAL_TYPES.find(t => t.id === genType) || MATERIAL_TYPES[0];
+    const selectedDifficulty = isAdaptiveExam ? 'adaptive' : genOptions.difficulty;
 
     const displayMessage = jobProgress?.message
         || (isAdaptiveQuiz ? "Preparing Adaptive Session..." : `Generating ${genOptions.count} ${genType.replace('_', ' ')}…`);
@@ -121,19 +124,26 @@ const MaterialsPanel = ({
     const onGenerate = () => {
         if (isGenerating) return;
         // Adaptive quizzes don't strictly require sources if they can pull from subject knowledge.
-        if (selectedCount === 0 && !isAdaptiveQuiz) {
+        if (selectedCount === 0 && !isAdaptiveQuiz && !isAdaptiveExam) {
             setShowAlert(true);
             clearTimeout(alertTimer.current);
             alertTimer.current = setTimeout(() => setShowAlert(false), 3500);
             return;
         }
         setShowAlert(false);
+        const payload = { ...genOptions };
         if (genType === 'mock_exam') {
-            const payload = { ...genOptions };
+            if (payload.mode !== 'adaptive') {
+                delete payload.mode;
+            } else if (payload.difficulty === 'adaptive') {
+                payload.difficulty = 'Inter';
+            }
             console.log("[EXAM SUBMIT]", payload);
+        } else {
+            delete payload.mode;
         }
         // Workspace generator already tracks genType in state; only pass options.
-        handleGenerate(genOptions);
+        handleGenerate(payload);
     };
 
     const lastSuccessfulGenRef = useRef(null);
@@ -202,18 +212,23 @@ const MaterialsPanel = ({
                     <div>
                         <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2.5">What to generate</p>
                         <div className="grid grid-cols-2 gap-2">
-                            {MATERIAL_TYPES.map(({ id, label, icon: Icon, description }) => {
+                            {MATERIAL_TYPES.map(({ id, label, icon: Icon, description, badge }) => {
                                 const active = genType === id;
                                 return (
                                     <button
                                         key={id}
                                         onClick={() => setGenType(id)}
-                                        className={`flex flex-col items-start gap-1.5 p-3 rounded-2xl border-2 text-left transition-all duration-200 ${
+                                        className={`relative flex flex-col items-start gap-1.5 p-3 rounded-2xl border-2 text-left transition-all duration-200 ${
                                             active
                                                 ? 'border-purple-400 bg-purple-50 shadow-sm'
                                                 : 'border-gray-100 bg-white hover:border-purple-200 hover:bg-purple-50/30'
                                         }`}
                                     >
+                                        {badge && (
+                                            <span className="absolute -top-1.5 -right-1.5 text-[7px] font-black bg-indigo-500 text-white px-1.5 py-0.5 rounded-full shadow-sm z-10">
+                                                {badge}
+                                            </span>
+                                        )}
                                         <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${active ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-400'}`}>
                                             <Icon className="w-3.5 h-3.5" />
                                         </div>
@@ -270,9 +285,17 @@ const MaterialsPanel = ({
                                 {DIFFICULTIES.map(({ id, label, badge }) => (
                                     <button
                                         key={id}
-                                        onClick={() => setGenOptions(prev => ({ ...prev, difficulty: id }))}
+                                        onClick={() => setGenOptions(prev => {
+                                            if (genType === 'mock_exam') {
+                                                if (id === 'adaptive') {
+                                                    return { ...prev, mode: 'adaptive' };
+                                                }
+                                                return { ...prev, difficulty: id, mode: 'static' };
+                                            }
+                                            return { ...prev, difficulty: id };
+                                        })}
                                         className={`relative py-2 rounded-xl text-[11px] font-bold border-2 transition-all ${
-                                            genOptions.difficulty === id
+                                            selectedDifficulty === id
                                                 ? 'bg-purple-600 border-purple-600 text-white shadow-sm'
                                                 : 'bg-white border-gray-100 text-gray-500 hover:border-purple-200'
                                         }`}
@@ -290,6 +313,12 @@ const MaterialsPanel = ({
                         
                         {genOptions.difficulty === 'adaptive' && genType === 'quiz' && (
                             <p className="text-[10px] text-purple-400 mt-2 italic font-medium">Questions will adapt to your performance level in a live session.</p>
+                        )}
+                        {isAdaptiveExam && (
+                            <div className="mt-3 p-3 rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-100">
+                                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1 flex items-center gap-1.5"><Brain className="w-3 h-3" /> How it works</p>
+                                <p className="text-[10px] text-indigo-400 leading-relaxed">Questions are generated in small batches. After each batch the AI analyses your answers and calibrates difficulty and topic focus for the next set.</p>
+                            </div>
                         )}
                     </div>
 
@@ -410,7 +439,7 @@ const MaterialsPanel = ({
                             ) : (
                                 <>
                                     <Sparkles className="w-4 h-4" />
-                                    {isAdaptiveQuiz ? "Start Adaptive Session" : `Generate ${activeType.label}`}
+                                    {isAdaptiveQuiz ? "Start Adaptive Session" : isAdaptiveExam ? "Start Adaptive Exam" : `Generate ${activeType.label}`}
                                 </>
                             )}
                         </button>

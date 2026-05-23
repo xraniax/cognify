@@ -86,8 +86,10 @@ const helmetConfig = helmet({
   // Content Security Policy - primary XSS/Injection defense
   contentSecurityPolicy: contentSecurityPolicy,
 
-  // Frameguard - prevents clickjacking (redundant with CSP frame-ancestors but defense in depth)
-  frameguard: { action: 'deny' },
+  // Frameguard - disabled because CSP frame-ancestors (above) already controls which origins
+  // may embed backend responses in frames, with explicit allowlist for frontend origins.
+  // Setting action:'deny' here contradicts frame-ancestors and blocks the file-viewer iframe.
+  frameguard: false,
 
   // HSTS - forces HTTPS connections in production
   // maxAge: 1 year in seconds, includeSubDomains for all subdomains, preload for HSTS preload list

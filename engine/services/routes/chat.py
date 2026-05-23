@@ -32,12 +32,18 @@ SIMILARITY_THRESHOLD = 0.50
 @router.post("/retrieve")
 async def retrieve_route(body: RetrieveRequest, db: Session = Depends(get_db)):
     """Retrieve top-k relevant chunks for a given topic and subject."""
-    logger.info("Retrieve request for subject: %s, topic: %s", body.subject_id, body.topic)
+    logger.info("Retrieve request for subject: %s, topic: %s, material_ids=%s", body.subject_id, body.topic, body.material_ids)
     try:
-        chunks = retrieve_chunks_by_topic(db, str(body.subject_id), body.topic, body.top_k)
+        chunks_with_scores = retrieve_chunks_by_topic(
+            db, str(body.subject_id), body.topic, body.top_k,
+            material_ids=body.material_ids,
+        )
         return {
-            "status": "success", "stage": "retrieval", "count": len(chunks),
-            "chunks": [{"id": c.id, "content": c.content, "document_id": c.document_id} for c in chunks],
+            "status": "success", "stage": "retrieval", "count": len(chunks_with_scores),
+            "chunks": [
+                {"id": c.id, "content": c.content, "document_id": c.document_id, "similarity": round(score, 4)}
+                for c, score in chunks_with_scores
+            ],
         }
     except Exception as e:
         logger.exception("Retrieval failed")

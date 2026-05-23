@@ -129,10 +129,13 @@ def _build_progress(student: Dict[str, Any], session: Dict[str, Any], current_di
 
 
 def _fetch_chunk_texts(
-    db: Session, subject_id: str, topic: Optional[str], top_k: int
+    db: Session, subject_id: str, topic: Optional[str], top_k: int,
+    material_ids: Optional[List] = None,
 ) -> List[str]:
     from .retrieval import retrieve_chunks_by_topic
-    chunks_with_scores = retrieve_chunks_by_topic(db, subject_id, topic, int(top_k))
+    chunks_with_scores = retrieve_chunks_by_topic(
+        db, subject_id, topic, int(top_k), material_ids=material_ids or None
+    )
     texts = [c.content for c, _ in chunks_with_scores if c.content]
     if not texts:
         raise ValueError("No retrieval context found for this subject/topic.")
@@ -227,6 +230,7 @@ def next_question_only(
     language: str,
     top_k: int,
     db: Session,
+    material_ids: Optional[List] = None,
 ) -> Dict[str, Any]:
     """
     Return the first question of an adaptive session.
@@ -270,7 +274,7 @@ def next_question_only(
         from .knowledge_graph_service import get_related_concepts
         distractor_pool = get_related_concepts(subject_id, target_concept)
 
-    chunk_texts = _fetch_chunk_texts(db, subject_id, target_concept, top_k)
+    chunk_texts = _fetch_chunk_texts(db, subject_id, target_concept, top_k, material_ids=material_ids)
 
     question = generate_validated_quiz_question(
         chunks=chunk_texts,
@@ -306,6 +310,7 @@ def submit_answer_and_get_next(
     language: str,
     top_k: int,
     db: Session,
+    material_ids: Optional[List] = None,
 ) -> Dict[str, Any]:
     """
     Record the student's answer, update adaptive state, and return the next question.
@@ -383,7 +388,7 @@ def submit_answer_and_get_next(
         from .knowledge_graph_service import get_related_concepts
         distractor_pool = get_related_concepts(subject_id, target_concept)
 
-    chunk_texts = _fetch_chunk_texts(db, subject_id, target_concept, top_k)
+    chunk_texts = _fetch_chunk_texts(db, subject_id, target_concept, top_k, material_ids=material_ids)
 
     question = generate_validated_quiz_question(
         chunks=chunk_texts,
@@ -408,3 +413,142 @@ def submit_answer_and_get_next(
         "progress": _build_progress(student, session, difficulty),
         "session": session,
     }
+
+
+def init_exam_session(
+    *,
+    user_id: str,
+    subject_id: str,
+    exam_id: str,
+    ui_difficulty: str = "intermediate",
+    db: Session,
+) -> Dict[str, Any]:
+    """Initialize adaptive exam session. Returns initial adaptive state."""
+    from .student_model import get_subject_student
+    from .redis_client import get_exam_session, update_exam_session
+
+    session = get_exam_session(user_id, subject_id, exam_id) or _default_session(ui_difficulty)
+    session["difficulty_history"] = _ensure_list(session.get("difficulty_history"))
+    try:
+        student = get_subject_student(user_id, subject_id)
+    except Exception as exc:
+        logger.error("[EXAM_INIT] get_subject_student FAIL user=%s subject=%s error=%s — using default profile", user_id, subject_id, exc)
+        student = {"accuracy": 0.5, "avg_response_time": 0.0, "weak_concepts": [], "strong_concepts": []}
+
+    difficulty = resolve_quiz_difficulty(
+        mode="adaptive",
+        ui_difficulty=ui_difficulty,
+        session_state=session,
+        student_profile=student,
+        last_answer_correct=None
+    )
+
+    session["difficulty_history"] = [difficulty]
+    weak_concepts = list(student.get("weak_concepts") or [])
+    strong_concepts = list(student.get("strong_concepts") or [])
+
+    target_concept = _select_target_concept(
+        subject_id, difficulty, weak_concepts,
+        strong_concepts=strong_concepts,
+        last_concept=session.get("last_concept"),
+        db=db,
+    )
+
+    session["last_concept"] = target_concept
+    update_exam_session(user_id, subject_id, exam_id, session)
+
+    return {
+        "difficulty": difficulty,
+        "target_concept": target_concept,
+        "progress": _build_progress(student, session, difficulty),
+    }
+
+
+def get_exam_adaptive_state(
+    *,
+    user_id: str,
+    subject_id: str,
+    exam_id: str,
+    batch_results: List[Dict[str, Any]],
+    db: Session,
+) -> Dict[str, Any]:
+    """Process batch results, update student model, return next adaptive state."""
+    from .learning_event_router import handle_learning_event
+    from .student_model import get_subject_student
+    from .redis_client import get_exam_session, update_exam_session
+
+    session = get_exam_session(user_id, subject_id, exam_id) or _default_session("intermediate")
+    session["difficulty_history"] = _ensure_list(session.get("difficulty_history"))
+
+    for res in batch_results:
+        concept = res.get("concept")
+        is_correct = res.get("is_correct")
+        response_time = res.get("response_time", 0.0)
+
+        handle_learning_event(
+            user_id=user_id,
+            concept=concept,
+            is_correct=is_correct,
+            source="exam",
+            response_time=float(response_time),
+            subject_id=subject_id,
+            db=db,
+        )
+
+        session["total"] = int(session.get("total", 0)) + 1
+        if is_correct:
+            session["streak_count"] = int(session.get("streak_count", 0)) + 1
+        else:
+            session["streak_count"] = 0
+
+    try:
+        student = get_subject_student(user_id, subject_id)
+    except Exception as exc:
+        logger.error("[EXAM_ADAPTIVE_UPDATE] get_subject_student FAIL user=%s subject=%s error=%s — using default profile", user_id, subject_id, exc)
+        student = {"accuracy": 0.5, "avg_response_time": 0.0, "weak_concepts": [], "strong_concepts": []}
+    weak_concepts = list(student.get("weak_concepts") or [])
+    strong_concepts = list(student.get("strong_concepts") or [])
+    ui_diff = session.get("ui_difficulty", "intermediate")
+
+    last_is_correct = batch_results[-1].get("is_correct") if batch_results else None
+    difficulty = resolve_quiz_difficulty(
+        mode="adaptive",
+        ui_difficulty=ui_diff,
+        session_state=session,
+        student_profile=student,
+        last_answer_correct=last_is_correct,
+    )
+
+    logger.info(
+        "[ADAPTIVE_DECISION] user_id=%s exam_id=%s accuracy=%.4f avg_rt=%.2f "
+        "streak=%d last_correct=%s ui_diff=%s -> difficulty=%s "
+        "weak=%d strong=%d",
+        user_id, exam_id,
+        float(student.get("accuracy", 0.5)),
+        float(student.get("avg_response_time", 0.0)),
+        int(session.get("streak_count", 0)),
+        last_is_correct,
+        ui_diff, difficulty,
+        len(weak_concepts), len(strong_concepts),
+    )
+
+    history = session.get("difficulty_history", [])
+    history.append(difficulty)
+    session["difficulty_history"] = history
+
+    target_concept = _select_target_concept(
+        subject_id, difficulty, weak_concepts,
+        strong_concepts=strong_concepts,
+        last_concept=session.get("last_concept"),
+        db=db,
+    )
+
+    session["last_concept"] = target_concept
+    update_exam_session(user_id, subject_id, exam_id, session)
+
+    return {
+        "difficulty": difficulty,
+        "target_concept": target_concept,
+        "progress": _build_progress(student, session, difficulty),
+    }
+

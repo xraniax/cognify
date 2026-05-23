@@ -502,7 +502,7 @@ describe('Drive Upload + Persistence Flow', () => {
       // Engine delete endpoint fails with 500
       mockEnginePost.mockRejectedValue(new Error('Drive API Error: 500'));
 
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
 
       // Should NOT throw
       const materialService = await import('../../services/material.service.js');
@@ -543,7 +543,7 @@ describe('Drive Upload + Persistence Flow', () => {
       // Engine delete endpoint times out
       mockEnginePost.mockRejectedValue(new Error('Request timeout'));
 
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
 
       const materialService = await import('../../services/material.service.js');
       await expect(materialService.default._garbageCollectFile(materialId)).resolves.not.toThrow();

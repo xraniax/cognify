@@ -47,14 +47,20 @@ export const useExamGeneration = ({
                 ? genOptions.examTypes
                 : ['single_choice', 'multiple_select', 'short_answer', 'problem', 'fill_blank', 'matching', 'scenario'];
 
+            const isAdaptive = genOptions?.mode === 'adaptive';
+
             const payload = {
                 subject_id: normalizedId,
                 numberOfQuestions: genOptions?.count || 10,
-                difficulty: genOptions?.difficulty || 'Inter',
+                difficulty: isAdaptive ? (genOptions?.difficulty || 'Inter') : (genOptions?.difficulty || 'Inter'),
                 topics: topics.length > 0 ? topics : [subject?.name || 'General'],
                 types: selectedTypes,
-                title: `${subject?.name || 'General'} Mock Exam`,
+                title: `${subject?.name || 'General'} ${isAdaptive ? 'Adaptive' : 'Mock'} Exam`,
                 timeLimit: genOptions?.timeLimit || 30,
+                ...(isAdaptive && { mode: 'adaptive' }),
+                ...(Array.isArray(genOptions?.material_ids) && genOptions.material_ids.length > 0
+                    ? { material_ids: genOptions.material_ids }
+                    : {}),
             };
 
             const examRes = await MaterialService.generateExam(payload);
@@ -75,7 +81,12 @@ export const useExamGeneration = ({
                     id: tabId,
                     title: exam.title || 'Mock Exam',
                     type: 'exam_session',
-                    material: { id: exam.id, type: 'exam_session', ai_generated_content: exam },
+                    // Embed mode in the material so ExamView can detect adaptive sessions
+                    material: {
+                        id: exam.id,
+                        type: 'exam_session',
+                        ai_generated_content: { ...exam, mode: isAdaptive ? 'adaptive' : undefined },
+                    },
                     pinned: false
                 },
             ]);

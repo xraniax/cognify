@@ -40,10 +40,11 @@
  * }]
  */
 
+export { READINESS_WEIGHTS, TREND_WEIGHTS } from './constants.js';
 export { computeUnderstandingScore, updateUnderstanding, createUnderstandingState, responsesToAttemptAccuracies } from './understanding.js';
 export { computeRetentionScore, updateRetention, createRetentionState, outcomeToScore, computeCardRetentionMap } from './retention.js';
 export { computeMasteryScore, updateMastery, createMasteryState, attemptsToAccuracies, computeTopicMasteryMap } from './mastery.js';
-export { computeReadinessScore, computeConfidence, computeSourceConfidence, computeOverallConsistency, computeOverallTrend, classifyCRS, computeWeaknessScore, dataQualityLabel } from './readiness.js';
+export { BASE_THRESHOLDS, computeReadinessScore, computeConfidence, computeSourceConfidence, computeOverallConsistency, computeOverallTrend, classifyCRS, computeWeaknessScore, dataQualityLabel } from './readiness.js';
 export { computeConceptScores, detectWeakConcepts, applyQuizResponseToConcepts, applyFlashcardReviewToConcepts, applyExamResultToConcepts, createConceptState, computeConceptReadiness } from './concepts.js';
 export { recencyWeight, difficultyWeight, normalizeDifficulty, computeVariance, computeConsistency, computeTrend, trendLabel, daysBetween, clamp } from './utils.js';
 

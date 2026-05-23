@@ -1,321 +1,156 @@
 import GoalService from '../services/goal.service.js';
 
-/**
- * Goal Controller
- * HTTP request handlers for study goals endpoints
- */
 class GoalController {
-    /**
-     * POST /api/goals
-     * Create a new study goal
-     */
+
+    // ── CRUD ────────────────────────────────────────────────────────────────
+
     static async createGoal(req, res, next) {
         try {
-            const userId = req.user.id;
-            const goalData = req.body;
-
-            const goal = await GoalService.createGoal(userId, goalData);
-
-            res.status(201).json({
-                status: 'success',
-                message: 'Study goal created successfully',
-                data: goal
-            });
-        } catch (error) {
-            next(error);
-        }
+            const goal = await GoalService.createGoal(req.user.id, req.body);
+            res.status(201).json({ status: 'success', message: 'Goal created', data: goal });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * GET /api/goals
-     * Get all goals for the authenticated user
-     */
     static async getUserGoals(req, res, next) {
         try {
-            const userId = req.user.id;
             const filters = {
-                status: req.query.status,
+                status:    req.query.status,
                 subjectId: req.query.subjectId,
-                limit: parseInt(req.query.limit) || 50,
-                offset: parseInt(req.query.offset) || 0
+                limit:     parseInt(req.query.limit)  || 50,
+                offset:    parseInt(req.query.offset) || 0
             };
-
-            const goals = await GoalService.getUserGoals(userId, filters);
-
-            res.status(200).json({
-                status: 'success',
-                data: goals,
-                count: goals.length
-            });
-        } catch (error) {
-            next(error);
-        }
+            const goals = await GoalService.getUserGoals(req.user.id, filters);
+            res.status(200).json({ status: 'success', data: goals, count: goals.length });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * GET /api/goals/stats
-     * Get goal statistics for dashboard
-     */
-    static async getGoalStats(req, res, next) {
-        try {
-            const userId = req.user.id;
-
-            const stats = await GoalService.getGoalStats(userId);
-
-            res.status(200).json({
-                status: 'success',
-                data: stats
-            });
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    /**
-     * GET /api/goals/:id
-     * Get a single goal by ID
-     */
     static async getGoalById(req, res, next) {
         try {
-            const userId = req.user.id;
-            const { id } = req.params;
-
-            const goal = await GoalService.getGoalById(id, userId);
-
-            res.status(200).json({
-                status: 'success',
-                data: goal
-            });
-        } catch (error) {
-            next(error);
-        }
+            const goal = await GoalService.getGoalById(req.params.id, req.user.id);
+            res.status(200).json({ status: 'success', data: goal });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * PATCH /api/goals/:id
-     * Update a goal
-     */
     static async updateGoal(req, res, next) {
         try {
-            const userId = req.user.id;
-            const { id } = req.params;
-            const updates = req.body;
-
-            const goal = await GoalService.updateGoal(id, userId, updates);
-
-            res.status(200).json({
-                status: 'success',
-                message: 'Goal updated successfully',
-                data: goal
-            });
-        } catch (error) {
-            next(error);
-        }
+            const goal = await GoalService.updateGoal(req.params.id, req.user.id, req.body);
+            res.status(200).json({ status: 'success', message: 'Goal updated', data: goal });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * DELETE /api/goals/:id
-     * Delete a goal
-     */
     static async deleteGoal(req, res, next) {
         try {
-            const userId = req.user.id;
-            const { id } = req.params;
-
-            await GoalService.deleteGoal(id, userId);
-
-            res.status(200).json({
-                status: 'success',
-                message: 'Goal deleted successfully'
-            });
-        } catch (error) {
-            next(error);
-        }
+            await GoalService.deleteGoal(req.params.id, req.user.id);
+            res.status(200).json({ status: 'success', message: 'Goal deleted' });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * POST /api/goals/sessions/start
-     * Start a study session
-     */
-    static async startStudySession(req, res, next) {
+    // ── Stats ───────────────────────────────────────────────────────────────
+
+    static async getGoalStats(req, res, next) {
         try {
-            const userId = req.user.id;
-            const sessionData = req.body;
-
-            const session = await GoalService.startStudySession(userId, sessionData);
-
-            res.status(201).json({
-                status: 'success',
-                message: 'Study session started',
-                data: session
-            });
-        } catch (error) {
-            next(error);
-        }
+            const stats = await GoalService.getGoalStats(req.user.id);
+            res.status(200).json({ status: 'success', data: stats });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * POST /api/goals/sessions/:id/end
-     * End a study session
-     */
-    static async endStudySession(req, res, next) {
-        try {
-            const userId = req.user.id;
-            const { id } = req.params;
-            const sessionData = req.body;
-
-            const result = await GoalService.endStudySession(id, userId, sessionData);
-
-            res.status(200).json({
-                status: 'success',
-                message: 'Study session ended',
-                data: result
-            });
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    /**
-     * GET /api/goals/sessions/history
-     * Get study session history
-     */
-    static async getStudyHistory(req, res, next) {
-        try {
-            const userId = req.user.id;
-            const filters = {
-                days: parseInt(req.query.days) || 30
-            };
-
-            const history = await GoalService.getStudyHistory(userId, filters);
-
-            res.status(200).json({
-                status: 'success',
-                data: history
-            });
-        } catch (error) {
-            next(error);
-        }
-    }
-
-    /**
-     * GET /api/goals/streak
-     * Get current study streak
-     */
     static async getStudyStreak(req, res, next) {
         try {
-            const userId = req.user.id;
-
-            const streak = await GoalService.getStudyStreak(userId);
-
-            res.status(200).json({
-                status: 'success',
-                data: streak
-            });
-        } catch (error) {
-            next(error);
-        }
+            const streak = await GoalService.getStudyStreak(req.user.id);
+            res.status(200).json({ status: 'success', data: streak });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * POST /api/goals/log-time
-     * Quick log study time without session tracking
-     */
+    // ── Sessions ────────────────────────────────────────────────────────────
+
+    static async getActiveSession(req, res, next) {
+        try {
+            const session = await GoalService.getActiveSession(req.user.id);
+            res.status(200).json({ status: 'success', data: session });
+        } catch (err) { next(err); }
+    }
+
+    static async startStudySession(req, res, next) {
+        try {
+            const session = await GoalService.startStudySession(req.user.id, req.body);
+            res.status(201).json({ status: 'success', message: 'Session started', data: session });
+        } catch (err) { next(err); }
+    }
+
+    static async endStudySession(req, res, next) {
+        try {
+            const result = await GoalService.endStudySession(req.params.id, req.user.id, req.body);
+            res.status(200).json({ status: 'success', message: 'Session ended', data: result });
+        } catch (err) { next(err); }
+    }
+
+    static async getStudyHistory(req, res, next) {
+        try {
+            const filters = { days: parseInt(req.query.days) || 30 };
+            const history = await GoalService.getStudyHistory(req.user.id, filters);
+            res.status(200).json({ status: 'success', data: history });
+        } catch (err) { next(err); }
+    }
+
     static async logStudyTime(req, res, next) {
         try {
-            const userId = req.user.id;
             const { minutes, subjectId } = req.body;
-
             if (!minutes || minutes < 1 || minutes > 480) {
                 return res.status(400).json({
                     status: 'error',
-                    message: 'Minutes must be between 1 and 480'
+                    message: 'minutes must be between 1 and 480'
                 });
             }
-
-            const result = await GoalService.logStudyTime(userId, minutes, subjectId);
-
-            res.status(200).json({
-                status: 'success',
-                message: `${minutes} minutes logged`,
-                data: result
-            });
-        } catch (error) {
-            next(error);
-        }
+            const result = await GoalService.logStudyTime(req.user.id, minutes, subjectId);
+            res.status(200).json({ status: 'success', message: `${minutes} minutes logged`, data: result });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * GET /api/goals/admin/reminders
-     * Admin endpoint to get goals needing reminders (for cron job)
-     */
-    static async getGoalsNeedingReminders(req, res, next) {
-        try {
-            // This endpoint should be protected by admin middleware
-            const goals = await GoalService.getGoalsNeedingReminders();
-
-            res.status(200).json({
-                status: 'success',
-                data: goals,
-                count: goals.length
-            });
-        } catch (error) {
-            next(error);
-        }
-    }
+    // ── Study Plan ──────────────────────────────────────────────────────────
 
     /**
-     * POST /api/goals/admin/reminders/:id/sent
-     * Mark a reminder as sent
+     * GET /api/goals/plan/current
+     * Return the stored plan for this user, or null.
      */
-    static async markReminderSent(req, res, next) {
+    static async getCurrentPlan(req, res, next) {
         try {
-            const { id } = req.params;
-
-            await GoalService.markReminderSent(id);
-
-            res.status(200).json({
-                status: 'success',
-                message: 'Reminder marked as sent'
-            });
-        } catch (error) {
-            next(error);
-        }
+            const result = await GoalService.getCurrentPlan(req.user.id);
+            res.status(200).json({ status: 'success', data: result });
+        } catch (err) { next(err); }
     }
 
     /**
      * POST /api/goals/plan/generate
-     * Generate AI study plan
+     * Backend fetches all needed data; frontend may pass optional scheduling prefs.
      */
     static async generateStudyPlan(req, res, next) {
         try {
-            const userId = req.user.id;
-            const planData = await GoalService.generateStudyPlan(userId, req.body);
-            res.status(200).json({
-                status: 'success',
-                data: planData
-            });
-        } catch (error) {
-            next(error);
-        }
+            const result = await GoalService.generateStudyPlan(req.user.id, req.body ?? {});
+            res.status(200).json({ status: 'success', data: result });
+        } catch (err) { next(err); }
     }
 
-    /**
-     * POST /api/goals/plan/activate
-     * Activate the generated AI study plan
-     */
     static async activateStudyPlan(req, res, next) {
         try {
-            const userId = req.user.id;
-            const result = await GoalService.activateStudyPlan(userId, req.body);
-            res.status(200).json({
-                status: 'success',
-                message: 'Plan activated successfully',
-                data: result
-            });
-        } catch (error) {
-            next(error);
-        }
+            const result = await GoalService.activateStudyPlan(req.user.id, req.body);
+            res.status(200).json({ status: 'success', message: 'Plan activated', data: result });
+        } catch (err) { next(err); }
+    }
+
+    // ── Admin ────────────────────────────────────────────────────────────────
+
+    static async getGoalsNeedingReminders(req, res, next) {
+        try {
+            const goals = await GoalService.getGoalsNeedingReminders();
+            res.status(200).json({ status: 'success', data: goals, count: goals.length });
+        } catch (err) { next(err); }
+    }
+
+    static async markReminderSent(req, res, next) {
+        try {
+            await GoalService.markReminderSent(req.params.id);
+            res.status(200).json({ status: 'success', message: 'Reminder marked as sent' });
+        } catch (err) { next(err); }
     }
 }
 

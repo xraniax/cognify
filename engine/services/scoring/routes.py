@@ -16,7 +16,7 @@ from .evaluation import GradingEvaluator
 
 logger = logging.getLogger("scoring-routes")
 
-router = APIRouter(prefix="/scoring", tags=["scoring"])
+router = APIRouter(tags=["scoring"])
 
 # Global scorer instance (could be moved to dependency injection)
 _scorer_instance = None

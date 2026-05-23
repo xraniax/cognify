@@ -17,6 +17,48 @@ from .google_client import (
 
 logger = logging.getLogger("engine-google-drive")
 
+# Email of the backend's Google service account, set via BACKEND_SERVICE_ACCOUNT_EMAIL env var.
+# When set, newly uploaded files are shared with this account immediately after upload so the
+# backend can stream them without relying on the fallback engine-proxy path.
+_BACKEND_SA_EMAIL = os.environ.get("BACKEND_SERVICE_ACCOUNT_EMAIL", "").strip()
+
+
+def _share_with_backend(service, file_id: str, *, request_id: str | None = None) -> None:
+    """Grant the backend service account reader access to a just-uploaded Drive file.
+
+    Non-fatal: logs a warning on failure so the upload itself is never rolled back.
+    No-op when BACKEND_SERVICE_ACCOUNT_EMAIL is not configured.
+
+    Shared Drive limitation: permissions().create() on individual files is blocked for
+    Shared Drive items (Google returns 403 — permissions are inherited from Drive membership).
+    If GOOGLE_DRIVE_FOLDER_ID lives inside a Shared Drive, add both service accounts as
+    Shared Drive members (organizer role) via grant_service_account_access.py instead.
+    """
+    if not _BACKEND_SA_EMAIL:
+        return
+    try:
+        service.permissions().create(
+            fileId=file_id,
+            body={"type": "user", "role": "reader", "emailAddress": _BACKEND_SA_EMAIL},
+            supportsAllDrives=True,
+            sendNotificationEmail=False,
+        ).execute()
+        logger.info(
+            "[PIPELINE] drive_share_ok request_id=%s drive_file_id=%s backend_sa=%s",
+            request_id,
+            file_id,
+            _BACKEND_SA_EMAIL,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[PIPELINE] drive_share_failed request_id=%s drive_file_id=%s backend_sa=%s error=%s",
+            request_id,
+            file_id,
+            _BACKEND_SA_EMAIL,
+            exc,
+        )
+
+
 def _handle_drive_error(e: Exception, context: str):
     """Classify and log Google Drive API errors distinctly."""
     error_str = str(e).lower()
@@ -71,6 +113,7 @@ async def upload_file_to_drive(file, filename: str) -> str:
         
         file_id = uploaded_file.get('id')
         logger.info(f"Successfully uploaded {filename} with ID: {file_id}")
+        _share_with_backend(service, file_id)
         return file_id
     except (GoogleDriveConfigError, GoogleDriveNotConfiguredError):
         raise
@@ -132,6 +175,7 @@ async def upload_file_to_drive_from_bytes(content: bytes, filename: str, *, requ
             file_id,
             int((time.time() - started_at) * 1000),
         )
+        _share_with_backend(service, file_id, request_id=request_id)
         return file_id
     except (GoogleDriveConfigError, GoogleDriveNotConfiguredError):
         raise

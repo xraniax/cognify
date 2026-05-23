@@ -13,7 +13,8 @@ import {
     Flame,
     Volume2,
     VolumeX,
-    Keyboard
+    Keyboard,
+    Sparkles
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -1281,7 +1282,8 @@ const QuizView = ({
     subjectId = null,    // required for adaptive mode
     materialId = null,
     topic = null,
-    language = 'en'
+    language = 'en',
+    isLiveGenerating = false
 }) => {
     // Adaptive mode: fetch questions progressively via QuizService and /api/quiz/start + /submit-answer
     if (quizMode === 'adaptive') {
@@ -1310,8 +1312,22 @@ const QuizView = ({
     if (!questions || questions.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center p-12 text-gray-500">
-                <HelpCircle className="w-12 h-12 mb-4 opacity-20" />
-                <p>No quiz questions available.</p>
+                {isLiveGenerating ? (
+                    <>
+                        <div className="w-16 h-16 rounded-2xl bg-purple-50 flex items-center justify-center mb-6 animate-bounce">
+                            <Sparkles className="w-8 h-8 text-purple-500" />
+                        </div>
+                        <h3 className="text-xl font-black text-gray-900 mb-2">Architecting Your Quiz</h3>
+                        <p className="text-sm font-medium text-gray-400 max-w-xs text-center leading-relaxed">
+                            Cognify AI is analyzing your sources to build a custom challenge. Questions will appear here soon.
+                        </p>
+                    </>
+                ) : (
+                    <>
+                        <HelpCircle className="w-12 h-12 mb-4 opacity-20" />
+                        <p>No quiz questions available.</p>
+                    </>
+                )}
             </div>
         );
     }
