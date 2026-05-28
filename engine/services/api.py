@@ -82,10 +82,6 @@ import json
 
 ALLOWED_UPLOAD_SUFFIXES = frozenset({".pdf", ".png", ".jpg", ".jpeg"})
 
-TEXT_JOB_TERMINAL_STATES = {"SUCCESS", "FAILURE", "REVOKED"}
-_TEXT_JOBS: Dict[str, Dict[str, Any]] = {}
-_TEXT_JOBS_LOCK = asyncio.Lock()
-
 
 def _extract_stream_text_from_generation_result(result: Dict[str, Any]) -> Optional[str]:
     """Extract stream-safe text from normalized generation payload only."""

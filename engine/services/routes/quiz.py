@@ -1,4 +1,6 @@
 """Quiz routes: evaluation, adaptive next-question, and answer submission."""
+# This module is part of the Engine Execution Layer.
+# All handlers are thin wrappers: they validate the request schema and delegate to quiz_manager.
 import logging
 
 from fastapi import APIRouter, Depends
@@ -53,6 +55,7 @@ async def quiz_submit_answer_route(body: QuizSubmitAnswerRequest, db: Session = 
             user_id=body.user_id.strip(), subject_id=body.subject_id, topic=body.topic,
             is_correct=body.is_correct, response_time=body.response_time,
             language=body.language, top_k=body.top_k, db=db,
+            user_answer=body.user_answer,
         )
     except ValueError as exc:
         return _stage_error_response("quiz_submit", str(exc), status_code=404)

@@ -1,11 +1,53 @@
+import json
 import logging
+import os
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .learner_state_sync import LearnerStateSyncService
+
+_ADAPTIVE_PROFILE_TTL_SECONDS = int(os.getenv("ADAPTIVE_PROFILE_CACHE_TTL", "300"))
+
+
+def _adaptive_profile_key(user_id: str, subject_id: str) -> str:
+    return f"adaptive_profile:{user_id}:{subject_id}"
+
+
+def _get_redis():
+    from .redis_client import _get_client
+    return _get_client()
+
+
+def _get_cached_profile(user_id: str, subject_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        raw = _get_redis().get(_adaptive_profile_key(user_id, subject_id))
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+    return None
+
+
+def _set_cached_profile(user_id: str, subject_id: str, profile: Dict[str, Any]) -> None:
+    try:
+        _get_redis().setex(
+            _adaptive_profile_key(user_id, subject_id),
+            _ADAPTIVE_PROFILE_TTL_SECONDS,
+            json.dumps(profile, default=str),
+        )
+    except Exception:
+        pass
+
+
+def invalidate_adaptive_profile_cache(user_id: str, subject_id: str) -> None:
+    """Call after a learning event so the next profile read reflects updated state."""
+    try:
+        _get_redis().delete(_adaptive_profile_key(user_id, subject_id))
+    except Exception:
+        pass
 
 logger = logging.getLogger("engine-adaptive-profile")
 
@@ -70,6 +112,11 @@ def get_adaptive_profile(user_id: str, subject_id: str, db: Session) -> Dict[str
         "[ADAPTIVE_PROFILE] building profile user_id=%s subject_id=%s",
         user_id, subject_id,
     )
+
+    cached = _get_cached_profile(user_id, subject_id)
+    if cached is not None:
+        logger.info("[ADAPTIVE_PROFILE] cache hit user_id=%s subject_id=%s", user_id, subject_id)
+        return cached
 
     # ── 1. Redis: real-time concept tracking (with DB fallback) ───────────────
     redis_state     = LearnerStateSyncService.get_canonical_state(user_id, db)
@@ -192,6 +239,8 @@ def get_adaptive_profile(user_id: str, subject_id: str, db: Session) -> Dict[str
         "retention_risk":         retention_risk,
         "total_attempts":         total_attempts,
     }
+
+    _set_cached_profile(user_id, subject_id, profile)
 
     logger.info(
         "[ADAPTIVE_PROFILE] done user_id=%s subject_id=%s "

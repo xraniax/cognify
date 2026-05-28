@@ -13,15 +13,13 @@ from fastapi.responses import StreamingResponse
 
 import celery_app
 from .._route_utils import _stage_error_response
-from ..document_processor import process_text_pipeline
 from ..exam_utils import normalize_exam, wrap_normalized_exam
+from ..redis_client import set_text_job, get_text_job, update_text_job
 
 router = APIRouter()
 logger = logging.getLogger("engine-api")
 
 TEXT_JOB_TERMINAL_STATES = {"SUCCESS", "FAILURE", "REVOKED"}
-_TEXT_JOBS: Dict[str, Dict[str, Any]] = {}
-_TEXT_JOBS_LOCK = asyncio.Lock()
 
 
 def _normalize_exam_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -65,25 +63,16 @@ async def _text_job_create(metadata: Optional[Dict[str, Any]] = None) -> str:
         "updated_at": now,
         "source": "text",
     }
-    async with _TEXT_JOBS_LOCK:
-        _TEXT_JOBS[job_id] = job_entry
+    set_text_job(job_id, job_entry)
     return job_id
 
 
 async def _text_job_get(job_id: str) -> Optional[Dict[str, Any]]:
-    async with _TEXT_JOBS_LOCK:
-        job = _TEXT_JOBS.get(job_id)
-        return dict(job) if job else None
+    return get_text_job(job_id)
 
 
 async def _text_job_update(job_id: str, **updates: Any) -> Optional[Dict[str, Any]]:
-    async with _TEXT_JOBS_LOCK:
-        job = _TEXT_JOBS.get(job_id)
-        if not job:
-            return None
-        job.update(updates)
-        job["updated_at"] = time.time()
-        return dict(job)
+    return update_text_job(job_id, **updates)
 
 
 async def _resolve_job(job_id: str) -> Dict[str, Any]:
@@ -110,22 +99,32 @@ async def _run_text_job(
 ) -> None:
     await _text_job_update(job_id, status="STARTED")
     try:
-        result = await asyncio.to_thread(
-            process_text_pipeline,
-            raw_text,
-            max_chunk_chars=1500,
-            chunk_overlap=200,
-            include_embeddings=True,
-        )
-        extracted_text = (result.get("cleaned_text") or raw_text).strip()
+        from database import SessionLocal
+        from ..ingestion import ingest_text
+
+        def _ingest():
+            db = SessionLocal()
+            try:
+                return ingest_text(
+                    db,
+                    raw_text=raw_text,
+                    user_id=str(user_id or ""),
+                    subject_id=str(subject_id or ""),
+                    material_id=document_id,
+                    filename=f"text-{document_id or job_id}",
+                )
+            finally:
+                db.close()
+
+        result = await asyncio.to_thread(_ingest)
         job_result = {
             "status": "SUCCESS",
             "source": "text",
             "document_id": document_id,
             "subject_id": subject_id,
             "user_id": user_id,
-            "extracted_text": extracted_text,
-            "chunk_count": int(result.get("num_chunks") or 0),
+            "extracted_text": result.get("extracted_text", ""),
+            "chunk_count": int(result.get("chunks") or 0),
             "provider": "ollama",
             "model": os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
         }

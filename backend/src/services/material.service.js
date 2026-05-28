@@ -25,6 +25,10 @@ import {
   normalizeStatus,
 } from '../constants/status.enum.js';
 
+// This module is part of the Orchestration Layer.
+// generateStream() and generateWithContext() are the primary generation entry points.
+// They resolve source context (Ingestion Layer), create material DB records, then delegate
+// LLM execution to the Python engine (Engine Layer) and commit results (Persistence Layer).
 const generationConstraintByMaterialId = new Map();
 
 const TASK_TYPE_TO_MATERIAL_TYPE = {
@@ -43,16 +47,20 @@ const normalizeExamPayload = (aiGeneratedContent) => {
     return aiGeneratedContent;
   }
 
-  const questions = content.questions.map((q, idx) => ({
-    ...q,
-    id: idx + 1,
-  }));
+  // Assign sequential numeric IDs while building a remap from old→new for answer_sheet alignment.
+  const idRemap = new Map();
+  const questions = content.questions.map((q, idx) => {
+    const newId = idx + 1;
+    if (q.id !== undefined && q.id !== null) idRemap.set(String(q.id), newId);
+    return { ...q, id: newId };
+  });
 
+  // Re-key answer_sheet entries by remapped question_id (not by position).
   const answerSheet = Array.isArray(content.answer_sheet)
-    ? content.answer_sheet.map((item, idx) => ({
-        ...item,
-        question_id: idx + 1,
-      }))
+    ? content.answer_sheet.map((item) => {
+        const remapped = idRemap.get(String(item.question_id));
+        return remapped !== undefined ? { ...item, question_id: remapped } : item;
+      })
     : content.answer_sheet;
 
   return {
@@ -296,6 +304,7 @@ class MaterialService {
               persistedConstraints
             );
 
+            // ── Persistence Layer: normalize and commit engine result ──
             await withTransaction(async (client) => {
               // SINGLE SOURCE OF TRUTH UPDATE:
               // This ensures that either all fields are updated correctly via the
@@ -511,6 +520,7 @@ class MaterialService {
       (id) => typeof id === 'string' && UUID_PATTERN.test(id)
     );
 
+    // ── Ingestion Layer: resolve and validate source documents ──
     const sourceDocuments = await Material.findByIds(safeIds, userId);
 
     // Validation: Check for failed or empty documents in the selection
@@ -592,6 +602,7 @@ class MaterialService {
       Date.now() - startMs
     );
 
+    // ── Engine Layer: delegate SSE generation to Python engine ──
     const resp = await engineClient.post('/generate/stream', enginePayload, {
       responseType: 'stream',
       timeout: 600000, // 10 minutes
@@ -614,6 +625,7 @@ class MaterialService {
       (id) => typeof id === 'string' && UUID_PATTERN.test(id)
     );
 
+    // ── Ingestion Layer: resolve source documents and build chunk context ──
     const sourceDocuments = await Material.findByIds(safeIds, userId);
     if (sourceDocuments.length === 0 && !subjectId)
       return { result: 'No source documents selected for context.' };
@@ -670,6 +682,7 @@ class MaterialService {
     };
 
     try {
+      // ── Engine Layer: dispatch Celery generation task via Python engine ──
       console.log(
         `[MaterialService] Routing to Primary Path (Python Engine) for Material ${materialRecord.id}`
       );
@@ -687,6 +700,7 @@ class MaterialService {
         `[MaterialService] Primary Path Failed: ${error.message}. Triggering Fallback Path.`
       );
       try {
+        // ── Fallback Path: direct Ollama generation when engine is unreachable ──
         const context =
           chunks.length > 0
             ? chunks.join('\n\n').substring(0, 8000)

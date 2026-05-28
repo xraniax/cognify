@@ -258,6 +258,7 @@ class QuizSubmitAnswerRequest(BaseModel):
     response_time: float = Field(default=0.0, ge=0.0)
     language: str = Field(default="en")
     top_k: int = Field(default=5, ge=1, le=50)
+    user_answer: Optional[int] = None  # Option index; if present, overrides is_correct server-side.
 
 
 class LearningEventRequest(BaseModel):

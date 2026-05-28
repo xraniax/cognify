@@ -18,8 +18,16 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     broker_connection_retry_on_startup=True,
-    # Stability patch: enforce strict GPU-safe concurrency
-    worker_concurrency=1,
-    worker_prefetch_multiplier=1, # Important for LLM GPU single-processing
-    task_acks_late=True, # Ensure tasks aren't lost if worker dies
+    # Allow multiple tasks to run concurrently so one long LLM call (60–180 s)
+    # does not block every other user's queued task.  Ollama serialises GPU
+    # requests internally, so workers do not fight for the GPU — they simply
+    # queue independently at the Ollama level.  Default 4 is intentionally
+    # conservative; raise CELERY_WORKER_CONCURRENCY in production as needed.
+    worker_concurrency=int(os.getenv("CELERY_WORKER_CONCURRENCY", "4")),
+    # Prefetch=1 keeps task distribution fair: each worker takes exactly one
+    # task at a time, preventing a fast worker from hoarding the queue.
+    worker_prefetch_multiplier=1,
+    # Late ack: task is acknowledged only after it finishes, so a worker crash
+    # requeues the task rather than silently dropping it.
+    task_acks_late=True,
 )

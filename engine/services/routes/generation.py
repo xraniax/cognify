@@ -1,4 +1,8 @@
 """Generation routes: async Celery dispatch and real-time SSE streaming."""
+# This module is part of the Orchestration Layer (engine side).
+# /generate  → Orchestration Layer: validates request and enqueues a Celery task (Engine Layer).
+# /generate/stream → Orchestration Layer: resolves context, runs adaptive profile, then streams
+#                    directly through the Engine Layer, persisting the result in-band.
 import asyncio
 import json
 import logging
@@ -39,6 +43,7 @@ async def generate_route(body: GenerateRequest, db: Session = Depends(get_db)):
         if body.subject_id is None:
             return _stage_error_response("generation", "Missing subject_id for async generation", status_code=400)
 
+        # ── Engine Layer: enqueue Celery generation task ──
         task = task_generate_material.apply_async(kwargs={
             "subject_id": str(body.subject_id) if body.subject_id else "",
             "material_type": material_type,
@@ -89,6 +94,7 @@ async def generate_stream_route(body: GenerateRequest):
                 yield f"[METADATA] {json.dumps({'material_id': str(body.material_id)})}"
             
             yield "[PROGRESS] Retrieving relevant context..."
+            # ── Ingestion Layer: resolve context chunks from payload or DB ──
             logger.info("[TRACE][STREAM_RETRIEVAL] Starting retrieval subject=%s", body.subject_id)
             if body.chunks and isinstance(body.chunks, list) and len(body.chunks) > 0:
                 inner_chunks = body.chunks
@@ -126,6 +132,7 @@ async def generate_stream_route(body: GenerateRequest):
                 yield "[ERROR] No document chunks found for the given subject or topic."
                 return
 
+            # ── Orchestration Layer: adaptive profile resolution ──
             # Adaptive difficulty + weak-concept resolution for flashcards.
             # Stream path has db access → use get_adaptive_profile (blends Redis + PostgreSQL
             # mastery + flashcard_reviews), which is richer than the Celery Redis-only path.
@@ -159,12 +166,33 @@ async def generate_stream_route(body: GenerateRequest):
                         logger.warning("[ADAPTIVE_FLASH] Profile lookup failed: %s", _e)
                         request_options.setdefault("difficulty", "intermediate")
 
+            # ── Engine Layer: execute LLM generation ──
             if material_type == "summary":
                 summary_mode = body.summary_mode or request_options.get("summary_mode")
                 difficulty = request_options.get("difficulty") or "intermediate"
-                
+                summary_weak_concepts: list = []
+
+                # Adaptive profile resolution for teach_me_mode — mirrors flashcard
+                # adaptive block above: uses get_adaptive_profile (Redis + PostgreSQL blend)
+                # since the stream path already holds a db session.
+                if summary_mode == "teach_me_mode" and body.user_id and body.subject_id:
+                    try:
+                        from ..adaptive_profile_service import get_adaptive_profile
+                        _prof = get_adaptive_profile(
+                            str(body.user_id), str(body.subject_id), db
+                        )
+                        difficulty = _prof["recommended_difficulty"]
+                        summary_weak_concepts = _prof["weak_concepts"]
+                        logger.info(
+                            "[ADAPTIVE_SUMMARY] user=%s resolved difficulty=%s weak_concepts=%d",
+                            body.user_id, difficulty, len(summary_weak_concepts),
+                        )
+                    except Exception as _e:
+                        logger.warning("[ADAPTIVE_SUMMARY] Profile lookup failed: %s", _e)
+
                 async for piece in generate_summary_stream(
-                    inner_chunks, topic, language, difficulty, summary_mode
+                    inner_chunks, topic, language, difficulty, summary_mode,
+                    weak_concepts=summary_weak_concepts,
                 ):
                     if piece is None: continue
                     text = str(piece)

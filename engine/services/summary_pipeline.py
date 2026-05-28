@@ -57,7 +57,7 @@ MAP_BLOCK_CHARS = int(os.getenv("MAP_BLOCK_CHARS", "4500"))
 
 # Absolute max chunks to retrieve to prevent OOM/timeouts on massive subjects.
 MAP_MAX_CHUNKS = int(os.getenv("MAP_MAX_CHUNKS", "80"))
-MAP_CONCURRENCY = int(os.getenv("MAP_CONCURRENCY", "1"))
+MAP_CONCURRENCY = int(os.getenv("MAP_CONCURRENCY", "3"))
 STREAM_MAP_MAX_CHUNKS = int(os.getenv("STREAM_MAP_MAX_CHUNKS", "30"))
 
 # Per-chunk MAP timeout.  MAP prompts are short extractions — they don't need
@@ -74,64 +74,63 @@ _MIN_CHUNK_CHARS = 100
 
 
 # ── System Prompt ────────────────────────────────────────────────────────────
+# Computed once at import time — it's a static string, not a runtime decision.
+
+_SUMMARY_SYSTEM_PROMPT: str = (
+    "You are a knowledgeable student synthesizing material for a peer. "
+    "Write in a natural, direct voice — clear, confident, never formal or robotic. "
+    "Never narrate what the documents are about (avoid 'This text discusses...', "
+    "'The document covers...', 'In this paper...'). Explain the actual content directly.\n\n"
+
+    "GLOBAL RULES\n"
+    "All constraints below are global — apply them implicitly across every section "
+    "without re-evaluation at section level.\n"
+    "1. Grounding: Use only information present in the input. "
+    "No external knowledge, invented examples, or concepts absent from the source.\n"
+    "2. Concept preservation: Every distinct concept in the input must appear in the output. "
+    "Do not merge, skip, or compress unrelated ideas.\n"
+    "3. Depth and length scaling: Output depth and length scale with input complexity — "
+    "more concepts and topic clusters mean more coverage and longer output. "
+    "Brevity is never a goal; shorten only when the input itself is genuinely minimal.\n"
+    "4. Input synthesis: Before writing, classify the input as single-topic or multi-topic. "
+    "Single-topic: produce a focused explanation. "
+    "Multi-topic: treat all topics as a unified curriculum and synthesize into one structured "
+    "knowledge map. The input may have no explicit topic boundaries — infer them from shifts "
+    "in vocabulary, domain, or conceptual focus.\n"
+    "5. Structure: Use the required section order. Never add, rename, or reorder sections. "
+    "Omit a section only when it has no applicable content.\n\n"
+
+    "FORMATTING\n"
+    "Write each section label as plain text followed by a newline, then the content. "
+    "No markdown headings, bold, or italic.\n\n"
+
+    "SECTIONS\n\n"
+
+    "Overview\n"
+    "State the core subject(s) and why they matter. Give each distinct topic its own sentence.\n\n"
+
+    "Key Concepts\n"
+    "The essential ideas, principles, or mechanisms, grouped by logical theme. "
+    "For each concept: state the idea, explain it plainly, and note its context. "
+    "Do not group concepts from unrelated topic clusters under the same theme.\n\n"
+
+    "Detailed Explanation\n"
+    "How the concepts work, interact, and matter. "
+    "Make relationships explicit — dependencies, contrasts, enabling conditions. "
+    "Build on Key Concepts rather than repeating definitions. "
+    "If multiple topic clusters exist, explain each cluster before drawing cross-topic connections.\n\n"
+
+    "Examples / Applications\n"
+    "Concrete examples from the source, anchored to the concept each illustrates. "
+    "Omit only when the input contains no examples and none can be directly inferred.\n\n"
+
+    "Key Terms / Definitions\n"
+    "Domain-specific terms from the input, defined as used in the source. Skip common vocabulary."
+)
+
 
 def _build_summary_system_prompt() -> str:
-    """Invariant contract for REDUCE-stage generation: grounding, structure, and multi-doc rules.
-
-    Depth strategy (beginner / intermediate / advanced) is injected separately via the user
-    prompt so this contract stays stable across all difficulty levels.
-    """
-    return (
-        "You are a knowledgeable student synthesizing material for a peer. "
-        "Write in a natural, direct voice — clear, confident, never formal or robotic. "
-        "Never narrate what the documents are about (avoid 'This text discusses...', "
-        "'The document covers...', 'In this paper...'). Explain the actual content directly.\n\n"
-
-        "GLOBAL RULES\n"
-        "All constraints below are global — apply them implicitly across every section "
-        "without re-evaluation at section level.\n"
-        "1. Grounding: Use only information present in the input. "
-        "No external knowledge, invented examples, or concepts absent from the source.\n"
-        "2. Concept preservation: Every distinct concept in the input must appear in the output. "
-        "Do not merge, skip, or compress unrelated ideas.\n"
-        "3. Depth and length scaling: Output depth and length scale with input complexity — "
-        "more concepts and topic clusters mean more coverage and longer output. "
-        "Brevity is never a goal; shorten only when the input itself is genuinely minimal.\n"
-        "4. Input synthesis: Before writing, classify the input as single-topic or multi-topic. "
-        "Single-topic: produce a focused explanation. "
-        "Multi-topic: treat all topics as a unified curriculum and synthesize into one structured "
-        "knowledge map. The input may have no explicit topic boundaries — infer them from shifts "
-        "in vocabulary, domain, or conceptual focus.\n"
-        "5. Structure: Use the required section order. Never add, rename, or reorder sections. "
-        "Omit a section only when it has no applicable content.\n\n"
-
-        "FORMATTING\n"
-        "Write each section label as plain text followed by a newline, then the content. "
-        "No markdown headings, bold, or italic.\n\n"
-
-        "SECTIONS\n\n"
-
-        "Overview\n"
-        "State the core subject(s) and why they matter. Give each distinct topic its own sentence.\n\n"
-
-        "Key Concepts\n"
-        "The essential ideas, principles, or mechanisms, grouped by logical theme. "
-        "For each concept: state the idea, explain it plainly, and note its context. "
-        "Do not group concepts from unrelated topic clusters under the same theme.\n\n"
-
-        "Detailed Explanation\n"
-        "How the concepts work, interact, and matter. "
-        "Make relationships explicit — dependencies, contrasts, enabling conditions. "
-        "Build on Key Concepts rather than repeating definitions. "
-        "If multiple topic clusters exist, explain each cluster before drawing cross-topic connections.\n\n"
-
-        "Examples / Applications\n"
-        "Concrete examples from the source, anchored to the concept each illustrates. "
-        "Omit only when the input contains no examples and none can be directly inferred.\n\n"
-
-        "Key Terms / Definitions\n"
-        "Domain-specific terms from the input, defined as used in the source. Skip common vocabulary."
-    )
+    return _SUMMARY_SYSTEM_PROMPT
 
 
 # ── User Prompt ──────────────────────────────────────────────────────────────
@@ -158,6 +157,7 @@ def build_summary_prompt(
     topic: Optional[str] = None,
     summary_mode: Optional[str] = None,
     plan_block: str = "",
+    weak_concepts: Optional[List[str]] = None,
 ) -> str:
     """Build the user-facing REDUCE prompt, injecting a mode-specific depth strategy.
 
@@ -165,6 +165,8 @@ def build_summary_prompt(
     If summary_mode is not selected, it falls back to the canonical depth strategies
     driven by the difficulty parameter. An optional plan_block (from concept_planner)
     can be injected to direct the LLM's attention to the most important concepts.
+    When summary_mode is teach_me_mode and weak_concepts is provided, a learner
+    context block is injected so the LLM prioritizes those struggling areas.
     """
     # 1. If difficulty is "adaptive" and no mode is set, default to teach_me_mode.
     #    The engine does not have a real adaptive algorithm for summaries (only for quizzes).
@@ -241,8 +243,20 @@ def build_summary_prompt(
     combined_strategy = f"{mode_instruction}\n{depth_signal}" if mode_instruction else depth_signal
     plan_section = f"{plan_block}\n" if plan_block else ""
 
+    # Inject learner context for teach_me_mode when weak concepts are known.
+    # Capped at 5 to avoid prompt bloat; already sorted upstream.
+    learner_section = ""
+    if summary_mode == "teach_me_mode" and weak_concepts:
+        top_weak = weak_concepts[:5]
+        learner_section = (
+            f"LEARNER CONTEXT: This learner struggles with: {', '.join(top_weak)}.\n"
+            "Prioritize clear, analogy-driven explanations for these concepts first, "
+            "then proceed with the rest of the material.\n\n"
+        )
+
     prompt = (
         f"{combined_strategy}{lang_phrase}\n\n"
+        f"{learner_section}"
         f"{plan_section}"
         f"Text to summarize:\n---\n{context}\n---\n\n"
         f"Summary:"
@@ -521,6 +535,7 @@ async def generate_summary_stream(
     language: str = "en",
     difficulty: str = "intermediate",
     summary_mode: Optional[str] = None,
+    weak_concepts: Optional[List[str]] = None,
 ) -> AsyncIterator[str]:
     """Stream summary tokens from Ollama with MAP/REDUCE pipeline.
 
@@ -607,7 +622,7 @@ async def generate_summary_stream(
         plan_block = ""
 
     context = _build_summary_context(chunks)
-    prompt = build_summary_prompt(context, language, difficulty, topic, summary_mode, plan_block=plan_block)
+    prompt = build_summary_prompt(context, language, difficulty, topic, summary_mode, plan_block=plan_block, weak_concepts=weak_concepts)
 
     # Use adaptive context sizing to avoid allocating unnecessary VRAM.
     # 1 token ≈ 3 chars, plus 1024 tokens buffer for generation.
@@ -744,6 +759,7 @@ def generate_summary(
     language: str = "en",
     difficulty: str = "intermediate",
     summary_mode: Optional[str] = None,
+    weak_concepts: Optional[List[str]] = None,
     timeout: int = OLLAMA_GENERATION_TIMEOUT,
     retries: int = OLLAMA_REQUEST_RETRIES,
 ) -> str:
@@ -802,7 +818,7 @@ def generate_summary(
         plan_block = ""
 
     context = _build_summary_context(chunks)
-    prompt = build_summary_prompt(context, language, difficulty, topic, summary_mode, plan_block=plan_block)
+    prompt = build_summary_prompt(context, language, difficulty, topic, summary_mode, plan_block=plan_block, weak_concepts=weak_concepts)
 
     payload: Dict[str, Any] = {
         "model": OLLAMA_GENERATION_MODEL,

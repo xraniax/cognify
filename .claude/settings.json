@@ -8,7 +8,25 @@
       "Bash(cd /c/Users/ASUS/Documents/GitHub/cognify/backend && grep -n \"engineClient\\\\|/generate\\\\|/quiz\" src/services/material.service.js | head -30)",
       "Read(//c/c/Users/ASUS/Documents/GitHub/cognify/backend/src/services/**)",
       "Bash(Remove-Item \"c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\\\\frontend\\\\src\\\\services\\\\adaptiveLearningStore.js\")",
-      "Read(//c/Users/ASUS/.claude/projects/c--Users-ASUS-Documents-GitHub-cognify/memory/**)"
+      "Read(//c/Users/ASUS/.claude/projects/c--Users-ASUS-Documents-GitHub-cognify/memory/**)",
+      "Bash(which python3 *)",
+      "Read(//usr/**)",
+      "Bash(python3)",
+      "Bash(ls \"/c/Users/ASUS/AppData/Local/Programs/Python/Python312/\" 2>/dev/null | head -5)",
+      "Read(//c/Users/ASUS/AppData/Local/Programs/Python/Python312//**)",
+      "Bash(git add *)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\" -Directory)",
+      "Bash(python -c \"import json; d=json.load\\(open\\(r'c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\\\\engine\\\\services\\\\credentials\\\\service-account.json'\\)\\); print\\('type:', d.get\\('type'\\)\\); print\\('client_email:', d.get\\('client_email'\\)\\); print\\('project_id:', d.get\\('project_id'\\)\\)\")",
+      "Bash(git check-ignore *)",
+      "Bash(npx --yes acorn --ecma2020 --module src/features/subjects/components/AnalyticsView.jsx)",
+      "Bash(npx vite *)",
+      "Bash(node --input-type=module --eval \"import './src/services/analytics.service.js'\")",
+      "Bash(node --input-type=module --eval \"import './src/services/analytics.service.js'; console.log\\('OK'\\);\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\\\\backend\\\\src\" -Recurse -Filter \"*.js\")",
+      "Bash(Select-String -Pattern \"\\(routes|controllers\\)\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)"
     ],
     "additionalDirectories": [
       "c:\\Users\\ASUS\\.claude\\projects\\c--Users-ASUS-Documents-GitHub-cognify\\memory"

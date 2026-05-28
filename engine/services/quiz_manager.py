@@ -284,8 +284,9 @@ def next_question_only(
         language=language,
     )
 
-    # Must be set before persist so the first submit call reads the correct concept.
+    # Store correct answer server-side so submit can verify without trusting the client.
     session["last_concept"] = target_concept
+    session["last_correct_answer"] = question.get("correct_answer")
     update_quiz_session(user_id, subject_id, session)
 
     logger.info(
@@ -293,8 +294,10 @@ def next_question_only(
         user_id, subject_id, difficulty, target_concept or "<none>",
     )
 
+    # Strip correct_answer and explanation before sending to frontend.
+    safe_question = {k: v for k, v in question.items() if k not in ("correct_answer", "explanation")}
     return {
-        "question": question,
+        "question": safe_question,
         "progress": _build_progress(student, session, difficulty),
         "session": session,
     }
@@ -311,6 +314,7 @@ def submit_answer_and_get_next(
     top_k: int,
     db: Session,
     material_ids: Optional[List] = None,
+    user_answer: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Record the student's answer, update adaptive state, and return the next question.
@@ -336,6 +340,15 @@ def submit_answer_and_get_next(
         raise ValueError(
             f"last_concept missing from session for user_id={user_id} subject_id={subject_id}"
         )
+
+    # Server-side correctness verification: if the client sends user_answer (an option index),
+    # compare it against the stored correct_answer rather than trusting is_correct from the client.
+    stored_correct = session.get("last_correct_answer")
+    if user_answer is not None and stored_correct is not None:
+        try:
+            is_correct = int(user_answer) == int(stored_correct)
+        except (TypeError, ValueError):
+            pass  # keep client-supplied is_correct as fallback
 
     # Persist answer to the student model; concept=None skips concept-level tracking.
     handle_learning_event(
@@ -398,8 +411,9 @@ def submit_answer_and_get_next(
         language=language,
     )
 
-    # Must be set before persist so the next submit call reads the correct concept.
+    # Store correct answer for next submit; strip from response.
     session["last_concept"] = target_concept
+    session["last_correct_answer"] = question.get("correct_answer")
     update_quiz_session(user_id, subject_id, session)
 
     logger.info(
@@ -408,8 +422,10 @@ def submit_answer_and_get_next(
         target_concept or "<none>", float(student.get("accuracy", 0.5)),
     )
 
+    safe_question = {k: v for k, v in question.items() if k not in ("correct_answer", "explanation")}
     return {
-        "question": question,
+        "question": safe_question,
+        "is_correct": is_correct,  # Return server-computed result for the answered question.
         "progress": _build_progress(student, session, difficulty),
         "session": session,
     }

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from models import Document
 
 from .bulk_insert import bulk_insert_chunks
-from .document_processor import process_document
+from .document_processor import process_document, process_text_pipeline
 
 logger = logging.getLogger("engine-ingestion")
 
@@ -241,4 +241,67 @@ def ingest_file(
         "upload_id": upload_id,
         "document_type": pipeline.get("type"),
         "chunks": inserted,
+    }
+
+
+def ingest_text(
+    session: Session,
+    *,
+    raw_text: str,
+    user_id: str,
+    subject_id: str,
+    material_id: Optional[str] = None,
+    filename: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """End-to-end ingestion from raw text: subject safety → clean/chunk/embed → persist to pgvector."""
+    ensure_engine_schema(session)
+
+    if not user_id:
+        raise ValueError("Missing user context: user_id is required for ingestion")
+    if not subject_id:
+        raise ValueError("Missing subject context: subject_id is required for ingestion")
+
+    resolved_subject_id = ensure_subject_exists(session, subject_id=subject_id, user_id=user_id)
+
+    pipeline = process_text_pipeline(raw_text, include_embeddings=True, request_id=request_id)
+
+    doc = Document(
+        subject_id=resolved_subject_id,
+        material_id=material_id,
+        filename=filename or "text-upload",
+        file_path=None,
+    )
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+
+    chunks = pipeline.get("chunks", [])
+    embeddings = pipeline.get("embeddings", [])
+
+    chunks_data: List[Dict[str, Any]] = [
+        {
+            "content": content,
+            "embedding": embeddings[i] if i < len(embeddings) else None,
+            "chunk_index": i,
+            "page_number": None,
+        }
+        for i, content in enumerate(chunks)
+    ]
+
+    inserted = bulk_insert_chunks(session, doc.id, chunks_data)
+    logger.info(
+        "[INGEST] text_ingest subject_id=%s document_id=%s chunks_inserted=%d",
+        resolved_subject_id,
+        doc.id,
+        inserted,
+    )
+
+    return {
+        "status": "success",
+        "subject_id": resolved_subject_id,
+        "document_id": doc.id,
+        "document_type": "Text",
+        "chunks": inserted,
+        "extracted_text": (pipeline.get("cleaned_text") or raw_text).strip(),
     }

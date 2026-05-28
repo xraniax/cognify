@@ -1,8 +1,11 @@
+// This module is part of the Orchestration Layer.
+// It owns exam generation (adaptive + static), server-side grading, and exam session lifecycle.
+// LLM calls go directly to Ollama (Engine Layer); adaptive state is managed via engine /exam/* routes.
 import { randomUUID } from 'crypto';
 import axios from 'axios';
 import engineClient from './engine.client.js';
 import Material from '../models/material.model.js';
-import { COMPLETED } from '../constants/status.enum.js';
+import { COMPLETED, PROCESSING } from '../constants/status.enum.js';
 import { query } from '../utils/config/db.js';
 
 const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://ollama:11434').replace(/\/$/, '');
@@ -707,17 +710,11 @@ class ExamService {
             (payload.topics || []).join(','));
 
         const title = payload.title || `Adaptive Exam - ${payload.topics.join(', ')}`;
-        await Material.create(userId, payload.subject_id, title, '', 'exam', COMPLETED);
-
-        // Retrieve the newly created material's ID
-        const materialRecord = await query(
-            'SELECT id FROM materials WHERE user_id = $1 AND title = $2 AND type = $3 ORDER BY created_at DESC LIMIT 1',
-            [userId, title, 'exam']
-        );
-        if (!materialRecord.rows[0]) {
+        const createdMaterial = await Material.create(userId, payload.subject_id, title, '', 'exam', PROCESSING);
+        if (!createdMaterial) {
             throw new Error('Failed to create material record for adaptive exam.');
         }
-        const materialDbId = materialRecord.rows[0].id;
+        const materialDbId = createdMaterial.id;
 
         // Call engine to initialize the adaptive exam session
         let nextDiff = toEngineDifficulty(payload.difficulty);
@@ -1106,10 +1103,19 @@ class ExamService {
                 } else {
                     try {
                         const evalRes = await engineClient.post('/scoring/score', {
-                            student_answer: userInput,
-                            reference_answer: referenceAnswer,
-                            domain_concepts: [],
-                            request_id: String(question.id),
+                            rubric: {
+                                question_id: String(question.id),
+                                question_text: question.question,
+                                reference_answer: referenceAnswer,
+                                concepts: [],
+                                important_keywords: [],
+                                score_scale: '0-1',
+                            },
+                            answer: {
+                                student_id: String(userId),
+                                question_id: String(question.id),
+                                answer_text: userInput,
+                            },
                         }, { timeout: 300000 });
 
                         const evalData = evalRes.data;
@@ -1117,13 +1123,10 @@ class ExamService {
                         isCorrect = finalScore >= 0.8;
                         isAlmost = finalScore >= 0.4 && finalScore < 0.8;
                         aiExplanation = evalData.feedback || null;
-                        // Map components array → { semantic, keyword, concept, raw_combined_score }
-                        const compsArr = Array.isArray(evalData.components) ? evalData.components : [];
-                        const findComp = (method) => compsArr.find(c => c.method === method);
                         aiScoreComponents = {
-                            semantic: { score: findComp('semantic_similarity')?.score ?? 0 },
-                            keyword:  { score: findComp('keyword_matching')?.score ?? 0 },
-                            concept:  { score: findComp('concept_coverage')?.score ?? 0 },
+                            semantic: { score: evalData.semantic_score ?? 0 },
+                            keyword:  { score: evalData.keyword_score ?? 0 },
+                            concept:  { score: evalData.concept_score ?? 0 },
                             raw_combined_score: finalScore,
                         };
                     } catch (err) {
@@ -1190,11 +1193,8 @@ class ExamService {
                     blankAnswers: Array.isArray(item.blankAnswers) ? item.blankAnswers.map((ans) => String(ans).trim()) : [],
                     matchAnswers: item.matchAnswers && typeof item.matchAnswers === 'object' ? item.matchAnswers : {},
                     responseTime: Number(item.responseTime || 0) / 1000,
-                    // If the item already has scoreComponents from previous batches or frontend, preserve them
-                    isCorrect: item.isCorrect,
-                    isAlmost: item.isAlmost,
-                    explanation: item.explanation,
-                    scoreComponents: item.scoreComponents,
+                            // Never carry client-supplied scoring — always grade server-side
+
                 },
             ])
         );
@@ -1211,8 +1211,8 @@ class ExamService {
                 continue;
             }
 
-            // Grade using the unified function
-            const result = await this.gradeQuestionAnswer(userId, question, answer, answer);
+            // Always grade server-side — never pass client answer as cachedScoring
+            const result = await this.gradeQuestionAnswer(userId, question, answer, null);
             
             // Enrich the answer in the original submittedAnswers array so it gets saved to DB
             const originalAns = submittedAnswers.find(a => String(a.questionId) === String(question.id));
@@ -1370,20 +1370,16 @@ class ExamService {
         // submitExam, exam_attempts FK) must use this ID, not the temporary examId.
         let materialDbId = null;
         try {
-            await Material.create(
+            const createdMat = await Material.create(
                 userId,
                 payload.subject_id,
                 exam.title,
                 '', // No text content for exams
                 'exam',
-                COMPLETED
+                PROCESSING
             );
-            const materialRecord = await query(
-                'SELECT id FROM materials WHERE user_id = $1 AND title = $2 AND type = $3 ORDER BY created_at DESC LIMIT 1',
-                [userId, exam.title, 'exam']
-            );
-            if (materialRecord.rows[0]) {
-                materialDbId = materialRecord.rows[0].id;
+            if (createdMat) {
+                materialDbId = createdMat.id;
                 await Material.updateAIResult(materialDbId, userId, materialExam, {
                     materialType: 'exam',
                     count: payload.numberOfQuestions,
@@ -1445,11 +1441,7 @@ class ExamService {
                     answerText: sanitizeString(item.answerText || ''),
                     blankAnswers: Array.isArray(item.blankAnswers) ? item.blankAnswers.map((ans) => sanitizeString(ans)) : [],
                     matchAnswers: item.matchAnswers && typeof item.matchAnswers === 'object' ? item.matchAnswers : {},
-                    // Preserve cached properties if passed by client
-                    isCorrect: item.isCorrect,
-                    isAlmost: item.isAlmost,
-                    explanation: item.explanation,
-                    scoreComponents: item.scoreComponents,
+                    // Never carry scoring fields from the client — always grade server-side
                 },
             ])
         );
@@ -1471,13 +1463,10 @@ class ExamService {
             const answer = answerMap.get(String(question.id)) || { selectedAnswers: [], answerText: '', blankAnswers: [], matchAnswers: {} };
             const dbAnswer = dbAnswerMap.get(String(question.id));
 
-            // Determine if there is cached scoring to reuse
-            let cachedScoring = null;
-            if (answer && answer.scoreComponents) {
-                cachedScoring = answer;
-            } else if (dbAnswer && dbAnswer.scoreComponents && dbAnswer.answerText === answer.answerText) {
-                cachedScoring = dbAnswer;
-            }
+            // Only reuse server-stored scoring (same answer text) — never trust client-supplied values
+            const cachedScoring = (dbAnswer && dbAnswer.scoreComponents && dbAnswer.answerText === answer.answerText)
+                ? dbAnswer
+                : null;
 
             // Grade using the unified function
             const result = await this.gradeQuestionAnswer(userId, question, answer, cachedScoring);

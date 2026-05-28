@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 from typing import Optional, Dict, Any, Set
 
 import redis
@@ -104,9 +105,11 @@ def update_quiz_session(user_id: str, subject_id: str, data: Dict[str, Any]) -> 
     }
     try:
         client = _get_client()
+        pipe = client.pipeline(transaction=False)
         if payload:
-            client.hset(key, mapping=payload)
-        client.expire(key, QUIZ_SESSION_TTL_SECONDS)
+            pipe.hset(key, mapping=payload)
+        pipe.expire(key, QUIZ_SESSION_TTL_SECONDS)
+        pipe.execute()
         logger.debug("[REDIS_EXAM_WRITE] OK key=%s fields=%d", key, len(payload))
     except Exception as exc:
         logger.error("[REDIS_EXAM_WRITE] FAIL key=%s error=%s — session state NOT persisted", key, exc)
@@ -124,9 +127,11 @@ def update_exam_session(user_id: str, subject_id: str, exam_id: str, data: Dict[
     }
     try:
         client = _get_client()
+        pipe = client.pipeline(transaction=False)
         if payload:
-            client.hset(key, mapping=payload)
-        client.expire(key, EXAM_SESSION_TTL_SECONDS)
+            pipe.hset(key, mapping=payload)
+        pipe.expire(key, EXAM_SESSION_TTL_SECONDS)
+        pipe.execute()
         logger.debug("[REDIS_EXAM_WRITE] OK key=%s fields=%d ttl=%ds", key, len(payload), EXAM_SESSION_TTL_SECONDS)
     except Exception as exc:
         logger.error("[REDIS_EXAM_WRITE] FAIL key=%s error=%s — exam session state NOT persisted", key, exc)
@@ -159,3 +164,63 @@ def remove_concept(key: str, value: str, client: Optional[redis.Redis] = None) -
         (client or _get_client()).srem(key, value)
     except Exception as exc:
         logger.error("[REDIS_EXAM_WRITE] remove_concept FAIL key=%s value=%s error=%s", key, value, exc)
+
+
+# ── Text-job store ─────────────────────────────────────────────────────────
+# Replaces the process-local _TEXT_JOBS dict so all uvicorn workers share state.
+
+TEXT_JOB_TTL_SECONDS = int(os.getenv("TEXT_JOB_TTL_SECONDS", "3600"))
+
+
+def _text_job_key(job_id: str) -> str:
+    return f"text_job:{job_id}"
+
+
+def set_text_job(job_id: str, data: Dict[str, Any], ttl: int = TEXT_JOB_TTL_SECONDS) -> None:
+    key = _text_job_key(job_id)
+    try:
+        _get_client().set(key, json.dumps(data, default=str), ex=ttl)
+        logger.debug("[REDIS_TEXT_JOB] SET key=%s", key)
+    except Exception as exc:
+        logger.error("[REDIS_TEXT_JOB] SET FAIL key=%s error=%s", key, exc)
+
+
+def get_text_job(job_id: str) -> Optional[Dict[str, Any]]:
+    key = _text_job_key(job_id)
+    try:
+        raw = _get_client().get(key)
+        if raw is None:
+            logger.debug("[REDIS_TEXT_JOB] MISS key=%s", key)
+            return None
+        return json.loads(raw)
+    except Exception as exc:
+        logger.error("[REDIS_TEXT_JOB] GET FAIL key=%s error=%s", key, exc)
+        return None
+
+
+def update_text_job(job_id: str, ttl: int = TEXT_JOB_TTL_SECONDS, **updates: Any) -> Optional[Dict[str, Any]]:
+    key = _text_job_key(job_id)
+    try:
+        client = _get_client()
+        raw = client.get(key)
+        if raw is None:
+            logger.warning("[REDIS_TEXT_JOB] UPDATE MISS key=%s — update skipped", key)
+            return None
+        job = json.loads(raw)
+        job.update(updates)
+        job["updated_at"] = time.time()
+        client.set(key, json.dumps(job, default=str), ex=ttl)
+        logger.debug("[REDIS_TEXT_JOB] UPDATE OK key=%s", key)
+        return dict(job)
+    except Exception as exc:
+        logger.error("[REDIS_TEXT_JOB] UPDATE FAIL key=%s error=%s", key, exc)
+        return None
+
+
+def delete_text_job(job_id: str) -> None:
+    key = _text_job_key(job_id)
+    try:
+        _get_client().delete(key)
+        logger.debug("[REDIS_TEXT_JOB] DELETE key=%s", key)
+    except Exception as exc:
+        logger.error("[REDIS_TEXT_JOB] DELETE FAIL key=%s error=%s", key, exc)

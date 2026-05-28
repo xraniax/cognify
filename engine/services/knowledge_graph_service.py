@@ -126,13 +126,15 @@ def generate_subject_graph(subject_id: str, chunks: List[str]) -> Optional[Dict[
             subject_id, len(clean_core), len(clean_supporting), len(clean_minor), len(clean_clusters),
         )
 
-        # Save to Redis with TTL
+        # Save to Redis with TTL and invalidate the in-process cache so the
+        # next read picks up the freshly generated graph.
         client = _get_redis()
         client.set(
             _graph_key(str(subject_id)),
             json.dumps(graph_data),
             ex=KNOWLEDGE_GRAPH_TTL_SECONDS,
         )
+        _invalidate_graph_cache(str(subject_id))
         duration_ms = int((time.perf_counter() - start_time) * 1000)
         logger.info(
             "[KG] cached knowledge graph subject=%s duration_ms=%d chunks=%d",
@@ -145,19 +147,40 @@ def generate_subject_graph(subject_id: str, chunks: List[str]) -> Optional[Dict[
         return None
 
 
+# In-process LRU cache: avoids Redis GET + json.loads on every quiz step for
+# the same subject. Capped at 128 subjects; invalidated by generate_subject_graph.
+_GRAPH_PROCESS_CACHE: Dict[str, Any] = {}
+
+
+def _invalidate_graph_cache(subject_id: str) -> None:
+    _GRAPH_PROCESS_CACHE.pop(str(subject_id), None)
+
+
 def get_subject_graph(subject_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieves the cached knowledge graph for a subject."""
+    """Retrieves the cached knowledge graph for a subject.
+
+    Checks the in-process dict first (hot path, no network), then falls back
+    to Redis and populates the in-process cache on a hit.
+    """
+    sid = str(subject_id)
+    if sid in _GRAPH_PROCESS_CACHE:
+        logger.debug("Process cache hit for knowledge graph: subject %s", sid)
+        return _GRAPH_PROCESS_CACHE[sid]
+
     client = _get_redis()
-    data = client.get(_graph_key(str(subject_id)))
+    data = client.get(_graph_key(sid))
     if data:
         try:
             parsed = json.loads(data)
-            logger.debug(f"Cache hit for knowledge graph: subject {subject_id}")
+            if len(_GRAPH_PROCESS_CACHE) >= 128:
+                _GRAPH_PROCESS_CACHE.pop(next(iter(_GRAPH_PROCESS_CACHE)))
+            _GRAPH_PROCESS_CACHE[sid] = parsed
+            logger.debug("Cache hit for knowledge graph: subject %s", sid)
             return parsed
         except json.JSONDecodeError:
-            logger.error(f"Failed to decode knowledge graph for subject {subject_id}")
+            logger.error("Failed to decode knowledge graph for subject %s", sid)
             return None
-    logger.debug(f"Cache miss for knowledge graph: subject {subject_id}")
+    logger.debug("Cache miss for knowledge graph: subject %s", sid)
     return None
 
 

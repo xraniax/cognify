@@ -18,5 +18,9 @@
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
     "prettier": "^3.4.0"
+  },
+  "dependencies": {
+    "chromedriver": "^149.0.0",
+    "selenium-webdriver": "^4.44.0"
   }
 }

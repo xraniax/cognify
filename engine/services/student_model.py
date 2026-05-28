@@ -28,8 +28,14 @@ logger.info(
 )
 
 
+_redis_client: Optional[redis.Redis] = None
+
+
 def _get_redis_client() -> redis.Redis:
-    return redis.from_url(REDIS_URL, decode_responses=True)
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    return _redis_client
 
 
 def _state_key(user_id: str) -> str:
@@ -155,8 +161,8 @@ def get_student(user_id: str) -> Dict[str, Any]:
     return {
         "accuracy": float(data.get("accuracy", 0.5)),
         "avg_response_time": float(data.get("avg_response_time", 0.0)),
-        "weak_concepts": sorted(_parse_json_list(data.get("weak_concepts", "[]"))),
-        "strong_concepts": sorted(_parse_json_list(data.get("strong_concepts", "[]"))),
+        "weak_concepts": _parse_json_list(data.get("weak_concepts", "[]")),
+        "strong_concepts": _parse_json_list(data.get("strong_concepts", "[]")),
     }
 
 
@@ -259,8 +265,8 @@ def get_subject_student(user_id: str, subject_id: str) -> Dict[str, Any]:
     return {
         "accuracy": _safe_float(data.get("accuracy"), 0.5),
         "avg_response_time": _safe_float(data.get("avg_response_time"), 0.0),
-        "weak_concepts": sorted(_parse_json_list(data.get("weak_concepts", "[]"))),
-        "strong_concepts": sorted(_parse_json_list(data.get("strong_concepts", "[]"))),
+        "weak_concepts": _parse_json_list(data.get("weak_concepts", "[]")),
+        "strong_concepts": _parse_json_list(data.get("strong_concepts", "[]")),
         "concept_scores": _parse_json_dict(data.get("concept_scores", "{}")),
     }
 

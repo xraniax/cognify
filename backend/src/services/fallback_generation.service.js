@@ -43,13 +43,41 @@ class FallbackGenerationService {
                 if (!Array.isArray(finalResult.content?.cards) || finalResult.content.cards.length === 0) {
                     finalResult.content = { cards: [{"front": "Fallback Card", "back": "Fallback generated"}] };
                 }
-            } else {
-                finalResult.type = taskType === 'mock_exam' ? 'exam' : taskType;
-                const rawQuestions = aiGeneratedContent.questions;
+            } else if (taskType === 'mock_exam') {
+                finalResult.type = 'exam';
+                const rawQuestions = aiGeneratedContent.questions || aiGeneratedContent.content?.questions;
                 if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) {
-                    throw new Error(`Fallback generation produced no valid questions for ${taskType}`);
+                    throw new Error('Fallback generation produced no valid questions for exam');
                 }
-                finalResult.questions = rawQuestions;
+                const questions = rawQuestions.map((q, idx) => ({
+                    id: String(q.id ?? idx + 1),
+                    question: q.question || '',
+                    type: q.type === 'mcq' ? 'single_choice' : (q.type || 'single_choice'),
+                    options: q.options || [],
+                    answer_space: '',
+                }));
+                const answer_sheet = rawQuestions.map((q, idx) => ({
+                    question_id: String(q.id ?? idx + 1),
+                    answer: String(q.answer || ''),
+                    explanation: q.explanation || null,
+                }));
+                finalResult.content = { questions, answer_sheet };
+            } else {
+                // quiz
+                finalResult.type = 'quiz';
+                const rawQuestions = aiGeneratedContent.questions || aiGeneratedContent.content?.questions;
+                if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) {
+                    throw new Error('Fallback generation produced no valid questions for quiz');
+                }
+                const questions = rawQuestions.map((q, idx) => ({
+                    id: q.id ?? idx + 1,
+                    question: q.question || '',
+                    type: q.type === 'mcq' ? 'single_choice' : (q.type || 'single_choice'),
+                    options: q.options || [],
+                    correct_answer: String(q.answer ?? q.correct_answer ?? ''),
+                    explanation: q.explanation || null,
+                }));
+                finalResult.content = { questions };
             }
 
             await Material.updateAIResult(materialId, userId, finalResult);
@@ -78,17 +106,7 @@ class FallbackGenerationService {
             if (gps.distribution && gps.distribution.length > 0) {
                 distribution = gps.distribution.map(d => `${d.count || ''} ${d.type}`).join(', ');
             }
-            return `Context:\n${ctxStr}\n\n
-        Task: Generate a ${difficulty} level exam in JSON format.
-        Distribution: ${distribution}. 
-        Total questions: ${count}.
-        
-        Requirements:
-        - Return ONLY a JSON object with a "questions" array.
-        - For multiple_choice: {id, type: 'mcq', question, options: [A, B, C, D], answer}
-        - For essay: {id, type: 'essay', question, answer}
-        
-        Generate now:`;
+            return `Context:\n${ctxStr}\n\nTask: Generate a ${difficulty} level quiz/exam in JSON format.\nDistribution: ${distribution}. Total questions: ${count}.\nRequirements:\n- Return ONLY a JSON object exactly like {"questions": [{"id": 1, "type": "single_choice", "question": "...", "options": ["A", "B", "C", "D"], "answer": "A", "explanation": "..."}]}\n- Use type "single_choice" for MCQ questions.\nGenerate now:`;
         }
     }
 

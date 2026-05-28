@@ -170,10 +170,10 @@ def retrieve_sequential_chunks(
     elif fn_filter:
         query = query.filter(Document.filename.in_(fn_filter))
         
-    # Log SQL for diagnostic
-    from sqlalchemy.dialects import postgresql
-    compiled = query.statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
-    log.info(f"RETRIEVAL QUERY (SEQ): {compiled}")
+    if log.isEnabledFor(10):  # logging.DEBUG == 10
+        from sqlalchemy.dialects import postgresql
+        compiled = query.statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+        log.debug(f"RETRIEVAL QUERY (SEQ): {compiled}")
 
     query = query.order_by(Chunk.created_at.asc(), Chunk.id.asc())
 

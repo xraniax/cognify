@@ -51,6 +51,7 @@ def task_record_failure(request, exc, traceback, document_id, user_id=None):
     }
 
 
+# ── Ingestion Layer: document processing pipeline — OCR → Chunk → Embed → Store ──
 # --- MODULAR PIPELINE TASKS ---
 
 @celery_app.task(
@@ -638,6 +639,7 @@ def task_process_document_local(
     finally:
         db.close()
 
+# ── Orchestration Layer: retrieval context resolution and LLM generation dispatch ──
 @celery_app.task(
     bind=True,
     max_retries=3,
@@ -680,7 +682,7 @@ def task_generate_material(
         if material_type == "exam":
             logger.info(f"[EXAM COUNT] {count}")
 
-        # 1. Retrieve context chunks — scope to selected files when provided
+        # ── Ingestion Layer: retrieve context chunks for the subject ──
         if chunks and isinstance(chunks, list) and len(chunks) > 0:
             chunk_texts = chunks
         elif material_type == "summary":
@@ -708,15 +710,35 @@ def task_generate_material(
         if not chunk_texts:
             raise ValueError("No document chunks found for the given subject or topic.")
 
-        # 2. Generate material — dedicated pipeline for summaries
+        # ── Engine Layer: execute LLM generation ──
         if material_type == "summary":
             from services.summary_pipeline import generate_summary
+            _summary_mode = request_options.get("summary_mode")
+            _summary_weak_concepts: list = []
+
+            # Adaptive profile resolution for teach_me_mode.
+            # Celery has db access here, so use get_adaptive_profile (Redis + PostgreSQL blend)
+            # to mirror the SSE path rather than the Redis-only generate_study_material path.
+            if _summary_mode == "teach_me_mode" and user_id and subject_id:
+                try:
+                    from services.adaptive_profile_service import get_adaptive_profile
+                    _prof = get_adaptive_profile(user_id, subject_id, db)
+                    effective_difficulty = _prof["recommended_difficulty"]
+                    _summary_weak_concepts = _prof["weak_concepts"]
+                    logger.info(
+                        "[ADAPTIVE_SUMMARY] user=%s resolved difficulty=%s weak_concepts=%d",
+                        user_id, effective_difficulty, len(_summary_weak_concepts),
+                    )
+                except Exception as _e:
+                    logger.warning("[ADAPTIVE_SUMMARY] Profile lookup failed: %s", _e)
+
             material = generate_summary(
                 chunk_texts,
                 topic=effective_topic,
                 language=effective_language,
                 difficulty=effective_difficulty,
-                summary_mode=request_options.get("summary_mode"),
+                summary_mode=_summary_mode,
+                weak_concepts=_summary_weak_concepts,
             )
         else:
             material = generate_study_material(
@@ -732,8 +754,7 @@ def task_generate_material(
                 options=request_options,
             )
 
-        # Normalize and validate before returning — converts ValueError → RuntimeError
-        # so it hits the non-retriable branch and doesn't burn retry budget.
+        # ── Persistence Layer: normalize and validate output (ValueError → RuntimeError for non-retryable path) ──
         try:
             normalized = normalize_ai_generated_content(
                 material_type, material,
