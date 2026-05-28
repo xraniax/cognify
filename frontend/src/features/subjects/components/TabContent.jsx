@@ -191,7 +191,7 @@ const TabContent = ({
                         {DeletedBanner}
                         <iframe
                             key={tab.requestedPage ? `${fileUrl}-${tab.requestedPage}` : fileUrl}
-                            src={isDrive ? (fileUrl.includes('?') ? `${fileUrl}&rm=minimal` : `${fileUrl}?rm=minimal`) : `${fileUrl}#page=${tab.requestedPage || 1}&view=Fit&zoom=page-fit`}
+                            src={isDrive ? (fileUrl.includes('?') ? `${fileUrl}&rm=minimal` : `${fileUrl}?rm=minimal`) : `${fileUrl}#page=${tab.requestedPage || 1}&view=FitH`}
                             className="w-full flex-1 border-none"
                             title={tab.title}
                             sandbox="allow-scripts allow-same-origin allow-popups allow-forms"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, Layers, Clock, MoreHorizontal, ChevronRight, Edit3, Trash2 } from 'lucide-react';
 import { staggerItemBouncy, popIn } from '@/utils/motion';
@@ -7,7 +7,6 @@ import { useTilt } from '@/hooks/useTilt';
 import { accentFor, timeSince } from './dashboardUtils';
 
 const SubjectCard = React.memo(({ subject, onDelete, onRename }) => {
-    const navigate  = useNavigate();
     const accent    = accentFor(subject.id);
     const [menu, setMenu] = useState(false);
     const menuRef   = useRef(null);
@@ -22,6 +21,10 @@ const SubjectCard = React.memo(({ subject, onDelete, onRename }) => {
     }, [menu]);
 
     return (
+        <Link
+            to={`/subjects/${subject.id}`}
+            style={{ textDecoration: 'none', display: 'block' }}
+        >
         <motion.div
             ref={tiltRef}
             variants={staggerItemBouncy}
@@ -45,7 +48,6 @@ const SubjectCard = React.memo(({ subject, onDelete, onRename }) => {
                 e.currentTarget.style.borderColor = `${accent.hex}40`;
             }}
             whileTap={{ scale: 0.98 }}
-            onClick={() => navigate(`/subjects/${subject.id}`)}
         >
             {/* Clean top accent bar */}
             <div className="h-1 w-full flex-shrink-0" style={{ background: accent.bg }} />
@@ -63,8 +65,10 @@ const SubjectCard = React.memo(({ subject, onDelete, onRename }) => {
                         <BookOpen className="w-5 h-5" style={{ color: accent.text }} />
                     </motion.div>
 
-                    <div ref={menuRef} className="relative flex-shrink-0" onClick={e => e.stopPropagation()}>
+                    <div ref={menuRef} className="relative flex-shrink-0" onClick={e => { e.stopPropagation(); e.preventDefault(); }}>
                         <motion.button
+                            data-testid="more-menu-btn"
+                            aria-label="More options"
                             whileHover={{ scale: 1.08 }}
                             whileTap={{ scale: 0.92 }}
                             onClick={() => setMenu(v => !v)}
@@ -150,6 +154,7 @@ const SubjectCard = React.memo(({ subject, onDelete, onRename }) => {
                 <ChevronRight className="w-3.5 h-3.5 text-white" />
             </motion.div>
         </motion.div>
+        </Link>
     );
 });
 SubjectCard.displayName = 'SubjectCard';

@@ -1,0 +1,26 @@
+{
+  "name": "cognify-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright E2E test suite for Cognify",
+  "scripts": {
+    "test":          "playwright test",
+    "test:headed":   "playwright test --headed",
+    "test:debug":    "playwright test --debug",
+    "test:ui":       "playwright test --ui",
+    "test:auth":     "playwright test tests/auth/",
+    "test:nav":      "playwright test tests/navigation/",
+    "test:profile":  "playwright test tests/profile/",
+    "test:admin":    "playwright test tests/admin/",
+    "test:smoke":    "playwright test --grep @smoke",
+    "test:ci":       "playwright test --reporter=html,github",
+    "report":        "playwright show-report",
+    "codegen":       "playwright codegen http://localhost:3000"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "dotenv": "^16.4.0"
+  }
+}

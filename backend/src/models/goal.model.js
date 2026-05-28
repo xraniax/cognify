@@ -272,9 +272,9 @@ export class StudySession {
         } = sessionData;
 
         const result = await query(
-            `INSERT INTO study_sessions 
-             (user_id, goal_id, subject_id, material_id, session_type, started_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
+            `INSERT INTO study_sessions
+             (user_id, goal_id, subject_id, material_id, session_type, started_at, duration_minutes)
+             VALUES ($1, $2, $3, $4, $5, NOW(), 0)
              RETURNING *`,
             [userId, goalId, subjectId, materialId, sessionType]
         );

@@ -341,7 +341,7 @@ class AdminService {
             ? `BETWEEN '${fromDate}' AND '${toDate}'`
             : `> NOW() - INTERVAL '30 days'`;
 
-        const [dauRes, materialTrendRes, topSubjectsRes, activityDistRes, studyActivityRes] = await Promise.all([
+        const [dauRes, materialTrendRes, topSubjectsRes, activityDistRes, studyActivityRes, chatSessionsRes, chatFeedbackRes] = await Promise.all([
             // 1. Daily Active Users
             query(`
                 SELECT DATE(last_active_at) as date, COUNT(*)::int as count
@@ -386,11 +386,27 @@ class AdminService {
                     WHERE completed_at ${dateFilter}
                     GROUP BY DATE(completed_at)
                     UNION ALL
-                    SELECT DATE(reviewed_at) as date, 'flashcard' as type, COUNT(*)::int as count 
-                    FROM flashcard_reviews 
-                    WHERE reviewed_at ${dateFilter} 
+                    SELECT DATE(reviewed_at) as date, 'flashcard' as type, COUNT(*)::int as count
+                    FROM flashcard_reviews
+                    WHERE reviewed_at ${dateFilter}
                     GROUP BY DATE(reviewed_at)
                 ) sub GROUP BY date, type ORDER BY date ASC
+            `),
+            // 6. Chat sessions count
+            query(`
+                SELECT COUNT(*)::int AS total_sessions
+                FROM chat_sessions
+                WHERE created_at ${dateFilter}
+            `),
+            // 7. Chat message feedback (thumbs up / down)
+            query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE cm.feedback = 'up')::int   AS thumbs_up,
+                    COUNT(*) FILTER (WHERE cm.feedback = 'down')::int AS thumbs_down,
+                    COUNT(*) FILTER (WHERE cm.feedback IS NOT NULL)::int AS total_rated
+                FROM chat_messages cm
+                JOIN chat_sessions cs ON cs.id = cm.session_id
+                WHERE cs.created_at ${dateFilter}
             `)
         ]);
 
@@ -423,13 +439,25 @@ class AdminService {
             };
         }
 
+        const chatFeedback = chatFeedbackRes.rows[0] || { thumbs_up: 0, thumbs_down: 0, total_rated: 0 };
+        const chatSatisfactionPct = chatFeedback.total_rated > 0
+            ? parseFloat(((chatFeedback.thumbs_up / chatFeedback.total_rated) * 100).toFixed(1))
+            : null;
+
         return {
             dau,
             materialTrends: materialTrendRes.rows,
             topSubjects: topSubjectsRes.rows,
             activityDistribution: activityDistRes.rows,
             studyActivity: studyActivityRes.rows,
-            anomaly
+            anomaly,
+            chatActivity: {
+                totalSessions: chatSessionsRes.rows[0]?.total_sessions || 0,
+                thumbsUp: chatFeedback.thumbs_up,
+                thumbsDown: chatFeedback.thumbs_down,
+                totalRated: chatFeedback.total_rated,
+                satisfactionPct: chatSatisfactionPct
+            }
         };
     }
 

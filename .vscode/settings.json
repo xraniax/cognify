@@ -1,0 +1,13 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/selenium/.venv/bin/python3",
+
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestPath": "${workspaceFolder}/selenium/.venv/bin/pytest",
+  "python.testing.pytestArgs": [
+    "selenium",
+    "--ignore=selenium/test_use_cases.py"
+  ],
+
+  "python.envFile": "${workspaceFolder}/selenium/.env"
+}

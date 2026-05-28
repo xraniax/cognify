@@ -4,7 +4,7 @@ import { X, Target, Clock, BookOpen, CheckCircle, Calendar, Bell } from 'lucide-
 import { goalService, goalPresets, goalTypeLabels, goalPeriodLabels, dayNames } from '@/services/GoalService';
 import toast from 'react-hot-toast';
 
-const GoalSettingModal = ({ isOpen, onClose, subjects = [], onGoalCreated }) => {
+const GoalSettingModal = ({ isOpen, onClose, subjects = [], onGoalCreated, initialData }) => {
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState({
@@ -18,22 +18,36 @@ const GoalSettingModal = ({ isOpen, onClose, subjects = [], onGoalCreated }) => 
         reminderDays: [1, 2, 3, 4, 5]
     });
 
-    // Reset form when modal opens
+    // Reset or pre-fill form when modal opens
     useEffect(() => {
         if (isOpen) {
-            setStep(1);
-            setFormData({
-                title: '',
-                description: '',
-                goalType: 'study_time',
-                goalPeriod: 'weekly',
-                targetValue: 60,
-                subjectId: '',
-                reminderTime: '',
-                reminderDays: [1, 2, 3, 4, 5]
-            });
+            if (initialData) {
+                setStep(2);
+                setFormData({
+                    title: initialData.title || '',
+                    description: initialData.description || '',
+                    goalType: initialData.goalType || 'study_time',
+                    goalPeriod: initialData.goalPeriod || 'weekly',
+                    targetValue: initialData.targetValue || 60,
+                    subjectId: initialData.subjectId || '',
+                    reminderTime: initialData.reminderTime || '',
+                    reminderDays: initialData.reminderDays || [1, 2, 3, 4, 5]
+                });
+            } else {
+                setStep(1);
+                setFormData({
+                    title: '',
+                    description: '',
+                    goalType: 'study_time',
+                    goalPeriod: 'weekly',
+                    targetValue: 60,
+                    subjectId: '',
+                    reminderTime: '',
+                    reminderDays: [1, 2, 3, 4, 5]
+                });
+            }
         }
-    }, [isOpen]);
+    }, [isOpen, initialData]);
 
     const applyPreset = (presetKey) => {
         const preset = goalPresets[presetKey];

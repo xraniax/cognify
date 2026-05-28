@@ -206,7 +206,7 @@ const Goals = () => {
                                             </div>
 
                                             <div className="relative group/menu">
-                                                <button className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all">
+                                                <button data-testid="goal-menu-btn" className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-white rounded-xl transition-all">
                                                     <MoreVertical className="w-4 h-4" />
                                                 </button>
                                                 <div className="absolute right-0 top-full mt-1 w-40 bg-white border border-gray-100 rounded-2xl shadow-2xl opacity-0 invisible group-hover/menu:opacity-100 group-hover/menu:visible transition-all z-30 overflow-hidden p-1">

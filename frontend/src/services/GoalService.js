@@ -6,9 +6,25 @@ import api from '@/services/api';
  */
 export const goalService = {
     // ── Goal CRUD ────────────────────────────────────────────────────────────
-    
+
     /** Get all goals for the current user */
     getAll: (params = {}) => api.get('/goals', { params }),
+
+    // Goals.jsx / GoalsDrawer.jsx use these names
+    getGoals: async (params = {}) => {
+        const response = await api.get('/goals', { params });
+        return response.data.data;
+    },
+    getActiveSession: async () => {
+        try {
+            const response = await api.get('/goals/sessions/active');
+            return response.data.data;
+        } catch {
+            return null;
+        }
+    },
+    deleteGoal: (id) => api.delete(`/goals/${id}`),
+    updateGoal: (id, updates) => api.patch(`/goals/${id}`, updates),
     
     /** Get a single goal by ID */
     getOne: (id) => api.get(`/goals/${id}`),
@@ -33,7 +49,10 @@ export const goalService = {
     // ── Study Sessions ───────────────────────────────────────────────────────
     
     /** Start a study session */
-    startSession: (sessionData) => api.post('/goals/sessions/start', sessionData),
+    startSession: async (goalId) => {
+        const response = await api.post('/goals/sessions/start', { goalId });
+        return { ...response.data.data, goalId };
+    },
     
     /** End a study session */
     endSession: (sessionId, sessionData = {}) => 

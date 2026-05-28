@@ -16,7 +16,6 @@ import AdminFiles from '@/pages/Admin/AdminFiles';
 import AdminDashboard from '@/pages/Admin/AdminDashboard';
 import AdminLogs from '@/pages/Admin/AdminLogs';
 import AdminSettings from '@/pages/Admin/AdminSettings';
-import AdminGenerationReport from '@/pages/Admin/AdminGenerationReport';
 import Trash from '@/pages/Trash';
 import AdminLayout from '@/components/Admin/AdminLayout';
 import SubjectDetail from '@/pages/SubjectDetail';
@@ -120,7 +119,7 @@ const AppContent = () => {
           <Route path="/admin/users" element={<AdminRoute><AdminLayout><AdminUsers /></AdminLayout></AdminRoute>} />
           <Route path="/admin/files" element={<AdminRoute><AdminLayout><AdminFiles /></AdminLayout></AdminRoute>} />
           <Route path="/admin/logs" element={<AdminRoute><AdminLayout><AdminLogs /></AdminLayout></AdminRoute>} />
-          <Route path="/admin/generation" element={<AdminRoute><AdminLayout><AdminGenerationReport /></AdminLayout></AdminRoute>} />
+          <Route path="/admin/generation" element={<Navigate to="/admin" replace />} />
           <Route path="/admin/settings" element={<AdminRoute><AdminLayout><AdminSettings /></AdminLayout></AdminRoute>} />
           <Route path="/admin/trash" element={<Navigate to="/trash" />} />
 

@@ -6,7 +6,7 @@ import {
     LayoutDashboard, Users, HardDrive, Settings,
     LogOut, ChevronLeft, ChevronRight,
     Bell, Menu, X, CheckCircle2,
-    FileText, AlertTriangle, AlertOctagon, Info, CheckCheck, RefreshCw, Activity
+    AlertTriangle, AlertOctagon, Info, CheckCheck, RefreshCw, Activity
 } from 'lucide-react';
 import { adminService } from '@/features/admin/services/AdminService';
 import { formatDistanceToNow } from 'date-fns';
@@ -34,7 +34,6 @@ const AdminLayout = ({ children }) => {
                 { name: 'Dashboard', path: '/admin', id: 'overview', icon: LayoutDashboard, color: 'indigo' },
                 { name: 'Users', path: '/admin/users', id: 'users', icon: Users, color: 'fuchsia' },
                 { name: 'Files', path: '/admin/files', id: 'files', icon: HardDrive, color: 'sky' },
-                { name: 'Generations', path: '/admin/generation', id: 'generation', icon: FileText, color: 'violet' },
                 { name: 'Monitoring', path: '/admin/logs', id: 'logs', icon: Activity, color: 'emerald' },
                 { name: 'System Rules', path: '/admin/settings', id: 'settings', icon: Settings, color: 'amber' }
             ]
@@ -236,12 +235,13 @@ const AdminLayout = ({ children }) => {
                             )}
                         </motion.button>
 
-                        <button 
-                            onClick={logout} 
+                        <button
+                            onClick={logout}
                             className={`flex items-center gap-3 w-full group transition-all duration-300 rounded-2xl
                                 ${isSidebarCollapsed ? 'justify-center p-3 text-gray-400 hover:text-red-500 hover:bg-red-50' : 'p-3 bg-red-50/30 text-red-500 hover:bg-red-50 border border-red-100/30'}
                             `}
                             title="Sign Out"
+                            data-testid="logout-btn"
                         >
                             <LogOut className={`w-4 h-4 transition-transform group-hover:-translate-x-1`} />
                             {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-[0.2em]">Sign Out</span>}
@@ -379,14 +379,14 @@ const AdminLayout = ({ children }) => {
 
                 </header>
 
-                <main 
-                    className="flex-1 overflow-y-auto w-full relative scroll-smooth bg-gray-50/20"
+                <main
+                    className="flex-1 overflow-y-auto w-full relative scroll-smooth bg-slate-50"
                 >
                     <div className="w-full relative min-h-full">
-                        {/* More vibrant global ambient orbs */}
-                        <div className="fixed top-0 right-0 w-[500px] h-[500px] bg-fuchsia-400/10 blur-[120px] rounded-full -z-10 animate-pulse pointer-events-none" />
-                        <div className="fixed bottom-0 left-0 w-[600px] h-[600px] bg-sky-400/10 blur-[150px] rounded-full -z-10 pointer-events-none" />
-                        <div className="fixed top-[20%] left-[10%] w-[300px] h-[300px] bg-emerald-400/5 blur-[100px] rounded-full -z-10 pointer-events-none" />
+                        {/* Global ambient orbs — indigo/violet brand palette */}
+                        <div className="fixed top-0 right-0 w-[500px] h-[500px] bg-indigo-400/[0.06] blur-[120px] rounded-full -z-10 pointer-events-none" />
+                        <div className="fixed bottom-0 left-0 w-[600px] h-[600px] bg-violet-400/[0.05] blur-[150px] rounded-full -z-10 pointer-events-none" />
+                        <div className="fixed top-[20%] left-[10%] w-[300px] h-[300px] bg-indigo-300/[0.04] blur-[100px] rounded-full -z-10 pointer-events-none" />
                         
                         {children}
                     </div>

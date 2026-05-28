@@ -1,19 +1,12 @@
-import axios from 'axios';
-import { 
-    PlannerOverview, 
-    Goal, 
-    Task, 
-    Habit, 
-    ScheduleBlock, 
-    ProductivityPreferences 
+import api from './api';
+import {
+    PlannerOverview,
+    Goal,
+    Task,
+    Habit,
+    ScheduleBlock,
+    ProductivityPreferences
 } from '../features/planner/types/planner.types';
-
-const API_URL = import.meta.env.VITE_API_URL || '/api';
-
-const api = axios.create({
-    baseURL: API_URL,
-    withCredentials: true,
-});
 
 export const plannerService = {
     getOverview: async (): Promise<PlannerOverview> => {
