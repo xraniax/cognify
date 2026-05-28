@@ -17,6 +17,7 @@ export const useWorkspaceChat = ({ subjectId, selectedUploads = [] }) => {
     const [chatCollapsed, setChatCollapsed] = useState(false);
     const [savedMessages, setSavedMessages] = useState([]);
     const [savedLoading, setSavedLoading] = useState(false);
+    const [globalSearch, setGlobalSearch] = useState(false);
     const chatEndRef = useRef(null);
     const abortRef = useRef(null);
     const streamingIdRef = useRef(null);
@@ -154,6 +155,7 @@ export const useWorkspaceChat = ({ subjectId, selectedUploads = [] }) => {
                 question,
                 history,
                 materialIds: selectedUploads.map(m => m.id),
+                globalSearch,
                 signal: controller.signal,
 
                 onSession: ({ session, userMessageId }) => {
@@ -227,7 +229,7 @@ export const useWorkspaceChat = ({ subjectId, selectedUploads = [] }) => {
             abortRef.current = null;
             streamingIdRef.current = null;
         }
-    }, [currentQuestion, isStreaming, chatMessages, subjectId, selectedUploads, sessions, scrollToBottom]);
+    }, [currentQuestion, isStreaming, chatMessages, subjectId, selectedUploads, sessions, scrollToBottom, globalSearch]);
 
     // ── Clear / new chat ──────────────────────────────────────────────────────
 
@@ -346,6 +348,8 @@ export const useWorkspaceChat = ({ subjectId, selectedUploads = [] }) => {
         setChatError,
         chatCollapsed,
         setChatCollapsed,
+        globalSearch,
+        setGlobalSearch,
         chatEndRef,
 
         // Actions

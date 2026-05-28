@@ -1,0 +1,120 @@
+FAIL src/tests/integration/profile.test.js
+  ● Test suite failed to run
+
+    SyntaxError: The requested module '../utils/config/db.js' does not provide an export named 'default'
+
+      37 |
+      38 | // --- App import after mocks ---
+    > 39 | const { default: app } = await import('../../app.js');
+         |                          ^
+      40 |
+      41 | // ─── Helpers ──────────────────────────────────────────────────────────────────
+      42 |
+
+      at Runtime.linkAndEvaluateModule (../node_modules/jest-runtime/build/index.js:682:5)
+      at src/tests/integration/profile.test.js:39:26
+
+(node:1264339) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+  console.log
+    ◇ injected env (18) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+  console.log
+    ◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+(node:1264340) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+  console.log
+    [Admin] Updating status for user user-1 to SUSPENDED by admin admin-uuid
+
+      at updateStatus (src/controllers/admin.controller.js:28:17)
+
+  console.log
+    [Admin] Updating status for user suspended-uuid to ACTIVE by admin admin-uuid
+
+      at updateStatus (src/controllers/admin.controller.js:28:17)
+
+  console.log
+    [Admin] Updating status for user non-existent to SUSPENDED by admin admin-uuid
+
+      at updateStatus (src/controllers/admin.controller.js:28:17)
+
+  console.warn
+    [Admin] No user found with ID non-existent to update status
+
+      31 |             const user = await AdminService.updateUserStatus(req.user.id, id, status, reason);
+      32 |             if (!user) {
+    > 33 |                 console.warn(`[Admin] No user found with ID ${id} to update status`);
+         |                         ^
+      34 |                 return res.status(404).json({ success: false, message: 'User not found' });
+      35 |             }
+      36 |             res.json({ success: true, data: user, message: `User status updated to ${status}` });
+
+      at updateStatus (src/controllers/admin.controller.js:33:25)
+
+  console.log
+    [Admin] Deleting user user-1 by admin admin-uuid
+
+      at deleteUser (src/controllers/admin.controller.js:64:17)
+
+  console.log
+    [Admin] Deleting user non-existent by admin admin-uuid
+
+      at deleteUser (src/controllers/admin.controller.js:64:17)
+
+  console.warn
+    [Admin] Failed to delete user non-existent or user not found
+
+      67 |             const success = await AdminService.deleteUser(req.user.id, id);
+      68 |             if (!success) {
+    > 69 |                 console.warn(`[Admin] Failed to delete user ${id} or user not found`);
+         |                         ^
+      70 |                 return res.status(404).json({ success: false, message: 'User not found or deletion failed' });
+      71 |             }
+      72 |             res.json({ success: true, message: 'User deleted permanently' });
+
+      at deleteUser (src/controllers/admin.controller.js:69:25)
+
+  console.log
+    [Admin] Updating status for user user-1 to SUSPENDED by admin admin-uuid
+
+      at updateStatus (src/controllers/admin.controller.js:28:17)
+
+  console.log
+    [Admin] Deleting user user-1 by admin admin-uuid
+
+      at deleteUser (src/controllers/admin.controller.js:64:17)
+
+PASS src/tests/integration/admin.test.js
+  Admin User Management
+    GET /api/admin/users
+      ✓ returns paginated list of users for admin (79 ms)
+      ✓ supports pagination parameters (19 ms)
+      ✓ returns 403 for non-admin users (10 ms)
+      ✓ returns 401 when not authenticated (9 ms)
+    PATCH /api/admin/users/:userId/status
+      ✓ suspends user successfully (51 ms)
+      ✓ activates user successfully (21 ms)
+      ✓ returns 404 for non-existent user (20 ms)
+      ✓ returns 403 for non-admin users (11 ms)
+    PATCH /api/admin/users/:userId/role
+      ✓ promotes user to admin successfully (12 ms)
+      ✓ demotes admin to user successfully (9 ms)
+      ✓ returns 403 for non-admin users (11 ms)
+    DELETE /api/admin/users/:id
+      ✓ deletes user successfully (13 ms)
+      ✓ returns 404 for non-existent user (18 ms)
+      ✓ returns 403 for non-admin users (10 ms)
+    RBAC - Role-Based Access Control
+      ✓ blocks all admin routes for regular users (26 ms)
+      ✓ allows admin access to all admin routes (35 ms)
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       16 passed, 16 total
+Snapshots:   0 total
+Time:        3.456 s
+Ran all test suites matching src/tests/integration/admin.test.js|src/tests/integration/profile.test.js.

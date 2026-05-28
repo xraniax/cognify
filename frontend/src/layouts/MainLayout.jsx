@@ -239,6 +239,7 @@ const MainLayout = ({ children }) => {
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.96 }}
                         onClick={() => { logout(); navigate('/login'); }}
+                        data-testid="logout-btn"
                         className="w-full flex items-center justify-center gap-2.5 px-4 py-3 rounded-2xl text-[12px] font-black uppercase tracking-widest transition-all text-gray-400 hover:text-rose-500 hover:bg-rose-50 border-2 border-transparent hover:border-rose-100"
                     >
                         <LogOut className="w-4 h-4" />

@@ -6,7 +6,7 @@ import {
     LayoutDashboard, Users, HardDrive, Settings,
     LogOut, ChevronLeft, ChevronRight,
     Bell, Menu, X, CheckCircle2,
-    FileText, AlertTriangle, AlertOctagon, Info, CheckCheck, RefreshCw, Activity
+    AlertTriangle, AlertOctagon, Info, CheckCheck, RefreshCw, Activity
 } from 'lucide-react';
 import { adminService } from '@/features/admin/services/AdminService';
 import { formatDistanceToNow } from 'date-fns';
@@ -176,7 +176,8 @@ const AdminLayout = ({ children }) => {
                                                             ? `${item.color === 'fuchsia' ? 'bg-fuchsia-500 border-fuchsia-100 shadow-fuchsia-200' : 
                                                                  item.color === 'sky' ? 'bg-sky-500 border-sky-100 shadow-sky-200' :
                                                                  item.color === 'emerald' ? 'bg-emerald-500 border-emerald-100 shadow-emerald-200' :
-                                                                 item.color === 'amber' ? 'bg-amber-500 border-amber-100 shadow-amber-200' : 'bg-gray-900 border-white shadow-indigo-200'} scale-110 text-white shadow-2xl` 
+                                                                 item.color === 'amber' ? 'bg-amber-500 border-amber-100 shadow-amber-200' : 
+                                                                 item.color === 'violet' ? 'bg-violet-500 border-violet-100 shadow-violet-200' : 'bg-gray-900 border-white shadow-indigo-200'} scale-110 text-white shadow-2xl` 
                                                             : isDone
                                                                 ? `bg-white border-gray-900 text-gray-900`
                                                                 : 'bg-white border-gray-50 text-gray-200'
@@ -199,7 +200,8 @@ const AdminLayout = ({ children }) => {
                                                                 ${item.color === 'fuchsia' ? 'bg-fuchsia-50 border-fuchsia-100/50' : 
                                                                   item.color === 'sky' ? 'bg-sky-50 border-sky-100/50' :
                                                                   item.color === 'emerald' ? 'bg-emerald-50 border-emerald-100/50' :
-                                                                  item.color === 'amber' ? 'bg-amber-50 border-amber-100/50' : 'bg-gray-50 border-gray-100/50'}
+                                                                  item.color === 'amber' ? 'bg-amber-50 border-amber-100/50' : 
+                                                                  item.color === 'violet' ? 'bg-violet-50 border-violet-100/50' : 'bg-gray-50 border-gray-100/50'}
                                                             `}
                                                             transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
                                                         />
@@ -233,12 +235,13 @@ const AdminLayout = ({ children }) => {
                             )}
                         </motion.button>
 
-                        <button 
-                            onClick={logout} 
+                        <button
+                            onClick={logout}
                             className={`flex items-center gap-3 w-full group transition-all duration-300 rounded-2xl
                                 ${isSidebarCollapsed ? 'justify-center p-3 text-gray-400 hover:text-red-500 hover:bg-red-50' : 'p-3 bg-red-50/30 text-red-500 hover:bg-red-50 border border-red-100/30'}
                             `}
                             title="Sign Out"
+                            data-testid="logout-btn"
                         >
                             <LogOut className={`w-4 h-4 transition-transform group-hover:-translate-x-1`} />
                             {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-[0.2em]">Sign Out</span>}
@@ -376,14 +379,14 @@ const AdminLayout = ({ children }) => {
 
                 </header>
 
-                <main 
-                    className="flex-1 overflow-y-auto w-full relative scroll-smooth bg-gray-50/20"
+                <main
+                    className="flex-1 overflow-y-auto w-full relative scroll-smooth bg-slate-50"
                 >
                     <div className="w-full relative min-h-full">
-                        {/* More vibrant global ambient orbs */}
-                        <div className="fixed top-0 right-0 w-[500px] h-[500px] bg-fuchsia-400/10 blur-[120px] rounded-full -z-10 animate-pulse pointer-events-none" />
-                        <div className="fixed bottom-0 left-0 w-[600px] h-[600px] bg-sky-400/10 blur-[150px] rounded-full -z-10 pointer-events-none" />
-                        <div className="fixed top-[20%] left-[10%] w-[300px] h-[300px] bg-emerald-400/5 blur-[100px] rounded-full -z-10 pointer-events-none" />
+                        {/* Global ambient orbs — indigo/violet brand palette */}
+                        <div className="fixed top-0 right-0 w-[500px] h-[500px] bg-indigo-400/[0.06] blur-[120px] rounded-full -z-10 pointer-events-none" />
+                        <div className="fixed bottom-0 left-0 w-[600px] h-[600px] bg-violet-400/[0.05] blur-[150px] rounded-full -z-10 pointer-events-none" />
+                        <div className="fixed top-[20%] left-[10%] w-[300px] h-[300px] bg-indigo-300/[0.04] blur-[100px] rounded-full -z-10 pointer-events-none" />
                         
                         {children}
                     </div>

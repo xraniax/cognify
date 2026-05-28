@@ -21,9 +21,27 @@ export const adminService = {
     updateSettings: (settings) => api.put('/admin/settings', settings),
     cleanupStorage: () => api.post('/admin/storage/cleanup'),
     getQuotaImpact: (limitMb) => api.get('/admin/quota-impact', { params: { limitMb } }),
-    getAnalytics: () => api.get('/admin/analytics'),
+    getAnalytics: (params = {}) => api.get('/admin/analytics', { params }),
     getSecurityAnalytics: () => api.get('/admin/analytics/security'),
+    getDrillDown: (params = {}) => api.get('/admin/analytics/drilldown', { params }),
+    exportAnalytics: async (params = {}) => {
+        const response = await api.get('/admin/analytics/export', { 
+            params, 
+            responseType: 'blob' 
+        });
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        const source = params.source || 'dau';
+        link.setAttribute('download', `cognify_analytics_${source}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    },
     getStats: () => api.get('/admin/stats'),
+
+    // Generation Analytics Report
+    getGenerationReport: (params = {}) => api.get('/admin/analytics/generation', { params }),
 
     // Logs - now returns { data, pagination }
     getLogs: (params = {}) => api.get('/admin/logs', { params }),
@@ -36,3 +54,4 @@ export const adminService = {
 };
 
 export default adminService;
+

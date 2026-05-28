@@ -1,0 +1,921 @@
+================ SIGN IN AND SIGN UP TESTS ================
+(node:1297494) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1297495) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS src/tests/integration/auth.login.test.js
+  ● Console
+
+    console.warn
+      [passport] Google OAuth disabled: missing GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET
+
+      25 |     }));
+      26 | } else {
+    > 27 |     console.warn('[passport] Google OAuth disabled: missing GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET');
+         |             ^
+      28 | }
+      29 |
+      30 | if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+
+      at src/utils/config/passport.js:27:13
+      at src/tests/integration/auth.login.test.js:33:26
+
+    console.warn
+      [passport] GitHub OAuth disabled: missing GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET
+
+      48 |     }));
+      49 | } else {
+    > 50 |     console.warn('[passport] GitHub OAuth disabled: missing GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET');
+         |             ^
+      51 | }
+      52 |
+      53 | // We use JWTs, but Passport still expects serialize/deserialize for session management
+
+      at src/utils/config/passport.js:50:13
+      at src/tests/integration/auth.login.test.js:33:26
+
+    console.log
+      ◇ injected env (18) from .env // tip: ⌘ suppress logs { quiet: true }
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+    console.log
+      ◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: ACTIVE, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.log
+      [AUTH] Login successful for email: alice@example.com
+
+      at src/controllers/auth.controller.js:255:17
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: ACTIVE, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.log
+      [AUTH] Login successful for email: alice@example.com
+
+      at src/controllers/auth.controller.js:255:17
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.warn
+      [AUTH] Login failed: User not found for email: alice@example.com
+
+      228 |         const user = await User.findByEmail(email);
+      229 |         if (!user) {
+    > 230 |             console.warn(`[AUTH] Login failed: User not found for email: ${email}`);
+          |                     ^
+      231 |             await handleFailedLogin(null);
+      232 |             res.status(401);
+      233 |             throw new Error('Invalid email or password'); // Generic message
+
+      at src/controllers/auth.controller.js:230:21
+
+    console.warn
+      [401] Invalid email or password
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: ACTIVE, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.warn
+      [AUTH] Login failed: Password mismatch for email: alice@example.com
+
+      238 |         const isMatch = await User.comparePassword(password, user.password_hash);
+      239 |         if (!isMatch) {
+    > 240 |             console.warn(`[AUTH] Login failed: Password mismatch for email: ${email}`);
+          |                     ^
+      241 |             await handleFailedLogin(user);
+      242 |             res.status(401);
+      243 |             throw new Error('Invalid email or password'); // Generic message
+
+      at src/controllers/auth.controller.js:240:21
+
+    console.warn
+      [401] Invalid email or password
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: ACTIVE, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.warn
+      [AUTH] Login failed: Password mismatch for email: alice@example.com
+
+      238 |         const isMatch = await User.comparePassword(password, user.password_hash);
+      239 |         if (!isMatch) {
+    > 240 |             console.warn(`[AUTH] Login failed: Password mismatch for email: ${email}`);
+          |                     ^
+      241 |             await handleFailedLogin(user);
+      242 |             res.status(401);
+      243 |             throw new Error('Invalid email or password'); // Generic message
+
+      at src/controllers/auth.controller.js:240:21
+
+    console.warn
+      [401] Invalid email or password
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.warn
+      [AUTH] Login blocked: Tuple locked for email: alice@example.com
+
+      108 |         const attemptState = await LoginAttempt.checkStatus(email, ip_address, user_agent_hash);
+      109 |         if (attemptState && attemptState.locked_until && new Date(attemptState.locked_until) > new Date()) {
+    > 110 |             console.warn(`[AUTH] Login blocked: Tuple locked for email: ${email}`);
+          |                     ^
+      111 |             res.status(401);
+      112 |             throw new Error('Invalid email or password');
+      113 |         }
+
+      at src/controllers/auth.controller.js:110:21
+
+    console.warn
+      [401] Invalid email or password
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: ACTIVE, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.warn
+      [AUTH] Login failed: Password mismatch for email: alice@example.com
+
+      238 |         const isMatch = await User.comparePassword(password, user.password_hash);
+      239 |         if (!isMatch) {
+    > 240 |             console.warn(`[AUTH] Login failed: Password mismatch for email: ${email}`);
+          |                     ^
+      241 |             await handleFailedLogin(user);
+      242 |             res.status(401);
+      243 |             throw new Error('Invalid email or password'); // Generic message
+
+      at src/controllers/auth.controller.js:240:21
+
+    console.warn
+      [AUTH] Tuple locked for email: alice@example.com from IP: ::ffff:127.0.0.1 due to 5 failures.
+
+      170 |             if (record.attempt_count >= 5) {
+      171 |                 await LoginAttempt.lockTuple(email, ip_address, user_agent_hash);
+    > 172 |                 console.warn(`[AUTH] Tuple locked for email: ${email} from IP: ${ip_address} due to 5 failures.`);
+          |                         ^
+      173 |             } else if (record.attempt_count === 3 && userObj) {
+      174 |                 // Determine if we should send an email based on cooldown
+      175 |                 const alertSentAt = record.last_security_alert_sent_at ? new Date(record.last_security_alert_sent_at) : null;
+
+      at handleFailedLogin (src/controllers/auth.controller.js:172:25)
+      at src/controllers/auth.controller.js:241:13
+
+    console.warn
+      [401] Invalid email or password
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: ACTIVE, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.warn
+      [AUTH] Login failed: Password mismatch for email: alice@example.com
+
+      238 |         const isMatch = await User.comparePassword(password, user.password_hash);
+      239 |         if (!isMatch) {
+    > 240 |             console.warn(`[AUTH] Login failed: Password mismatch for email: ${email}`);
+          |                     ^
+      241 |             await handleFailedLogin(user);
+      242 |             res.status(401);
+      243 |             throw new Error('Invalid email or password'); // Generic message
+
+      at src/controllers/auth.controller.js:240:21
+
+    console.warn
+      [401] Invalid email or password
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: ACTIVE, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.warn
+      [AUTH] Login failed: Password mismatch for email: alice@example.com
+
+      238 |         const isMatch = await User.comparePassword(password, user.password_hash);
+      239 |         if (!isMatch) {
+    > 240 |             console.warn(`[AUTH] Login failed: Password mismatch for email: ${email}`);
+          |                     ^
+      241 |             await handleFailedLogin(user);
+      242 |             res.status(401);
+      243 |             throw new Error('Invalid email or password'); // Generic message
+
+      at src/controllers/auth.controller.js:240:21
+
+    console.warn
+      [401] Invalid email or password
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: SUSPENDED, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.warn
+      [AUTH] Login failed: Account SUSPENDED for email: alice@example.com
+
+      245 |
+      246 |         if (normalizeStatus(user.status) !== 'ACTIVE') {
+    > 247 |             console.warn(`[AUTH] Login failed: Account ${user.status} for email: ${email}`);
+          |                     ^
+      248 |             res.status(403);
+      249 |             const errorMessage = normalizeStatus(user.status) === 'SUSPENDED'
+      250 |                 ? 'Your account has been suspended. Please contact support.'
+
+      at src/controllers/auth.controller.js:247:21
+
+    console.warn
+      [403] Your account has been suspended. Please contact support.
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: INACTIVE, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.warn
+      [AUTH] Login failed: Account INACTIVE for email: alice@example.com
+
+      245 |
+      246 |         if (normalizeStatus(user.status) !== 'ACTIVE') {
+    > 247 |             console.warn(`[AUTH] Login failed: Account ${user.status} for email: ${email}`);
+          |                     ^
+      248 |             res.status(403);
+      249 |             const errorMessage = normalizeStatus(user.status) === 'SUSPENDED'
+      250 |                 ? 'Your account has been suspended. Please contact support.'
+
+      at src/controllers/auth.controller.js:247:21
+
+    console.warn
+      [403] Your account is currently inactive. Please contact support.
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+PASS src/tests/integration/auth.register.test.js (8.155 s)
+  ● Console
+
+    console.warn
+      [passport] Google OAuth disabled: missing GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET
+
+      25 |     }));
+      26 | } else {
+    > 27 |     console.warn('[passport] Google OAuth disabled: missing GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET');
+         |             ^
+      28 | }
+      29 |
+      30 | if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+
+      at src/utils/config/passport.js:27:13
+      at src/tests/integration/auth.register.test.js:19:26
+
+    console.warn
+      [passport] GitHub OAuth disabled: missing GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET
+
+      48 |     }));
+      49 | } else {
+    > 50 |     console.warn('[passport] GitHub OAuth disabled: missing GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET');
+         |             ^
+      51 | }
+      52 |
+      53 | // We use JWTs, but Passport still expects serialize/deserialize for session management
+
+      at src/utils/config/passport.js:50:13
+      at src/tests/integration/auth.register.test.js:19:26
+
+    console.log
+      ◇ injected env (18) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+    console.log
+      ◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+    console.log
+      [AUTH] Registration attempt for email: newuser@example.com
+
+      at src/controllers/auth.controller.js:23:17
+
+    console.log
+      [AUTH] Registration successful for email: newuser@example.com, id: 123
+
+      at src/controllers/auth.controller.js:57:17
+
+    console.log
+      [AUTH] Registration attempt for email: newuser@example.com
+
+      at src/controllers/auth.controller.js:23:17
+
+    console.warn
+      [AUTH] Registration failed: Email already registered: newuser@example.com
+
+      33 |         const userExists = await User.findByEmail(email);
+      34 |         if (userExists) {
+    > 35 |             console.warn(`[AUTH] Registration failed: Email already registered: ${email}`);
+         |                     ^
+      36 |             res.status(400);
+      37 |             throw new Error('Email already registered');
+      38 |         }
+
+      at src/controllers/auth.controller.js:35:21
+
+    console.warn
+      [400] Email already registered
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+
+Test Suites: 2 passed, 2 total
+Tests:       17 passed, 17 total
+Snapshots:   0 total
+Time:        8.788 s
+Ran all test suites matching src/tests/integration/auth.login.test.js|src/tests/integration/auth.register.test.js.
+npm notice
+npm notice New major version of npm available! 10.8.2 -> 11.14.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.14.1
+npm notice To update run: npm install -g npm@11.14.1
+npm notice
+\n================ MANAGE USERS AND PROFILE TESTS ================
+(node:1297779) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1297780) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+FAIL src/tests/integration/profile.test.js
+  ● Console
+
+    console.warn
+      [passport] Google OAuth disabled: missing GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET
+
+      25 |     }));
+      26 | } else {
+    > 27 |     console.warn('[passport] Google OAuth disabled: missing GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET');
+         |             ^
+      28 | }
+      29 |
+      30 | if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+
+      at src/utils/config/passport.js:27:13
+      at src/tests/integration/profile.test.js:39:26
+
+    console.warn
+      [passport] GitHub OAuth disabled: missing GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET
+
+      48 |     }));
+      49 | } else {
+    > 50 |     console.warn('[passport] GitHub OAuth disabled: missing GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET');
+         |             ^
+      51 | }
+      52 |
+      53 | // We use JWTs, but Passport still expects serialize/deserialize for session management
+
+      at src/utils/config/passport.js:50:13
+      at src/tests/integration/profile.test.js:39:26
+
+    console.log
+      ◇ injected env (18) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+    console.error
+      [Error Boundary] TypeError: Cannot read properties of undefined (reading 'count')
+          at /home/rania/cognify/backend/src/controllers/profile.controller.js:34:65
+          at processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+       8 |   // Logging...
+       9 |   if (statusCode >= 500) {
+    > 10 |     console.error(`[Error Boundary] ${err.stack}`);
+         |             ^
+      11 |   } else {
+      12 |     console.warn(`[${statusCode}] ${err.message}`);
+      13 |   }
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:10:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.error
+      [Error Boundary] TypeError: Cannot read properties of undefined (reading 'count')
+          at /home/rania/cognify/backend/src/controllers/profile.controller.js:34:65
+          at processTicksAndRejections (node:internal/process/task_queues:95:5)
+
+       8 |   // Logging...
+       9 |   if (statusCode >= 500) {
+    > 10 |     console.error(`[Error Boundary] ${err.stack}`);
+         |             ^
+      11 |   } else {
+      12 |     console.warn(`[${statusCode}] ${err.message}`);
+      13 |   }
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:10:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.warn
+      [400] Name is required
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.warn
+      [400] Invalid avatar URL
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+    console.warn
+      [400] Current password is incorrect
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at Immediate.next (../node_modules/express/lib/router/index.js:280:10)
+      at Immediate._onImmediate (../node_modules/express/lib/router/index.js:646:15)
+
+    console.warn
+      [400] Password must be at least 8 characters long
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at Immediate.next (../node_modules/express/lib/router/index.js:280:10)
+      at Immediate._onImmediate (../node_modules/express/lib/router/index.js:646:15)
+
+    console.warn
+      [400] New passwords do not match
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at Immediate.next (../node_modules/express/lib/router/index.js:280:10)
+      at Immediate._onImmediate (../node_modules/express/lib/router/index.js:646:15)
+
+    console.log
+      [AUTH] Login attempt for email: alice@example.com
+
+      at src/controllers/auth.controller.js:101:17
+
+    console.log
+      [AUTH] User found: uuid-1, status: undefined, provider: undefined
+
+      at src/controllers/auth.controller.js:236:17
+
+    console.warn
+      [AUTH] Login failed: Password mismatch for email: alice@example.com
+
+      238 |         const isMatch = await User.comparePassword(password, user.password_hash);
+      239 |         if (!isMatch) {
+    > 240 |             console.warn(`[AUTH] Login failed: Password mismatch for email: ${email}`);
+          |                     ^
+      241 |             await handleFailedLogin(user);
+      242 |             res.status(401);
+      243 |             throw new Error('Invalid email or password'); // Generic message
+
+      at src/controllers/auth.controller.js:240:21
+
+    console.warn
+      [401] Invalid email or password
+
+      10 |     console.error(`[Error Boundary] ${err.stack}`);
+      11 |   } else {
+    > 12 |     console.warn(`[${statusCode}] ${err.message}`);
+         |             ^
+      13 |   }
+      14 |
+      15 |   // Helper to safely serialize objects with potential circular references
+
+      at errorHandler (src/middlewares/errorHandler.middleware.js:12:13)
+      at Layer.handle_error (../node_modules/express/lib/router/layer.js:71:5)
+      at trim_prefix (../node_modules/express/lib/router/index.js:326:13)
+      at ../node_modules/express/lib/router/index.js:286:9
+      at Function.process_params (../node_modules/express/lib/router/index.js:346:12)
+      at next (../node_modules/express/lib/router/index.js:280:10)
+      at ../node_modules/express/lib/router/index.js:646:15
+      at next (../node_modules/express/lib/router/index.js:265:14)
+      at next (../node_modules/express/lib/router/route.js:141:14)
+
+  ● Profile Management › GET /api/profile › returns "Getting Started" status for new users
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 500
+
+      136 |                 .set('Authorization', `Bearer ${AUTH_TOKEN}`);
+      137 |
+    > 138 |             expect(res.status).toBe(200);
+          |                                ^
+      139 |             expect(res.body.data.analytics.learning_status).toBe('Getting Started');
+      140 |         });
+      141 |
+
+      at Object.<anonymous> (src/tests/integration/profile.test.js:138:32)
+
+  ● Profile Management › GET /api/profile › handles missing chat history table gracefully
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 500
+
+      151 |                 .set('Authorization', `Bearer ${AUTH_TOKEN}`);
+      152 |
+    > 153 |             expect(res.status).toBe(200);
+          |                                ^
+      154 |             expect(res.body.data.activity.recent_interactions).toEqual([]);
+      155 |         });
+      156 |
+
+      at Object.<anonymous> (src/tests/integration/profile.test.js:153:32)
+
+PASS src/tests/integration/admin.test.js
+  ● Console
+
+    console.log
+      ◇ injected env (18) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+    console.log
+      ◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+
+      at _log (../node_modules/dotenv/lib/main.js:131:11)
+
+    console.log
+      [Admin] Updating status for user user-1 to SUSPENDED by admin admin-uuid
+
+      at updateStatus (src/controllers/admin.controller.js:28:17)
+
+    console.log
+      [Admin] Updating status for user suspended-uuid to ACTIVE by admin admin-uuid
+
+      at updateStatus (src/controllers/admin.controller.js:28:17)
+
+    console.log
+      [Admin] Updating status for user non-existent to SUSPENDED by admin admin-uuid
+
+      at updateStatus (src/controllers/admin.controller.js:28:17)
+
+    console.warn
+      [Admin] No user found with ID non-existent to update status
+
+      31 |             const user = await AdminService.updateUserStatus(req.user.id, id, status, reason);
+      32 |             if (!user) {
+    > 33 |                 console.warn(`[Admin] No user found with ID ${id} to update status`);
+         |                         ^
+      34 |                 return res.status(404).json({ success: false, message: 'User not found' });
+      35 |             }
+      36 |             res.json({ success: true, data: user, message: `User status updated to ${status}` });
+
+      at updateStatus (src/controllers/admin.controller.js:33:25)
+
+    console.log
+      [Admin] Deleting user user-1 by admin admin-uuid
+
+      at deleteUser (src/controllers/admin.controller.js:64:17)
+
+    console.log
+      [Admin] Deleting user non-existent by admin admin-uuid
+
+      at deleteUser (src/controllers/admin.controller.js:64:17)
+
+    console.warn
+      [Admin] Failed to delete user non-existent or user not found
+
+      67 |             const success = await AdminService.deleteUser(req.user.id, id);
+      68 |             if (!success) {
+    > 69 |                 console.warn(`[Admin] Failed to delete user ${id} or user not found`);
+         |                         ^
+      70 |                 return res.status(404).json({ success: false, message: 'User not found or deletion failed' });
+      71 |             }
+      72 |             res.json({ success: true, message: 'User deleted permanently' });
+
+      at deleteUser (src/controllers/admin.controller.js:69:25)
+
+    console.log
+      [Admin] Updating status for user user-1 to SUSPENDED by admin admin-uuid
+
+      at updateStatus (src/controllers/admin.controller.js:28:17)
+
+    console.log
+      [Admin] Deleting user user-1 by admin admin-uuid
+
+      at deleteUser (src/controllers/admin.controller.js:64:17)
+
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       2 failed, 31 passed, 33 total
+Snapshots:   0 total
+Time:        2.866 s, estimated 3 s
+Ran all test suites matching src/tests/integration/admin.test.js|src/tests/integration/profile.test.js.

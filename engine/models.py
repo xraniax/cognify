@@ -56,6 +56,7 @@ class Subject(Base):
     """Links to app `subjects` table."""
     __tablename__ = "subjects"
     id = Column(UUID(as_uuid=True), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     name = Column(String)
 
 class Material(Base):

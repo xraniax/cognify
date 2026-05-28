@@ -334,23 +334,27 @@ class AdminService {
     }
 
     /**
-     * Get aggregated user behavior analytics
+     * Get aggregated user behavior analytics with date range support
      */
-    static async getUserBehaviorAnalytics() {
-        const [dauRes, materialTrendRes, topSubjectsRes, activityDistRes, studyActivityRes] = await Promise.all([
-            // 1. Daily Active Users (Last 30 days)
+    static async getUserBehaviorAnalytics(fromDate, toDate) {
+        const dateFilter = fromDate && toDate 
+            ? `BETWEEN '${fromDate}' AND '${toDate}'`
+            : `> NOW() - INTERVAL '30 days'`;
+
+        const [dauRes, materialTrendRes, topSubjectsRes, activityDistRes, studyActivityRes, chatSessionsRes, chatFeedbackRes] = await Promise.all([
+            // 1. Daily Active Users
             query(`
                 SELECT DATE(last_active_at) as date, COUNT(*)::int as count
                 FROM users
-                WHERE last_active_at >= NOW() - INTERVAL '30 days'
+                WHERE last_active_at ${dateFilter}
                 GROUP BY DATE(last_active_at)
                 ORDER BY date ASC
             `),
-            // 2. Material Generation Trends (Last 30 days)
+            // 2. Material Generation Trends
             query(`
                 SELECT DATE(created_at) as date, type, COUNT(*)::int as count
                 FROM materials
-                WHERE created_at >= NOW() - INTERVAL '30 days'
+                WHERE created_at ${dateFilter}
                 GROUP BY DATE(created_at), type
                 ORDER BY date ASC
             `),
@@ -360,15 +364,16 @@ class AdminService {
                 FROM subjects s
                 JOIN materials m ON m.subject_id = s.id
                 WHERE m.deleted_at IS NULL
+                  AND m.created_at ${dateFilter}
                 GROUP BY s.name
                 ORDER BY count DESC
                 LIMIT 5
             `),
-            // 4. Admin Activity Distribution (Corrected table name)
+            // 4. Admin Activity Distribution
             query(`
                 SELECT action, COUNT(*)::int as count
                 FROM admin_logs
-                WHERE created_at >= NOW() - INTERVAL '30 days'
+                WHERE created_at ${dateFilter}
                 GROUP BY action
                 ORDER BY count DESC
                 LIMIT 10
@@ -376,19 +381,278 @@ class AdminService {
             // 5. Study Activity (Quizzes + Flashcards)
             query(`
                 SELECT date, type, SUM(count)::int as count FROM (
-                    SELECT DATE(created_at) as date, 'quiz' as type, COUNT(*)::int as count FROM quiz_attempts WHERE created_at >= NOW() - INTERVAL '30 days' GROUP BY DATE(created_at)
+                    SELECT DATE(completed_at) as date, 'quiz' as type, COUNT(*)::int as count
+                    FROM quiz_attempts
+                    WHERE completed_at ${dateFilter}
+                    GROUP BY DATE(completed_at)
                     UNION ALL
-                    SELECT DATE(reviewed_at) as date, 'flashcard' as type, COUNT(*)::int as count FROM flashcard_reviews WHERE reviewed_at >= NOW() - INTERVAL '30 days' GROUP BY DATE(reviewed_at)
+                    SELECT DATE(reviewed_at) as date, 'flashcard' as type, COUNT(*)::int as count
+                    FROM flashcard_reviews
+                    WHERE reviewed_at ${dateFilter}
+                    GROUP BY DATE(reviewed_at)
                 ) sub GROUP BY date, type ORDER BY date ASC
+            `),
+            // 6. Chat sessions count
+            query(`
+                SELECT COUNT(*)::int AS total_sessions
+                FROM chat_sessions
+                WHERE created_at ${dateFilter}
+            `),
+            // 7. Chat message feedback (thumbs up / down)
+            query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE cm.feedback = 'up')::int   AS thumbs_up,
+                    COUNT(*) FILTER (WHERE cm.feedback = 'down')::int AS thumbs_down,
+                    COUNT(*) FILTER (WHERE cm.feedback IS NOT NULL)::int AS total_rated
+                FROM chat_messages cm
+                JOIN chat_sessions cs ON cs.id = cm.session_id
+                WHERE cs.created_at ${dateFilter}
             `)
         ]);
 
+        const dau = dauRes.rows;
+        
+        // --- Anomaly Detection (Protocol Delta) ---
+        // Compare today's DAU against the 7-day average
+        const todayStr = new Date().toISOString().split('T')[0];
+        const todayDau = dau.find(d => d.date.toISOString().split('T')[0] === todayStr)?.count || 0;
+        
+        const last7Days = dau.slice(-8, -1); // last 7 days excluding today
+        const avgDau = last7Days.length > 0 
+            ? last7Days.reduce((s, d) => s + d.count, 0) / last7Days.length 
+            : 0;
+
+        let anomaly = null;
+        if (avgDau > 5 && todayDau < avgDau * 0.5) {
+            anomaly = {
+                type: 'DAU_DROP',
+                severity: 'high',
+                message: `Significant drop in active users. Today: ${todayDau}, 7-day Avg: ${avgDau.toFixed(1)}`,
+                delta: parseFloat(((todayDau - avgDau) / avgDau * 100).toFixed(1))
+            };
+        } else if (avgDau > 5 && todayDau > avgDau * 2) {
+            anomaly = {
+                type: 'DAU_SPIKE',
+                severity: 'info',
+                message: `Unexpected surge in user activity. Today: ${todayDau}, 7-day Avg: ${avgDau.toFixed(1)}`,
+                delta: parseFloat(((todayDau - avgDau) / avgDau * 100).toFixed(1))
+            };
+        }
+
+        const chatFeedback = chatFeedbackRes.rows[0] || { thumbs_up: 0, thumbs_down: 0, total_rated: 0 };
+        const chatSatisfactionPct = chatFeedback.total_rated > 0
+            ? parseFloat(((chatFeedback.thumbs_up / chatFeedback.total_rated) * 100).toFixed(1))
+            : null;
+
         return {
-            dau: dauRes.rows,
+            dau,
             materialTrends: materialTrendRes.rows,
             topSubjects: topSubjectsRes.rows,
             activityDistribution: activityDistRes.rows,
-            studyActivity: studyActivityRes.rows
+            studyActivity: studyActivityRes.rows,
+            anomaly,
+            chatActivity: {
+                totalSessions: chatSessionsRes.rows[0]?.total_sessions || 0,
+                thumbsUp: chatFeedback.thumbs_up,
+                thumbsDown: chatFeedback.thumbs_down,
+                totalRated: chatFeedback.total_rated,
+                satisfactionPct: chatSatisfactionPct
+            }
+        };
+    }
+
+    /**
+     * Get detailed data for a specific metric (Drill-down)
+     */
+    static async getAnalyticsDrillDown(metric, type, fromDate, toDate) {
+        const dateFilter = fromDate && toDate 
+            ? `BETWEEN '${fromDate}' AND '${toDate}'`
+            : `> NOW() - INTERVAL '30 days'`;
+
+        if (metric === 'subjects' && type) {
+            // Get materials for a specific subject
+            const { rows } = await query(`
+                SELECT m.id, m.title, m.type, m.created_at, u.email as user_email
+                FROM materials m
+                JOIN subjects s ON s.id = m.subject_id
+                JOIN users u ON u.id = m.user_id
+                WHERE s.name = $1
+                  AND m.created_at ${dateFilter}
+                ORDER BY m.created_at DESC
+                LIMIT 100
+            `, [type]);
+            return rows;
+        }
+
+        if (metric === 'active_users') {
+            // Get users active in the period
+            const { rows } = await query(`
+                SELECT id, email, name, last_active_at, status
+                FROM users
+                WHERE last_active_at ${dateFilter}
+                ORDER BY last_active_at DESC
+                LIMIT 100
+            `);
+            return rows;
+        }
+
+        return [];
+    }
+
+    /**
+     * Get generation analytics — operations report with type, status, timing, ratings
+     */
+    static async getGenerationAnalytics(fromDate, toDate) {
+        const dateFilter = fromDate && toDate
+            ? `AND m.created_at BETWEEN '${fromDate}' AND '${toDate} 23:59:59'`
+            : `AND m.created_at > NOW() - INTERVAL '30 days'`;
+
+        const [
+            typeStatusRes,
+            avgTimeRes,
+            ratingsRes,
+            summaryModeRes,
+            difficultyRes,
+            dailyTrendRes
+        ] = await Promise.all([
+            // 1. Type × Status breakdown (counts)
+            query(`
+                SELECT 
+                    m.type,
+                    m.status,
+                    COUNT(*)::int AS count
+                FROM materials m
+                WHERE m.type IN ('summary','quiz','flashcards','exam')
+                  ${dateFilter}
+                GROUP BY m.type, m.status
+                ORDER BY m.type, m.status
+            `),
+
+            // 2. Average generation time in seconds per type
+            query(`
+                SELECT 
+                    type,
+                    ROUND(AVG(EXTRACT(EPOCH FROM (completed_at - started_at))))::int AS avg_seconds,
+                    ROUND(MIN(EXTRACT(EPOCH FROM (completed_at - started_at))))::int AS min_seconds,
+                    ROUND(MAX(EXTRACT(EPOCH FROM (completed_at - started_at))))::int AS max_seconds,
+                    COUNT(*)::int AS sample_count
+                FROM materials
+                WHERE type IN ('summary','quiz','flashcards','exam')
+                  AND status = 'COMPLETED'
+                  AND started_at IS NOT NULL
+                  AND completed_at IS NOT NULL
+                  AND completed_at > started_at
+                  ${dateFilter.replace('AND m.created_at', 'AND created_at')}
+                GROUP BY type
+            `),
+
+            // 3. Average rating per material type (via join)
+            query(`
+                SELECT 
+                    m.type,
+                    ROUND(AVG(r.overall_rating)::numeric, 2) AS avg_rating,
+                    COUNT(r.id)::int AS total_ratings,
+                    ROUND(AVG(CASE WHEN r.learning_effectiveness THEN 1.0 ELSE 0.0 END) * 100, 1) AS effectiveness_pct
+                FROM materials m
+                JOIN material_ratings r ON r.material_id = m.id
+                WHERE m.type IN ('summary','quiz','flashcards','exam')
+                  ${dateFilter}
+                GROUP BY m.type
+            `),
+
+            // 4. Summary mode distribution (from ai_generated_content JSONB)
+            query(`
+                SELECT 
+                    COALESCE(
+                        ai_generated_content->>'summary_mode',
+                        ai_generated_content->'metadata'->>'summary_mode',
+                        generation_options->>'summary_mode',
+                        'unknown'
+                    ) AS mode,
+                    COUNT(*)::int AS count
+                FROM materials
+                WHERE type = 'summary'
+                  AND status = 'COMPLETED'
+                  ${dateFilter.replace('AND m.created_at', 'AND created_at')}
+                GROUP BY mode
+                ORDER BY count DESC
+            `),
+
+            // 5. Difficulty distribution per type (from generation_options JSONB)
+            query(`
+                SELECT
+                    type,
+                    COALESCE(generation_options->>'difficulty', 'unknown') AS difficulty,
+                    COUNT(*)::int AS count
+                FROM materials
+                WHERE type IN ('quiz','flashcards','exam')
+                  ${dateFilter.replace('AND m.created_at', 'AND created_at')}
+                GROUP BY type, difficulty
+                ORDER BY type, count DESC
+            `),
+
+            // 6. Daily generation trend (completions per day)
+            query(`
+                SELECT 
+                    DATE(created_at) AS date,
+                    type,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE status = 'COMPLETED')::int AS completed,
+                    COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed
+                FROM materials
+                WHERE type IN ('summary','quiz','flashcards','exam')
+                  ${dateFilter.replace('AND m.created_at', 'AND created_at')}
+                GROUP BY DATE(created_at), type
+                ORDER BY date ASC
+            `)
+        ]);
+
+        // Reshape typeStatus into nested { type -> { status -> count } }
+        const typeStatus = {};
+        for (const row of typeStatusRes.rows) {
+            if (!typeStatus[row.type]) typeStatus[row.type] = { total: 0, COMPLETED: 0, FAILED: 0, PROCESSING: 0 };
+            typeStatus[row.type][row.status] = row.count;
+            typeStatus[row.type].total += row.count;
+        }
+
+        // Build flat list of types with all metrics merged
+        const types = ['summary', 'quiz', 'flashcards', 'exam'];
+        const keyMetrics = types.map(t => {
+            const ts = typeStatus[t] || { total: 0, COMPLETED: 0, FAILED: 0, PROCESSING: 0 };
+            const timing = avgTimeRes.rows.find(r => r.type === t) || {};
+            const rating = ratingsRes.rows.find(r => r.type === t) || {};
+            const successRate = ts.total > 0 ? parseFloat((ts.COMPLETED / ts.total * 100).toFixed(1)) : 0;
+            return {
+                type: t,
+                total: ts.total,
+                completed: ts.COMPLETED || 0,
+                failed: ts.FAILED || 0,
+                processing: ts.PROCESSING || 0,
+                success_rate: successRate,
+                avg_seconds: timing.avg_seconds || null,
+                min_seconds: timing.min_seconds || null,
+                max_seconds: timing.max_seconds || null,
+                avg_rating: rating.avg_rating ? parseFloat(rating.avg_rating) : null,
+                total_ratings: rating.total_ratings || 0,
+                effectiveness_pct: rating.effectiveness_pct ? parseFloat(rating.effectiveness_pct) : null
+            };
+        });
+
+        const grandTotal = keyMetrics.reduce((s, k) => s + k.total, 0);
+        const grandCompleted = keyMetrics.reduce((s, k) => s + k.completed, 0);
+        const grandFailed = keyMetrics.reduce((s, k) => s + k.failed, 0);
+
+        return {
+            summary: {
+                total: grandTotal,
+                completed: grandCompleted,
+                failed: grandFailed,
+                success_rate: grandTotal > 0 ? parseFloat((grandCompleted / grandTotal * 100).toFixed(1)) : 0
+            },
+            byType: keyMetrics,
+            summaryModes: summaryModeRes.rows,
+            difficultyByType: difficultyRes.rows,
+            dailyTrend: dailyTrendRes.rows
         };
     }
 

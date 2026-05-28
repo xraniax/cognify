@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { adminService } from '@/features/admin/services/AdminService';
-import { File as FileIcon, HardDrive, ShieldCheck, Database, Server, TrendingUp, AlertTriangle, RefreshCw } from 'lucide-react';
+import { HardDrive, Database, Server, ShieldCheck, TrendingUp, AlertTriangle, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CustomModal from '@/components/ui/CustomModal';
 import FileList from '@/components/Admin/AdminFiles/FileList';
 import Skeleton from '@/components/ui/Skeleton';
 import { formatBytes } from '@/utils/format';
-
+import { motion } from 'framer-motion';
 
 const AdminFiles = () => {
     const [files, setFiles] = useState([]);
@@ -14,19 +14,13 @@ const AdminFiles = () => {
     const [stats, setStats] = useState({ total_storage_bytes: 0 });
     const [loading, setLoading] = useState(true);
     const [filters, setFilters] = useState({ userId: '', subjectId: '', mimeType: '', minSizeMb: '', sortBy: 'created_at', order: 'desc' });
-    
-    // Bulk Selection State
     const [selectedFileIds, setSelectedFileIds] = useState(new Set());
     const [isActionLoading, setIsActionLoading] = useState(false);
-    
-    // Simple Modal
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [modalConfig, setModalConfig] = useState({});
 
     useEffect(() => {
-        const debounce = setTimeout(() => {
-            fetchData(!settings);
-        }, 300);
+        const debounce = setTimeout(() => { fetchData(!settings); }, 300);
         return () => clearTimeout(debounce);
     }, [filters]);
 
@@ -39,10 +33,7 @@ const AdminFiles = () => {
             ]);
             setFiles(filesRes.data?.data || []);
             setSettings(settingsRes.data?.data?.storage || {});
-            setStats({
-                total_storage_bytes: settingsRes.data?.data?.stats?.total_storage_bytes || 0
-            });
-            // Clear selections when fetching new data
+            setStats({ total_storage_bytes: settingsRes.data?.data?.stats?.total_storage_bytes || 0 });
             setSelectedFileIds(new Set());
         } catch (err) {
             toast.error('Failed to load storage data');
@@ -98,14 +89,13 @@ const AdminFiles = () => {
             onConfirm: async () => {
                 setIsActionLoading(true);
                 try {
-                    // Execute parallel deletions
                     const ids = Array.from(selectedFileIds);
                     await Promise.all(ids.map(id => adminService.deleteFile(id)));
                     toast.success(`Successfully deleted ${ids.length} files`);
                     fetchData(false);
                 } catch (err) {
                     toast.error('Partial failure during bulk delete');
-                    fetchData(false); // Reload whatever is left
+                    fetchData(false);
                 } finally {
                     setIsActionLoading(false);
                     setIsModalOpen(false);
@@ -115,8 +105,6 @@ const AdminFiles = () => {
         setIsModalOpen(true);
     };
 
-
-
     const totalCapacity = settings?.max_cluster_size_bytes
         || (settings?.max_cluster_size_gb ? settings.max_cluster_size_gb * 1073741824 : 10 * 1024 * 1024 * 1024);
     const usedBytes = stats.total_storage_bytes || 0;
@@ -124,84 +112,94 @@ const AdminFiles = () => {
     const usagePercent = Math.min((usedBytes / totalCapacity) * 100, 100);
 
     return (
-        <div className="relative min-h-[calc(100vh-64px)] p-6 md:p-12 w-full overflow-hidden">
-            {/* Ambient Decorative Orbs */}
-            <div className="ambient-orb ambient-orb-lg ambient-orb-1 top-[-10%] right-[-5%] bg-sky-200/30"></div>
-            <div className="ambient-orb ambient-orb-md ambient-orb-2 bottom-[10%] left-[-5%] bg-blue-200/20"></div>
+        <div className="p-8 max-w-7xl mx-auto space-y-8 pb-16">
 
-            <div className="relative z-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                {/* Header */}
-                    <div className="flex justify-between items-start">
-                        <div className="group">
-                            <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-[0.2em] mb-2 text-sky-500">
-                                <div className="w-1.5 h-1.5 rounded-full bg-sky-500 anim-pulse"></div>
-                                <span>Nexus Storage</span>
-                            </div>
-                            <h1 className="text-5xl md:text-6xl font-black tracking-tighter mb-3">
-                                File <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-600 to-blue-500">Explorer</span>
-                            </h1>
-                            <p className="font-medium text-lg text-gray-500/80 max-w-2xl">
-                                Audit active uploads, manage storage assets, and scan cluster volumes.
-                            </p>
-                        </div>
-                        <button 
-                            onClick={() => fetchData(true)}
-                            className="p-4 text-gray-400 hover:text-sky-600 hover:bg-white rounded-[1.5rem] transition-all shadow-sm hover:shadow-md border border-transparent hover:border-gray-100 mt-8"
-                            title="Refresh Storage Metrics"
-                        >
-                            <RefreshCw className={`w-6 h-6 ${loading ? 'animate-spin' : ''}`} />
-                        </button>
+            {/* ── Header ─────────────────────────────────────────────────── */}
+            <div className="flex items-center justify-between">
+                <div>
+                    <div className="flex items-center gap-3 mb-1">
+                        <div className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.3em] text-sky-500">Nexus Storage</span>
                     </div>
-
-                {/* Metrics Row */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-12">
-                    <div className="glass-card p-6 rounded-[2.5rem] border border-white/50 shadow-xl shadow-indigo-100/20 group hover:-translate-y-1 transition-all duration-300">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500">
-                                <Database className="w-5 h-5" />
-                            </div>
-                            <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest group-hover:text-indigo-400">Total Capacity</span>
-                        </div>
-                        <span className="text-4xl font-black text-gray-900 truncate block">
-                            {loading ? <Skeleton className="w-20 h-10" /> : formatBytes(totalCapacity)}
-                        </span>
-                        <div className="mt-6 h-1 w-8 bg-indigo-100 rounded-full group-hover:w-full transition-all duration-700"></div>
-                    </div>
-                    
-                    <div className="glass-card p-6 rounded-[2.5rem] border border-white/50 shadow-xl shadow-orange-100/20 group hover:-translate-y-1 transition-all duration-300 relative overflow-hidden">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 rounded-2xl bg-orange-50 flex items-center justify-center text-orange-500">
-                                <Server className="w-5 h-5" />
-                            </div>
-                            <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest group-hover:text-orange-400">Cluster Usage</span>
-                        </div>
-                        <span className="text-4xl font-black text-gray-900 truncate block z-10 relative">
-                            {loading ? <Skeleton className="w-24 h-10" /> : formatBytes(usedBytes)}
-                        </span>
-                        <div className="absolute bottom-0 left-0 h-1.5 w-full bg-gray-50/50">
-                            <div className="h-full bg-gradient-to-r from-orange-400 to-orange-500 transition-all duration-1500 ease-out shadow-[0_0_8px_rgba(249,115,22,0.3)]" 
-                                 style={{ width: `${usagePercent}%` }}></div>
-                        </div>
-                    </div>
-
-                    <div className="glass-card p-6 rounded-[2.5rem] border border-white/50 shadow-xl shadow-emerald-100/20 group hover:-translate-y-1 transition-all duration-300">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-500">
-                                <ShieldCheck className="w-5 h-5" />
-                            </div>
-                            <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest group-hover:text-emerald-500">Available</span>
-                        </div>
-                        <span className="text-4xl font-black text-emerald-600 truncate block">
-                            {loading ? <Skeleton className="w-24 h-10" /> : formatBytes(availableBytes)}
-                        </span>
-                        <div className="mt-6 h-1 w-8 bg-emerald-100 rounded-full group-hover:w-full transition-all duration-700"></div>
-                    </div>
+                    <h1 className="text-4xl font-black tracking-tighter text-gray-900">
+                        File <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-600 to-blue-500">Explorer</span>
+                    </h1>
+                    <p className="text-sm font-bold text-gray-400 mt-1">Audit uploads, manage storage assets, and scan cluster volumes.</p>
                 </div>
+                <button
+                    onClick={() => fetchData(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-100 rounded-xl shadow-sm hover:shadow-md transition-all active:scale-95 group"
+                >
+                    <RefreshCw className={`w-3.5 h-3.5 text-gray-400 group-hover:text-sky-500 ${loading ? 'animate-spin' : ''}`} />
+                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Refresh</span>
+                </button>
+            </div>
 
-            <div className="animate-in slide-in-from-bottom-4 duration-500 relative">
-                <FileList 
-                    files={files} 
-                    onDelete={handleDeleteFile} 
+            {/* ── Storage KPI Cards ───────────────────────────────────────── */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Total Capacity */}
+                <motion.div
+                    whileHover={{ y: -4, scale: 1.015 }}
+                    className="bg-white rounded-3xl border border-indigo-100 shadow-xl shadow-indigo-200/30 p-5 relative overflow-hidden transition-all"
+                >
+                    <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full blur-2xl pointer-events-none bg-indigo-300/10" />
+                    <div className="flex items-center gap-2.5 mb-3">
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center border bg-indigo-50 text-indigo-500 border-indigo-100">
+                            <Database className="w-4 h-4" />
+                        </div>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-indigo-400">Total Capacity</span>
+                    </div>
+                    <span className="text-4xl font-black text-gray-900 tracking-tighter block mb-1">
+                        {loading ? <Skeleton className="w-20 h-9" /> : formatBytes(totalCapacity)}
+                    </span>
+                    <p className="text-[10px] text-gray-400 font-bold">Platform ceiling</p>
+                </motion.div>
+
+                {/* Cluster Usage */}
+                <motion.div
+                    whileHover={{ y: -4, scale: 1.015 }}
+                    className="bg-white rounded-3xl border border-sky-100 shadow-xl shadow-sky-200/30 p-5 relative overflow-hidden transition-all"
+                >
+                    <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full blur-2xl pointer-events-none bg-sky-300/10" />
+                    <div className="flex items-center gap-2.5 mb-3">
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center border bg-sky-50 text-sky-500 border-sky-100">
+                            <Server className="w-4 h-4" />
+                        </div>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-sky-400">Cluster Usage</span>
+                    </div>
+                    <span className="text-4xl font-black text-gray-900 tracking-tighter block mb-1">
+                        {loading ? <Skeleton className="w-20 h-9" /> : formatBytes(usedBytes)}
+                    </span>
+                    <div className="mt-2 h-1 bg-sky-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-sky-400 rounded-full transition-all duration-1000" style={{ width: `${usagePercent}%` }} />
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-bold mt-1">{usagePercent.toFixed(1)}% consumed</p>
+                </motion.div>
+
+                {/* Available */}
+                <motion.div
+                    whileHover={{ y: -4, scale: 1.015 }}
+                    className="bg-white rounded-3xl border border-emerald-100 shadow-xl shadow-emerald-200/30 p-5 relative overflow-hidden transition-all"
+                >
+                    <div className="absolute -right-4 -top-4 w-24 h-24 rounded-full blur-2xl pointer-events-none bg-emerald-300/10" />
+                    <div className="flex items-center gap-2.5 mb-3">
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center border bg-emerald-50 text-emerald-500 border-emerald-100">
+                            <ShieldCheck className="w-4 h-4" />
+                        </div>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400">Available</span>
+                    </div>
+                    <span className="text-4xl font-black text-emerald-600 tracking-tighter block mb-1">
+                        {loading ? <Skeleton className="w-20 h-9" /> : formatBytes(availableBytes)}
+                    </span>
+                    <p className="text-[10px] text-gray-400 font-bold">Free headroom</p>
+                </motion.div>
+            </div>
+
+            {/* ── File List ──────────────────────────────────────────────── */}
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-xl shadow-sky-100/10 overflow-hidden">
+                <FileList
+                    files={files}
+                    onDelete={handleDeleteFile}
                     onDownload={handleDownload}
                     filters={filters}
                     setFilters={setFilters}
@@ -219,31 +217,28 @@ const AdminFiles = () => {
                 showFooter={false}
             >
                 <div className="p-6 text-center">
-                    <div className="w-16 h-16 rounded-3xl flex items-center justify-center mb-6 mx-auto bg-red-50 text-red-600 border border-red-100">
+                    <div className="w-16 h-16 rounded-3xl flex items-center justify-center mb-6 mx-auto bg-rose-50 text-rose-500 border border-rose-100">
                         <AlertTriangle className="w-8 h-8" />
                     </div>
-                    <p className="text-gray-600 font-medium mb-8">
-                        {modalConfig.message}
-                    </p>
+                    <p className="text-gray-600 font-medium mb-8">{modalConfig.message}</p>
                     <div className="flex gap-4">
-                        <button 
+                        <button
                             onClick={() => setIsModalOpen(false)}
                             disabled={isActionLoading}
-                            className="flex-1 py-4 font-bold text-gray-500 bg-white rounded-2xl hover:bg-gray-50 transition-all border border-gray-200"
+                            className="flex-1 py-3.5 font-bold text-gray-500 bg-white rounded-2xl hover:bg-gray-50 transition-all border border-gray-200"
                         >
                             Cancel
                         </button>
-                        <button 
+                        <button
                             onClick={modalConfig.onConfirm}
                             disabled={isActionLoading}
-                            className={`flex-1 py-4 font-bold text-white rounded-2xl shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 shadow-red-200 ${isActionLoading ? 'opacity-70 pointer-events-none' : ''}`}
+                            className={`flex-1 py-3.5 font-bold text-white rounded-2xl shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 shadow-rose-200 ${isActionLoading ? 'opacity-70 pointer-events-none' : ''}`}
                         >
                             {isActionLoading ? 'Processing...' : modalConfig.confirmText}
                         </button>
                     </div>
                 </div>
             </CustomModal>
-            </div>
         </div>
     );
 };

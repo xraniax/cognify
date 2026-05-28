@@ -35,6 +35,7 @@ const SubjectDetail = () => {
         handleFeedback, handleBookmark, handleCopyMessage,
         handleEditAndResend, handleRegenerate,
         isStreaming, isThinking, chatError, setChatMessages, setChatError,
+        globalSearch, setGlobalSearch,
         chatEndRef, chatCollapsed, setChatCollapsed,
         filePanelCollapsed, setFilePanelCollapsed,
         genType, setGenType, handleGenerate, isGenerating,
@@ -180,7 +181,7 @@ const SubjectDetail = () => {
                         className="btn-primary py-3 px-6 text-xs font-black uppercase tracking-widest shadow-lg shadow-purple-200 hover:scale-105 active:scale-95 hidden md:flex items-center gap-2"
                     >
                         {(isPublic && !user) ? <Lock className="w-3.5 h-3.5" /> : <Upload className="w-4 h-4" />}
-                        <span>Add Content</span>
+                        <span>Start Session</span>
                     </button>
                 </div>
             </div>
@@ -251,6 +252,10 @@ const SubjectDetail = () => {
                         renameSession={renameSession}
                         deleteSession={deleteSession}
 
+                        // Global Search
+                        globalSearch={globalSearch}
+                        setGlobalSearch={setGlobalSearch}
+
                         // Layout
                         onCollapse={() => setChatCollapsed(true)}
                     />
@@ -261,7 +266,7 @@ const SubjectDetail = () => {
             <FloatingActionButton
                 onClick={() => requireAuth(() => setShowUploadModal(true))}
                 icon={(isPublic && !user) ? Lock : Upload}
-                label="Add Content"
+                label="Start Session"
             />
 
             <UploadModal

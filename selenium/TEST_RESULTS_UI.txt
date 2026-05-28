@@ -1,0 +1,13 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.2.0, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/rania/cognify/selenium
+plugins: base-url-2.1.0, playwright-0.8.0, anyio-4.12.1
+collecting ... collected 4 items
+
+test_use_cases.py::test_sign_up PASSED                                   [ 25%]
+test_use_cases.py::test_sign_in PASSED                                   [ 50%]
+test_use_cases.py::test_manage_profile PASSED                            [ 75%]
+test_use_cases.py::test_manage_users_admin PASSED                        [100%]
+
+============================== 4 passed in 35.62s ==============================

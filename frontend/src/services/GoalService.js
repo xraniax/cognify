@@ -69,7 +69,7 @@ export const goalPresets = {
         reminderDays: [1, 2, 3, 4, 5, 6, 7],
         reminderTime: '18:00'
     },
-    
+
     /** Weekly 5-hour study goal */
     weekly5Hours: {
         title: 'Weekly Study (5 hours)',
@@ -80,7 +80,7 @@ export const goalPresets = {
         reminderDays: [1, 3, 5], // Mon, Wed, Fri
         reminderTime: '09:00'
     },
-    
+
     /** Complete 3 materials per week */
     weekly3Materials: {
         title: 'Weekly Materials (3)',
@@ -91,7 +91,7 @@ export const goalPresets = {
         reminderDays: [7], // Sunday
         reminderTime: '10:00'
     },
-    
+
     /** Take 2 quizzes per week */
     weekly2Quizzes: {
         title: 'Weekly Practice (2 quizzes)',

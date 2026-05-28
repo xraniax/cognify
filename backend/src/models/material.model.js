@@ -6,13 +6,13 @@ class Material {
   /**
    * Store new material linked to the authenticated user and their chosen subject.
    */
-  static async create(userId, subjectId, title, content, type, status = null, jobId = null) {
+  static async create(userId, subjectId, title, content, type, status = null, jobId = null, generationOptions = null) {
     // Default status logic if not explicitly provided
     const finalStatus = status || (jobId ? PROCESSING : COMPLETED);
 
     const result = await query(
-      'INSERT INTO materials (user_id, subject_id, title, content, type, job_id, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [userId, subjectId, title, content, type, jobId, normalizeStatus(finalStatus)]
+      'INSERT INTO materials (user_id, subject_id, title, content, type, job_id, status, generation_options) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      [userId, subjectId, title, content, type, jobId, normalizeStatus(finalStatus), generationOptions]
     );
     return result.rows[0];
   }

@@ -3,6 +3,7 @@ import MaterialService from '../services/material.service.js';
 import ChatSession from '../models/chatSession.model.js';
 import ChatMessage from '../models/chatMessage.model.js';
 import Subject from '../models/subject.model.js';
+import Goal from '../models/goal.model.js';
 import engineClient from '../services/engine.client.js';
 import asyncHandler from '../utils/asyncHandler.js';
 
@@ -87,6 +88,24 @@ class ChatController {
             .map(m => ({ role: m.role, content: m.content.trim() }))
             .slice(-20);
 
+        // Fetch profile context (goals & stats)
+        let profileContext = '';
+        try {
+            const [goals, stats] = await Promise.all([
+                Goal.findByUserId(req.user.id, { status: 'active', limit: 3 }),
+                Goal.getStats(req.user.id)
+            ]);
+
+            if (goals.length > 0) {
+                profileContext += "Active Goals:\n" + goals.map(g => `- ${g.title} (${g.completion_percentage}% done)`).join('\n') + "\n";
+            }
+            if (stats) {
+                profileContext += `Progress: ${stats.completed_goals} goals completed, ${stats.current_streak} day streak.`;
+            }
+        } catch (err) {
+            console.error('[ChatController] Profile context error:', err.message);
+        }
+
         const validMaterialIds = (Array.isArray(materialIds) ? materialIds : [])
             .filter(id => typeof id === 'string' && UUID_PATTERN.test(id));
 
@@ -134,6 +153,9 @@ class ChatController {
                 material_ids: validMaterialIds,
                 top_k: 8,
                 language: 'en',
+                user_id: req.user.id,
+                profile_context: profileContext || null,
+                global_search: req.body.globalSearch || false,
             }, { responseType: 'stream', timeout: 300000 });
 
         } catch (engineErr) {
