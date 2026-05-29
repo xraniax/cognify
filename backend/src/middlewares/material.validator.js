@@ -17,7 +17,7 @@ export const chatCombinedSchema = z.object({
 });
 
 export const generateCombinedSchema = z.object({
-    materialIds: z.array(idSchema).min(1, { message: 'At least one materialId is required' }),
+    materialIds: z.array(idSchema).default([]),
     taskType: z.enum(['summary', 'quiz', 'flashcards', 'mock_exam', 'exam'], { required_error: 'Task type is required' }),
     subjectId: idSchema.optional(),
     genOptions: z.object({

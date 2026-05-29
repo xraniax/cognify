@@ -670,9 +670,17 @@ const ExamView = ({ examData: rawExamData, examId: propExamId, subjectId, isExpa
                                                             <div className="space-y-1">
                                                                 <div className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Correct Answer</div>
                                                                 <div className="font-bold text-emerald-600">
-                                                                    {q.type === 'single_choice' || q.type === 'multiple_choice'
-                                                                        ? (q.options[detail.correctAnswers?.[0]] || 'N/A')
-                                                                        : (detail.correctAnswerText || 'N/A')}
+                                                                    {(() => {
+                                                                        const isChoice = q.type === 'single_choice' || q.type === 'multiple_choice' || q.type === 'multiple_select';
+                                                                        if (isChoice) {
+                                                                            // Try index lookup first, then fall back to acceptedAnswers text
+                                                                            const idx = detail.correctAnswers?.[0];
+                                                                            return (idx !== undefined && q.options?.[idx])
+                                                                                ? q.options[idx]
+                                                                                : (detail.correctAnswerText || detail.acceptedAnswers?.[0] || '—');
+                                                                        }
+                                                                        return detail.correctAnswerText || detail.acceptedAnswers?.[0] || '—';
+                                                                    })()}
                                                                 </div>
                                                             </div>
                                                         )}

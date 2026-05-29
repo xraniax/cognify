@@ -131,8 +131,10 @@ class EmbeddingCache:
         
         if self.use_redis and self.redis_client:
             try:
-                self.redis_client.delete(*self.redis_client.keys("embed:*"))
-                logger.info("Redis cache cleared")
+                keys = self.redis_client.keys("embed:*")
+                if keys:
+                    self.redis_client.delete(*keys)
+                logger.info("Redis cache cleared (%d keys)", len(keys))
             except Exception as e:
                 logger.warning(f"Failed to clear Redis cache: {e}")
         

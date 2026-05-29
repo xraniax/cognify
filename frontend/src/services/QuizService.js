@@ -36,6 +36,7 @@ export const QuizService = {
                 top_k: topK,
                 is_correct: Boolean(opts.isCorrect),
                 response_time: Number(opts.responseTime) || 0,
+                ...(opts.userAnswer !== undefined && opts.userAnswer !== null && { user_answer: opts.userAnswer }),
             });
         }
 

@@ -101,10 +101,17 @@ def generate_subject_graph(subject_id: str, chunks: List[str]) -> Optional[Dict[
             if "label" in entry:
                 entry["label"] = entry["label"].strip()
             if "concepts" in entry and isinstance(entry["concepts"], list):
-                entry["concepts"] = [
-                    c.strip() for c in entry["concepts"]
-                    if c and _clean_term_name(str(c).strip())
-                ]
+                # Store the canonical form returned by _clean_term_name, not the
+                # raw c.strip().  The two are equal when input is already clean, but
+                # _clean_term_name also collapses embedded control chars / multi-
+                # spaces that c.strip() leaves intact.
+                clean_cluster_names = []
+                for c in entry["concepts"]:
+                    if c:
+                        canonical = _clean_term_name(str(c))
+                        if canonical:
+                            clean_cluster_names.append(canonical)
+                entry["concepts"] = clean_cluster_names
             clean_clusters.append(entry)
 
         # Serialize the graph payload with metadata

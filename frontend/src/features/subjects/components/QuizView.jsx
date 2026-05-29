@@ -506,6 +506,10 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
     const [showResults, setShowResults] = useState(initialState.showResults ?? false);
     const [muted, setMuted] = useState(initialState.muted ?? false);
     const startTimeRef = useRef(null);
+    // Stores the 0-based index of the option the user selected, set in submitAnswer()
+    // and read by advanceQuestion() so user_answer can be forwarded to the engine for
+    // server-side correctness verification.
+    const userAnswerIndexRef = useRef(null);
 
     // --- Submission locking ---
     // submitLockRef: held from the moment handleSubmit fires until isSubmitted flips to true
@@ -698,6 +702,9 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
         // confirms isSubmitted = true in state, closing the stale-closure window.
         submitLockRef.current = true;
         const isCorrect = isCorrectAnswer(selectedOption, question.correct_answer);
+        // Record the 0-based index of the selected option for server-side verification.
+        const opts = normalizeOptions(question);
+        userAnswerIndexRef.current = opts.indexOf(selectedOption);
         // Compute post-scoring totals before queuing — setScore/setStreak are not yet committed.
         const nextScore = score + (isCorrect ? 1 : 0);
         const nextStreak = isCorrect ? streak + 1 : 0;
@@ -753,6 +760,9 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
         });
         eventQueueRef.current.push(adv);
         enqueueEvent(sessionRef.current.sessionId, adv);
+        const userAnswer = userAnswerIndexRef.current;
+        userAnswerIndexRef.current = null;
+
         if (next >= MAX_ADAPTIVE_QUESTIONS) {
             // Final answer: submit to backend before showing results (not fire-and-forget)
             setLoading(true);
@@ -762,7 +772,7 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
                     sessionParamsRef.current.topic,
                     sessionParamsRef.current.language,
                     5,
-                    { isCorrect: lastCorrect, responseTime }
+                    { isCorrect: lastCorrect, responseTime, userAnswer }
                 );
             } catch {
                 // proceed anyway
@@ -777,7 +787,7 @@ const AdaptiveQuizView = ({ subjectId, topic, language, isExpanded }) => {
         setQuestionCount(next);
         setQuestion(null); // nulling before fetch prevents stale QUESTION_VIEWED while old question + new index coexist
         // nextLockRef is released inside fetchQuestion's finally — not here.
-        fetchQuestion({ isCorrect: lastCorrect, responseTime });
+        fetchQuestion({ isCorrect: lastCorrect, responseTime, userAnswer });
     }, [questionCount, lastCorrect, fetchQuestion, subjectId, question]);
 
     const resetQuiz = useCallback(() => {

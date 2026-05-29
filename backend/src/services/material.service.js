@@ -521,38 +521,43 @@ class MaterialService {
     );
 
     // ── Ingestion Layer: resolve and validate source documents ──
-    const sourceDocuments = await Material.findByIds(safeIds, userId);
+    // When no specific files are selected (safeIds empty), skip document lookup —
+    // the engine will retrieve from the whole subject via subject_id.
+    const sourceDocuments = safeIds.length > 0 ? await Material.findByIds(safeIds, userId) : [];
 
-    // Validation: Check for failed or empty documents in the selection
-    const failedDocs = sourceDocuments.filter((d) => d.status === 'FAILED');
-    if (failedDocs.length > 0) {
-      throw new Error(
-        `Impossible to generate material: One or more selected documents (e.g. "${failedDocs[0].title}") failed to process.`
-      );
-    }
+    let sourceFilenames = [];
+    if (safeIds.length > 0) {
+      // Validation: Check for failed or empty documents in the selection
+      const failedDocs = sourceDocuments.filter((d) => d.status === 'FAILED');
+      if (failedDocs.length > 0) {
+        throw new Error(
+          `Impossible to generate material: One or more selected documents (e.g. "${failedDocs[0].title}") failed to process.`
+        );
+      }
 
-    const emptyDocs = sourceDocuments.filter((d) => d.status === 'EMPTY');
-    if (emptyDocs.length > 0 && sourceDocuments.length === emptyDocs.length) {
-      throw new Error(
-        'Context is not enough to generate material. All selected documents are empty.'
-      );
-    }
+      const emptyDocs = sourceDocuments.filter((d) => d.status === 'EMPTY');
+      if (emptyDocs.length > 0 && sourceDocuments.length === emptyDocs.length) {
+        throw new Error(
+          'Context is not enough to generate material. All selected documents are empty.'
+        );
+      }
 
-    const chunks = sourceDocuments
-      .filter((d) => d.status === COMPLETED)
-      .map((d) => d.content)
-      .filter((c) => c && typeof c === 'string' && c.trim() !== '');
+      const chunks = sourceDocuments
+        .filter((d) => d.status === COMPLETED)
+        .map((d) => d.content)
+        .filter((c) => c && typeof c === 'string' && c.trim() !== '');
 
-    // Extract basenames of stored files so the engine can filter its documents table
-    const sourceFilenames = sourceDocuments
-      .filter((d) => d.status === COMPLETED && d.file_path)
-      .map((d) => d.file_path.split('/').pop())
-      .filter((f) => f && f.length > 0);
+      // Extract basenames of stored files so the engine can filter its documents table
+      sourceFilenames = sourceDocuments
+        .filter((d) => d.status === COMPLETED && d.file_path)
+        .map((d) => d.file_path.split('/').pop())
+        .filter((f) => f && f.length > 0);
 
-    if (chunks.length === 0 && sourceFilenames.length === 0) {
-      throw new Error(
-        'Context is not enough: No readable text or files found in the selected documents.'
-      );
+      if (chunks.length === 0 && sourceFilenames.length === 0) {
+        throw new Error(
+          'Context is not enough: No readable text or files found in the selected documents.'
+        );
+      }
     }
 
     const finalSubjectId =
@@ -605,10 +610,19 @@ class MaterialService {
     );
 
     // ── Engine Layer: delegate SSE generation to Python engine ──
-    const resp = await engineClient.post('/generate/stream', enginePayload, {
-      responseType: 'stream',
-      timeout: 600000, // 10 minutes
-    });
+    let resp;
+    try {
+      resp = await engineClient.post('/generate/stream', enginePayload, {
+        responseType: 'stream',
+        timeout: 600000, // 10 minutes
+      });
+    } catch (engineErr) {
+      // Engine proxy failed before any stream was established — mark the record
+      // FAILED so it doesn't stay as a PROCESSING orphan, then re-throw so the
+      // controller can return an error response to the client.
+      await Material.recordFailure(materialRecord.id, userId, engineErr.message || 'Engine unreachable').catch(() => {});
+      throw engineErr;
+    }
 
     console.log(
       '[TRACE][BACKEND_SVC_ENGINE_RESP] status=%d elapsed_ms=%d',

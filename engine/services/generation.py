@@ -16,6 +16,12 @@ from .ollama_config import get_ollama_base_url, get_ollama_generation_model, get
 from .summary_pipeline import _build_summary_system_prompt
 from .chunk_processing import map_chunks_sync, async_map_chunks, reduce_results
 from .exceptions import NonRetriableGenerationError
+from .hallucination_guard import (
+    is_context_sufficient,
+    check_grounding,
+    log_generation_trace,
+    NOT_FOUND_MESSAGE,
+)
 
 logger = logging.getLogger("engine-generation")
 
@@ -668,7 +674,14 @@ def build_prompt(
 
         base_instructions = (
             f"Generate a multiple-choice quiz based on the context in {language}. "
-            f"Include exactly {question_count} questions. For each question, provide options, the correct answer, and a short explanation."
+            f"Include exactly {question_count} questions. For each question, provide options, the correct answer, and a short explanation.\n\n"
+            "GROUNDING RULES — follow without exception:\n"
+            "1. Every question, option, and explanation must be derived ONLY from the provided context. "
+            "Do not add external knowledge, invented facts, or information absent from the context.\n"
+            "2. Every option (correct and incorrect) must be a direct, specific answer to the question stem — "
+            "not a general fact about the subject area.\n"
+            "3. Incorrect options must be plausible misconceptions or common confusions, grounded in the context.\n"
+            "4. The explanation must cite only facts present in the provided context.\n"
         )
         base_instructions += f"\n{_build_quiz_difficulty_guidance(difficulty)}"
         if weak_topics:
@@ -747,7 +760,13 @@ def build_prompt(
             f"Create an exam based on the context in {language}. "
             f"Include exactly {exam_count} questions. Each question must have an 'answer_space' (e.g. '__________'). "
             f"DO NOT include answers in the questions list. "
-            f"Provide a SEPARATE 'answer_sheet' section with 'question_id', 'answer', and 'explanation'."
+            f"Provide a SEPARATE 'answer_sheet' section with 'question_id', 'answer', and 'explanation'.\n\n"
+            "GROUNDING RULES — follow without exception:\n"
+            "1. Derive ALL questions, answers, and explanations ONLY from the provided context. "
+            "Do not add external knowledge, invented facts, or information not present in the context.\n"
+            "2. The 'answer' in the answer_sheet must be directly supported by the context.\n"
+            "3. The 'explanation' must cite only reasoning present in the context — "
+            "do not introduce facts, examples, or concepts absent from the source material.\n"
         )
         json_structure = {
             "type": "exam",
@@ -792,6 +811,8 @@ def _map_summarize_chunk(chunk_text: str, language: str, timeout: int, retries: 
         f"System instructions:\n"
         f"You are a highly efficient assistant. Compress the following text into a concise summary in {language}. "
         f"Extract ALL key facts, concepts, and details without omitting important information. "
+        f"Use ONLY information present in the source text below — do not add external knowledge, "
+        f"invented examples, or facts not found in the source. "
         f"Do not add introductions or conclusions. Return ONLY the summary.\n\n"
         f"Text to summarize:\n---\n{chunk_text}\n---\n\n"
         f"Summary:"
@@ -920,6 +941,19 @@ async def generate_study_material_stream(
             logger.warning("[STREAM] Concept plan failed for flashcards: %s", e)
 
     context = _build_generation_context(chunks)
+
+    # Pre-generation guard: the `if not chunks` check above catches the empty
+    # case; this additionally catches whitespace-only or near-empty assembled
+    # context before any token is streamed. Does not touch retrieval.
+    _ctx_ok, _ctx_reason = is_context_sufficient(context)
+    if not _ctx_ok:
+        logger.warning(
+            "[GROUNDING][PREGUARD] stream material_type=%s blocked — insufficient context reason=%s",
+            material_type, _ctx_reason,
+        )
+        yield "[ERROR] Not enough context to generate material."
+        return
+
     prompt = build_prompt(
         material_type,
         context,
@@ -951,6 +985,9 @@ async def generate_study_material_stream(
         first_token_logged = False
         token_count = 0
         total_chars = 0
+        # Accumulate streamed pieces (local only — does NOT change what is yielded)
+        # so a post-completion grounding check can run without re-reading the stream.
+        streamed_pieces: List[str] = []
         try:
             async with httpx.AsyncClient(timeout=OLLAMA_GENERATION_TIMEOUT) as client:
                 async with client.stream(
@@ -988,6 +1025,7 @@ async def generate_study_material_stream(
                                     attempt, retries, first_token_ms,
                                 )
                                 first_token_logged = True
+                            streamed_pieces.append(piece)
                             yield piece
 
                         if chunk.get("done") is True:
@@ -997,6 +1035,14 @@ async def generate_study_material_stream(
                             logger.info(
                                 "[TRACE][REDUCE_DONE] attempt=%d/%d reduce_ms=%d tokens=%d chars=%d throughput_tok_per_s=%.1f overall_ms=%d",
                                 attempt, retries, reduce_ms, token_count, total_chars, throughput, overall_ms,
+                            )
+                            # Post-generation grounding check (advisory — logs only,
+                            # runs after the final token so it adds no streaming latency).
+                            _streamed_output = "".join(streamed_pieces)
+                            check_grounding(_streamed_output, context, material_type=material_type)
+                            log_generation_trace(
+                                material_type=material_type, context=context,
+                                prompt=prompt, output=_streamed_output, extra="path=stream",
                             )
                             return
             return
@@ -1086,6 +1132,17 @@ def generate_study_material(
             logger.warning("Concept plan failed for flashcards: %s", e)
 
     context = _build_generation_context(chunks)
+
+    # Pre-generation guard: block when the assembled context is empty/too thin to
+    # ground generation. Mirrors the existing `if not chunks` check but also
+    # catches whitespace-only or near-empty context. Does not touch retrieval.
+    _ctx_ok, _ctx_reason = is_context_sufficient(context)
+    if not _ctx_ok:
+        logger.warning(
+            "[GROUNDING][PREGUARD] material_type=%s blocked — insufficient context reason=%s",
+            material_type, _ctx_reason,
+        )
+        return "Not enough context to generate material."
 
     student_profile: Optional[Dict[str, Any]] = None
     if material_type == "quiz" and user_id:
@@ -1204,6 +1261,12 @@ def generate_study_material(
             )
 
             if material_type == "summary":
+                # Post-generation grounding check (advisory — logs only).
+                check_grounding(generated_text, context, material_type="summary")
+                log_generation_trace(
+                    material_type="summary", context=context, prompt=prompt,
+                    output=generated_text,
+                )
                 return generated_text
 
             parse_result = safe_parse_llm_json(generated_text)
@@ -1349,6 +1412,14 @@ def generate_study_material(
                     "generated_at": int(time.time()),
                 }
 
+            # Post-generation grounding check (advisory — logs only). Runs the
+            # overlap on the raw generated JSON text, which contains the
+            # question/option/answer/explanation strings, against the context.
+            check_grounding(generated_text, context, material_type=material_type)
+            log_generation_trace(
+                material_type=material_type, context=context, prompt=prompt,
+                output=generated_text,
+            )
             return parsed_json
 
         except (Timeout, RequestException, OSError, RetryableGenerationError) as err:
@@ -1455,7 +1526,9 @@ def generate_single_quiz_question(
         "- Incorrect options must be plausible misconceptions or common confusions about the correct answer, "
         "not unrelated facts.\n"
         "- All options must be grounded in the provided context. Do not invent options absent from the context.\n"
-        "- Options should be parallel in form and comparable in length."
+        "- Options should be parallel in form and comparable in length.\n"
+        "- The explanation must be grounded in the provided context. "
+        "Do not cite facts, mechanisms, or examples that are not present in the context above."
     )
 
     json_structure = {
@@ -1531,6 +1604,11 @@ def generate_single_quiz_question(
                 "[QUIZ_GEN] options_raw correct_idx=%d options=%s",
                 correct_answer, options,
             )
+
+            # Post-generation grounding check (advisory — logs only). Verifies the
+            # question/options/explanation are supported by the retrieved context.
+            _q_text = " ".join([question, " ".join(options), explanation])
+            check_grounding(_q_text, context, material_type="quiz_single")
 
             return {
                 "question": question,
@@ -1647,8 +1725,20 @@ def generate_chat_response(
     retries: int = 1
 ) -> str:
     """Generate a conversational response based on context."""
+    # Pre-generation guard: if no usable context was retrieved, there is nothing
+    # to ground an answer in — return the canonical fallback WITHOUT calling the
+    # LLM (this also avoids a pointless round-trip and its latency).
+    ok, reason = is_context_sufficient(context)
+    if not ok:
+        logger.warning(
+            "[GROUNDING][PREGUARD] chat blocked — insufficient context reason=%s; "
+            "returning fallback message", reason,
+        )
+        return NOT_FOUND_MESSAGE
+
     prompt = (
-        f"System instructions: Answer the user's question clearly and concisely based on the provided context in {language}. "
+        f"System instructions: Answer the user's question clearly and concisely based ONLY on the provided context in {language}. "
+        f"Do not add external knowledge or facts not present in the context. "
         f"If the answer is not in the context, say you don't know based on the provided material.\n\n"
         f"Context:\n---\n{context}\n---\n\n"
         f"User Question: {question}\n"
@@ -1669,6 +1759,11 @@ def generate_chat_response(
                     logger.info("Chat empty output attempt=%d/%d -> retrying", attempt + 1, retries)
                     continue
                 raise RuntimeError("Empty chat output from Ollama")
+            # Post-generation grounding check (advisory — logs only, never blocks).
+            check_grounding(text, context, material_type="chat")
+            log_generation_trace(
+                material_type="chat", context=context, prompt=prompt, output=text,
+            )
             return text
 
         except ValueError as e:

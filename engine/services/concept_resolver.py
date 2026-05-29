@@ -19,7 +19,14 @@ def normalize_concept(raw_concept: str, db=None) -> Optional[str]:
         return None
         
     cleaned = raw_concept.strip().lower()
-    
+    # Collapse internal whitespace (tabs, newlines, runs of spaces) to a single
+    # space so "photo  synthesis" and "photo synthesis" map to the same canonical
+    # form.  _clean_term_name already does this for knowledge-graph storage; this
+    # step makes normalize_concept consistent with that invariant so set-
+    # intersection comparisons (weak_pool, last_concept rotation) never silently
+    # miss due to differing internal spacing.
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+
     if len(cleaned) < 2:
         logger.debug(f'[CONCEPT_NORMALIZER] rejected="{raw_concept}" reason="invalid_token"')
         return None
@@ -39,32 +46,33 @@ def normalize_concept(raw_concept: str, db=None) -> Optional[str]:
         logger.debug(f'[CONCEPT_NORMALIZER] rejected="{raw_concept}" reason="no_vowels"')
         return None
         
-    # Optional DB mapping
+    # Optional DB mapping: resolve the cleaned name against the subject concept taxonomy
+    # for synonym/alias canonicalization.
     if db is not None:
         from sqlalchemy import text
         from sqlalchemy.exc import ProgrammingError
         try:
-            # 1. Exact or ILIKE match
+            # Case-insensitive exact match.  The concepts table may store names with
+            # arbitrary casing, so always lowercase the result to preserve the
+            # invariant that normalize_concept always returns a lowercase string.
             query = text("SELECT name FROM concepts WHERE name ILIKE :concept LIMIT 1")
             result = db.execute(query, {"concept": cleaned}).scalar()
             if result:
-                return str(result)
-                
-            # 2. Fuzzy match
-            # Simplest approach without pg_trgm is a partial ILIKE
-            query_fuzzy = text("SELECT name FROM concepts WHERE name ILIKE :fuzzy LIMIT 1")
-            result_fuzzy = db.execute(query_fuzzy, {"fuzzy": f"%{cleaned}%"}).scalar()
-            if result_fuzzy:
-                return str(result_fuzzy)
-                
-            # If we reach here, the table exists but the concept wasn't found at all.
-            # We return the cleaned name as a fallback instead of rejecting it,
-            # allowing the adaptive system to work even with a sparse concepts table.
+                return str(result).strip().lower()
+
+            # No match — fall through to the cleaned name.
+            # A fuzzy substring match (ILIKE '%term%') is intentionally not used here:
+            #   • it is non-deterministic without an ORDER BY (same input can produce
+            #     different rows across queries)
+            #   • "acid" matching "nucleic acid" maps an independent concept to an
+            #     unrelated one, breaking the canonical-form guarantee
+            # If richer synonym mapping is needed, use a dedicated synonym table with
+            # an exact-match lookup instead.
             logger.debug(f'[CONCEPT_NORMALIZER] not_in_db fallback="{cleaned}"')
             return cleaned
-                
+
         except ProgrammingError:
-            # Table 'concepts' does not exist
+            # Table 'concepts' does not exist — fall through silently.
             db.rollback()
         except Exception as e:
             logger.warning(f"[CONCEPT_NORMALIZER] DB error mapping concept: {e}")

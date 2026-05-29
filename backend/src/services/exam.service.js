@@ -651,15 +651,24 @@ class ExamService {
              return indices.length > 0 ? indices : null;
          };
 
-         // Ensure all questions have a type field (default to 'short_answer' if missing)
+         // ── Step 1: coerce field-name aliases (must run FIRST) ──────────────────
+         // Converts engine/LLM variants to canonical camelCase before anything else reads them:
+         //   correct_answer → correctAnswers, choices → options, accepted_answer → acceptedAnswers
+         //   question_type  → type,           type aliases (multiple_choice → single_choice, …)
+         // Type-inference and answer-sheet merge both depend on q.options / q.type being
+         // canonical, so coercion must precede both.
+         questions = questions.map(coerceQuestion);
+
+         // ── Step 2: infer missing type from structure ────────────────────────
+         // Runs after coercion so q.options has already been populated from q.choices if
+         // needed — a question with only 'choices' would be mistyped 'short_answer' otherwise.
          questions = questions.map(q => {
              if (!q.type || typeof q.type !== 'string' || q.type.trim() === '') {
-                 // Infer type from structure if possible
-                 if (q.options && Array.isArray(q.options) && q.options.length > 0) {
+                 if (Array.isArray(q.options) && q.options.length > 0) {
                      q.type = 'single_choice';
-                 } else if (q.pairs && Array.isArray(q.pairs) && q.pairs.length > 0) {
+                 } else if (Array.isArray(q.pairs) && q.pairs.length > 0) {
                      q.type = 'matching';
-                 } else if (q.blankAnswers && Array.isArray(q.blankAnswers) && q.blankAnswers.length > 0) {
+                 } else if (Array.isArray(q.blankAnswers) && q.blankAnswers.length > 0) {
                      q.type = 'fill_blank';
                  } else {
                      q.type = 'short_answer';
@@ -668,7 +677,10 @@ class ExamService {
              return q;
          });
 
-         // Merge answer sheet into questions (Source of Truth for Grading)
+         // ── Step 3: merge answer sheet (Source of Truth for Grading) ─────────
+         // Both q.type (step 2) and q.correctAnswers (step 1 coercion) are now canonical,
+         // so _resolveAnswerToIndices can correctly identify choice-based questions and the
+         // fallback q.correctAnswers is always a proper array-or-undefined.
          if (Array.isArray(answerSheet) && answerSheet.length > 0) {
              const sheetMap = new Map(answerSheet.map(a => [String(a.question_id || a.id), a]));
              questions = questions.map(q => {
@@ -676,7 +688,7 @@ class ExamService {
                  if (sheetItem) {
                      return {
                          ...q,
-                         // Priority: answer_sheet > existing correctAnswers
+                         // Answer sheet takes priority over question-level correctAnswers.
                          correctAnswers: _resolveAnswerToIndices(q, sheetItem.answer) || q.correctAnswers,
                          acceptedAnswers: !['single_choice', 'multiple_select'].includes(q.type)
                              ? (Array.isArray(sheetItem.answer) ? sheetItem.answer : [sheetItem.answer])
@@ -687,6 +699,16 @@ class ExamService {
                  return q;
              });
          }
+
+         // ── Step 4: final seal ───────────────────────────────────────────────
+         // Guarantee the invariants that downstream grading code depends on:
+         //   • correctAnswers is always a number[] (never null / undefined)
+         //   • explanation  is always string | null  (never undefined)
+         questions = questions.map(q => ({
+             ...q,
+             correctAnswers: Array.isArray(q.correctAnswers) ? q.correctAnswers : [],
+             explanation:    q.explanation || null,
+         }));
 
          return {
              ...raw,
@@ -920,8 +942,16 @@ class ExamService {
             };
         }
 
-        // Grade current batch questions
-        const currentBatchQuestions = cacheEntry.exam.questions.slice(cacheEntry.revealedCount - cacheEntry.batchSize, cacheEntry.revealedCount);
+        // Grade current batch questions.
+        // Normalize through _normalizeExam first so the adaptive mid-exam grading path
+        // uses the EXACT same question schema (coerceQuestion + Array.isArray correctAnswers
+        // seal) that submitExam relies on. This is idempotent for already-normalized cache
+        // entries and defends against any cache state that predates normalization.
+        const normalizedForGrading = this._normalizeExam(cacheEntry.exam);
+        const normalizedQuestions = normalizedForGrading.questions || [];
+        const currentBatchQuestions = normalizedQuestions.slice(cacheEntry.revealedCount - cacheEntry.batchSize, cacheEntry.revealedCount);
+        console.log('[EXAM_ADAPTIVE_GRADE] examId=%s revealed=%d batchSize=%d gradingQuestions=%d (normalized)',
+            examId, cacheEntry.revealedCount, cacheEntry.batchSize, currentBatchQuestions.length);
         const gradedResults = await this._gradeAnswersBatch(userId, currentBatchQuestions, submittedAnswers);
 
         // Call engine to process batch answers and get next target concept
@@ -1082,8 +1112,21 @@ class ExamService {
         let aiScoreComponents = null;
         let isCached = false;
 
-        const correctAnswers = [...(question.correctAnswers || [])].sort((a, b) => a - b);
-        const selectedAnswers = answer.selectedAnswers || [];
+        // Defensive normalization: guarantee both sides are clean integer arrays
+        // (0-based indices) regardless of whether the question passed through
+        // _normalizeExam/coerceQuestion. Mirrors the schema submitExam relies on.
+        const correctAnswers = (Array.isArray(question.correctAnswers) ? question.correctAnswers : [])
+            .map(Number)
+            .filter((n) => Number.isInteger(n))
+            .sort((a, b) => a - b);
+        const selectedAnswers = (Array.isArray(answer.selectedAnswers) ? answer.selectedAnswers : [])
+            .map(Number)
+            .filter((n) => Number.isInteger(n));
+
+        if (!Array.isArray(question.correctAnswers)) {
+            console.warn('[SCORING_GUARD] id=%s type=%s correctAnswers not an array (got %s) — coerced to []',
+                question.id, question.type, typeof question.correctAnswers);
+        }
 
         // Check if we can reuse cached scoring components to avoid double scoring
         if (cachedScoring && cachedScoring.scoreComponents) {
@@ -1095,6 +1138,8 @@ class ExamService {
         } else {
             if (question.type === 'single_choice') {
                 isCorrect = Number(selectedAnswers[0]) === Number(correctAnswers[0]);
+                console.log('[SCORING_EVAL] id=%s type=single_choice selected=%j correct=%j verdict=%s',
+                    question.id, selectedAnswers, correctAnswers, isCorrect ? 'CORRECT' : 'INCORRECT');
             } else if (['short_answer', 'problem', 'scenario'].includes(question.type)) {
                 const userInput = answer.answerText;
                 const referenceAnswer = (question.acceptedAnswers || [])[0] || 'No reference answer provided.';
@@ -1157,6 +1202,8 @@ class ExamService {
                 const overlap = sNum.some((v) => cNum.includes(v));
                 isCorrect = exact;
                 isAlmost = !exact && overlap;
+                console.log('[SCORING_EVAL] id=%s type=%s selected=%j correct=%j verdict=%s',
+                    question.id, question.type, sNum, cNum, isCorrect ? 'CORRECT' : (isAlmost ? 'PARTIAL' : 'INCORRECT'));
             }
         }
 
@@ -1178,7 +1225,10 @@ class ExamService {
         return {
             isCorrect,
             isAlmost,
-            explanation: aiExplanation || question.explanation,
+            // Prefer AI-generated feedback (open-ended questions), then question's stored
+            // explanation.  Never return undefined — callers guard on truthiness so null is
+            // the correct sentinel for "no insight available."
+            explanation: aiExplanation || question.explanation || null,
             scoreComponents: aiScoreComponents,
         };
     }
@@ -1471,6 +1521,14 @@ class ExamService {
             // Grade using the unified function
             const result = await this.gradeQuestionAnswer(userId, question, answer, cachedScoring);
 
+            // correctAnswerText: for non-choice questions use acceptedAnswers[0].
+            // Widen the search to avoid an undefined that would show "N/A" on the frontend.
+            const correctAnswerText =
+                (question.acceptedAnswers || [])[0] ||
+                question.correctAnswerText ||
+                question.reference_answer ||
+                null;
+
             return {
                 questionId: String(question.id),
                 isCorrect: result.isCorrect,
@@ -1478,7 +1536,7 @@ class ExamService {
                 userAnswer: answer.selectedAnswers,
                 userAnswerText: answer.answerText,
                 correctAnswers: [...(question.correctAnswers || [])].sort((a, b) => a - b),
-                correctAnswerText: (question.acceptedAnswers || [])[0],
+                correctAnswerText,
                 acceptedAnswers: question.acceptedAnswers,
                 blankAnswers: question.blankAnswers,
                 pairs: question.pairs,

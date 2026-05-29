@@ -26,7 +26,14 @@
       "Bash(Select-String -Pattern \"\\(routes|controllers\\)\")",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\" -Force)",
       "Bash(Select-Object Name, PSIsContainer)",
-      "Bash(Format-Table -AutoSize)"
+      "Bash(Format-Table -AutoSize)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\ASUS\\\\Documents\\\\GitHub\\\\cognify\" -Depth 2 -Directory)",
+      "Bash(dir /b /s)",
+      "Bash(findstr /E \"\\\\.py$\")",
+      "Bash(findstr /V \".venv\")",
+      "Bash(python -m py_compile engine/services/hallucination_guard.py engine/services/generation.py)",
+      "Bash(python -m py_compile engine/services/generation.py)",
+      "Bash(node --check src/services/exam.service.js)"
     ],
     "additionalDirectories": [
       "c:\\Users\\ASUS\\.claude\\projects\\c--Users-ASUS-Documents-GitHub-cognify\\memory"

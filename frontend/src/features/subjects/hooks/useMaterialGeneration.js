@@ -417,6 +417,16 @@ export const useMaterialGeneration = ({
             const totalMs = Math.round(performance.now() - feStartMs);
             console.error('[TRACE][FE_STREAM_THROW] error=%s duration_ms=%d', streamErr?.message || streamErr, totalMs);
             streamControllerRef.current = null;
+
+            // Intentional abort (user stopped, component unmount, or re-trigger).
+            // Do NOT fall through to the Celery path — the SSE material may still be
+            // completing on the engine side, and creating a second record would produce
+            // a duplicate that the user then has to manually trash.
+            if (streamErr?.name === 'AbortError') {
+                finishGenerating();
+                return;
+            }
+
             if (streamErr?.isEngineError) {
                 if (streamErr.reason === 'FLASHCARDS_PARSE_FAILED') {
                     // Remove any tab that was speculatively opened on the first delta.
@@ -433,6 +443,21 @@ export const useMaterialGeneration = ({
                     finishGenerating();
                     return;
                 }
+            }
+
+            // For other non-engine network/HTTP errors: if the SSE path already created
+            // a material record (activeMaterialIdRef is set), do not create a second one
+            // via Celery — start polling for the existing record instead.
+            if (activeMaterialIdRef.current) {
+                const existingId = activeMaterialIdRef.current;
+                const mats = await fetchMaterials().catch(() => []);
+                const mat = mats.find(m => String(m.id) === String(existingId));
+                if (mat) openMaterialTab(mat);
+                startPolling(String(existingId), (completedMat) => {
+                    if (String(currentSubjectIdRef.current) === normalizedId) openMaterialTab(completedMat);
+                });
+                finishGenerating();
+                return;
             }
             }
         }

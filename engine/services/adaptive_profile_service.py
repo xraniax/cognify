@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from .learner_state_sync import LearnerStateSyncService
 
+logger = logging.getLogger("engine-adaptive-profile")
+
 _ADAPTIVE_PROFILE_TTL_SECONDS = int(os.getenv("ADAPTIVE_PROFILE_CACHE_TTL", "300"))
 
 
@@ -22,34 +24,41 @@ def _get_redis():
 
 
 def _get_cached_profile(user_id: str, subject_id: str) -> Optional[Dict[str, Any]]:
+    key = _adaptive_profile_key(user_id, subject_id)
     try:
-        raw = _get_redis().get(_adaptive_profile_key(user_id, subject_id))
+        raw = _get_redis().get(key)
         if raw:
+            logger.debug("[REDIS_PROFILE_READ] HIT key=%s", key)
             return json.loads(raw)
-    except Exception:
-        pass
+        logger.debug("[REDIS_PROFILE_READ] MISS key=%s", key)
+    except Exception as exc:
+        # Surface the failure instead of silently swallowing it — a cache read
+        # error must not be invisible. Caller falls back to recomputing the profile.
+        logger.warning("[REDIS_PROFILE_READ] FAIL key=%s error=%s — will recompute", key, exc)
     return None
 
 
 def _set_cached_profile(user_id: str, subject_id: str, profile: Dict[str, Any]) -> None:
+    key = _adaptive_profile_key(user_id, subject_id)
     try:
         _get_redis().setex(
-            _adaptive_profile_key(user_id, subject_id),
+            key,
             _ADAPTIVE_PROFILE_TTL_SECONDS,
             json.dumps(profile, default=str),
         )
-    except Exception:
-        pass
+        logger.debug("[REDIS_PROFILE_WRITE] OK key=%s ttl=%ds", key, _ADAPTIVE_PROFILE_TTL_SECONDS)
+    except Exception as exc:
+        logger.warning("[REDIS_PROFILE_WRITE] FAIL key=%s error=%s — profile NOT cached", key, exc)
 
 
 def invalidate_adaptive_profile_cache(user_id: str, subject_id: str) -> None:
     """Call after a learning event so the next profile read reflects updated state."""
+    key = _adaptive_profile_key(user_id, subject_id)
     try:
-        _get_redis().delete(_adaptive_profile_key(user_id, subject_id))
-    except Exception:
-        pass
-
-logger = logging.getLogger("engine-adaptive-profile")
+        _get_redis().delete(key)
+        logger.debug("[REDIS_PROFILE_DELETE] OK key=%s", key)
+    except Exception as exc:
+        logger.warning("[REDIS_PROFILE_DELETE] FAIL key=%s error=%s", key, exc)
 
 # ─── Tuning constants ─────────────────────────────────────────────────────────
 

@@ -284,9 +284,10 @@ def next_question_only(
         language=language,
     )
 
-    # Store correct answer server-side so submit can verify without trusting the client.
+    # Store correct answer and explanation server-side for the next submit call.
     session["last_concept"] = target_concept
     session["last_correct_answer"] = question.get("correct_answer")
+    session["last_explanation"] = question.get("explanation") or ""
     update_quiz_session(user_id, subject_id, session)
 
     logger.info(
@@ -294,10 +295,8 @@ def next_question_only(
         user_id, subject_id, difficulty, target_concept or "<none>",
     )
 
-    # Strip correct_answer and explanation before sending to frontend.
-    safe_question = {k: v for k, v in question.items() if k not in ("correct_answer", "explanation")}
     return {
-        "question": safe_question,
+        "question": question,
         "progress": _build_progress(student, session, difficulty),
         "session": session,
     }
@@ -411,9 +410,14 @@ def submit_answer_and_get_next(
         language=language,
     )
 
-    # Store correct answer for next submit; strip from response.
+    # Capture answered question's feedback from session before overwriting with next question.
+    answered_correct_answer = session.get("last_correct_answer")
+    answered_explanation = session.get("last_explanation") or ""
+
+    # Store next question's correct answer and explanation for the following submit call.
     session["last_concept"] = target_concept
     session["last_correct_answer"] = question.get("correct_answer")
+    session["last_explanation"] = question.get("explanation") or ""
     update_quiz_session(user_id, subject_id, session)
 
     logger.info(
@@ -422,10 +426,11 @@ def submit_answer_and_get_next(
         target_concept or "<none>", float(student.get("accuracy", 0.5)),
     )
 
-    safe_question = {k: v for k, v in question.items() if k not in ("correct_answer", "explanation")}
     return {
-        "question": safe_question,
-        "is_correct": is_correct,  # Return server-computed result for the answered question.
+        "question": question,
+        "is_correct": is_correct,
+        "correct_answer": answered_correct_answer,
+        "explanation": answered_explanation if answered_explanation else None,
         "progress": _build_progress(student, session, difficulty),
         "session": session,
     }

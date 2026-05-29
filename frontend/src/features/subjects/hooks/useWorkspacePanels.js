@@ -44,9 +44,13 @@ export const useWorkspacePanels = ({ subjectId, materials }) => {
     const enhancedTabs = useMemo(() => tabs.map(tab => {
         if (tab.id === 'generator') return { ...tab, isDeleted: false };
         const material = (materials || []).find(m => String(m.id) === String(tab.id));
+        // Only mark a tab as deleted once we have a confirmed non-empty fetch result.
+        // When materials is [] (initial state before first fetch), every tab would
+        // incorrectly appear as deleted, showing a false "moved to trash" banner.
+        const hasFetched = materials && materials.length > 0;
         return {
             ...tab,
-            isDeleted: !material,
+            isDeleted: hasFetched && !material,
             material: material || tab.material
         };
     }), [tabs, materials]);

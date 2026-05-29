@@ -1,12 +1,20 @@
 import json
 import logging
 import os
+import re
 import time
 from typing import Optional, Dict, Any, Set
 
 import redis
 
 logger = logging.getLogger("engine-redis-client")
+
+# Strict numeric matcher used during hash deserialization. Only plain integers and
+# fixed-point decimals are treated as numbers. This prevents Python's permissive
+# float() from silently converting legitimate STRING field values such as concept
+# names "inf", "nan", "infinity" or "1e5" into floats on read-back, which would
+# corrupt session state (e.g. last_concept) across requests.
+_NUMERIC_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 QUIZ_SESSION_TTL_SECONDS = 3600
@@ -58,7 +66,12 @@ def _parse_hash_value(value: str) -> Any:
     try:
         if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
             return int(value)
-        return float(value)
+        # Only convert to float when the string is a plain fixed-point number.
+        # Strings like "inf"/"nan"/"infinity"/"1e5" are preserved as-is so concept
+        # names and other string fields survive the round trip unchanged.
+        if _NUMERIC_RE.match(value):
+            return float(value)
+        return value
     except ValueError:
         return value
 
@@ -68,13 +81,13 @@ def get_quiz_session(user_id: str, subject_id: str) -> Optional[Dict[str, Any]]:
     try:
         raw = _get_client().hgetall(key)
         if not raw:
-            logger.debug("[REDIS_EXAM_READ] MISS key=%s", key)
+            logger.debug("[REDIS_QUIZ_READ] MISS key=%s", key)
             return None
         parsed: Dict[str, Any] = {field: _parse_hash_value(value) for field, value in raw.items()}
-        logger.debug("[REDIS_EXAM_READ] HIT key=%s fields=%d", key, len(parsed))
+        logger.debug("[REDIS_QUIZ_READ] HIT key=%s fields=%d", key, len(parsed))
         return parsed
     except Exception as exc:
-        logger.error("[REDIS_EXAM_READ] FAIL key=%s error=%s — defaulting to fresh session", key, exc)
+        logger.error("[REDIS_QUIZ_READ] FAIL key=%s error=%s — defaulting to fresh session", key, exc)
         return None
 
 
@@ -110,9 +123,9 @@ def update_quiz_session(user_id: str, subject_id: str, data: Dict[str, Any]) -> 
             pipe.hset(key, mapping=payload)
         pipe.expire(key, QUIZ_SESSION_TTL_SECONDS)
         pipe.execute()
-        logger.debug("[REDIS_EXAM_WRITE] OK key=%s fields=%d", key, len(payload))
+        logger.debug("[REDIS_QUIZ_WRITE] OK key=%s fields=%d ttl=%ds", key, len(payload), QUIZ_SESSION_TTL_SECONDS)
     except Exception as exc:
-        logger.error("[REDIS_EXAM_WRITE] FAIL key=%s error=%s — session state NOT persisted", key, exc)
+        logger.error("[REDIS_QUIZ_WRITE] FAIL key=%s error=%s — session state NOT persisted", key, exc)
 
 
 EXAM_SESSION_TTL_SECONDS = 7200
@@ -146,7 +159,7 @@ def get_concepts(key: str, client: Optional[redis.Redis] = None) -> Set[str]:
     try:
         return (client or _get_client()).smembers(key)
     except Exception as exc:
-        logger.error("[REDIS_EXAM_READ] get_concepts FAIL key=%s error=%s", key, exc)
+        logger.error("[REDIS_CONCEPT_READ] get_concepts FAIL key=%s error=%s", key, exc)
         return set()
 
 
@@ -155,7 +168,7 @@ def add_concept(key: str, value: str, client: Optional[redis.Redis] = None) -> N
     try:
         (client or _get_client()).sadd(key, value)
     except Exception as exc:
-        logger.error("[REDIS_EXAM_WRITE] add_concept FAIL key=%s value=%s error=%s", key, value, exc)
+        logger.error("[REDIS_CONCEPT_WRITE] add_concept FAIL key=%s value=%s error=%s", key, value, exc)
 
 
 def remove_concept(key: str, value: str, client: Optional[redis.Redis] = None) -> None:
@@ -163,7 +176,7 @@ def remove_concept(key: str, value: str, client: Optional[redis.Redis] = None) -
     try:
         (client or _get_client()).srem(key, value)
     except Exception as exc:
-        logger.error("[REDIS_EXAM_WRITE] remove_concept FAIL key=%s value=%s error=%s", key, value, exc)
+        logger.error("[REDIS_CONCEPT_WRITE] remove_concept FAIL key=%s value=%s error=%s", key, value, exc)
 
 
 # ── Text-job store ─────────────────────────────────────────────────────────

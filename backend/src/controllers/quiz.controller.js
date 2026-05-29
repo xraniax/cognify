@@ -34,7 +34,7 @@ class QuizController {
      * Proxies to engine POST /quiz/submit-answer (which updates student model via quiz_manager).
      */
     static submitAnswer = asyncHandler(async (req, res) => {
-        const { subject_id, topic, is_correct, response_time, language, top_k } = req.body;
+        const { subject_id, topic, is_correct, response_time, language, top_k, user_answer } = req.body;
         const user_id = String(req.user.id);
 
         try {
@@ -46,6 +46,7 @@ class QuizController {
                 response_time: Number(response_time) || 0,
                 language: language || 'en',
                 top_k: top_k || 5,
+                ...(user_answer !== undefined && user_answer !== null && { user_answer: Number(user_answer) }),
             });
 
             return res.status(200).json({ status: 'success', data: engineRes.data });
